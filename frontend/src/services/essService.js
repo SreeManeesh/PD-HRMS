@@ -15,7 +15,7 @@ import {
   _submitTaxDeclaration,
   _getLastExportRequest,
   _requestDataExport,
-} from "../mock/ess";
+} from "../mock/ess.js";
 
 const resolve = (data, ms = 350) => new Promise((res) => setTimeout(() => res({ data }), ms));
 

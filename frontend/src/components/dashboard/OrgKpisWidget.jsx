@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getAnalyticsSnapshot } from "../../services/adminDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getAnalyticsSnapshot } from "../../services/Admindashboardservice.js";
 
 export default function OrgKpisWidget() {
   const navigate = useNavigate();

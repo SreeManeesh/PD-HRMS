@@ -20,9 +20,9 @@ import {
     downloadCertificate,
     revokeCertificate,
     verifyCertificateById,
-} from "../../services/lmsService";
+} from "../../services/Lmsservice.js";
 
-import { saveBlobAsFile } from "../../utils/certificateDownload";
+import { saveBlobAsFile } from "../../utils/certificateDownload.js";
 
 
 export default function CertificateManagement() {

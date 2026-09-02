@@ -5,14 +5,14 @@
 
 import { useState, useEffect } from "react";
 import { Play, FileText, Download } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import ConfirmDialog from "../../components/shared/ConfirmDialog";
-import { getPayrollRuns, getPayslips, runPayroll } from "../../services/payrollService";
-import { useAuth } from "../../context/AuthContext";
-import { payrollStatusMeta } from "../../mock/payroll";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
+import { getPayrollRuns, getPayslips, runPayroll } from "../../services/payrollService.js";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { payrollStatusMeta } from "../../mock/payroll.js";
 
 const fmt = (n) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);

@@ -6,12 +6,12 @@
 
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import Spinner from "../components/shared/Spinner";
-import RequireAuth from "../components/auth/RequireAuth";
-import DashboardRouter from "./DashboardRouter";
+import Spinner from "../components/shared/Spinner.jsx";
+import RequireAuth from "../components/auth/RequireAuth.jsx";
+import DashboardRouter from "./DashboardRouter.jsx";
 
 // ── Eagerly loaded (critical path) ─────────────────────────────────────────
-import Login from "../pages/Auth/Login";
+import Login from "../pages/Auth/Login.jsx";
 
 // ── Lazily loaded modules ────────────────────────────────────────────────────
 const Employees = lazy(() => import("../pages/Employees/Employees"));

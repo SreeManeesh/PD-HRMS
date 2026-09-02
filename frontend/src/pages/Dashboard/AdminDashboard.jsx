@@ -1,14 +1,14 @@
 ﻿/**
  * Admin/Management dashboard — org-wide KPIs, hiring funnel, payroll trends.
  */
-import MainLayout from "../../components/layout/MainLayout";
-import WelcomeCard from "../../components/shared/Dashboardgreeting";
-import OrgKpisWidget from "../../components/dashboard/OrgKpisWidget";
-import DepartmentPerformanceWidget from "../../components/dashboard/DepartmentPerformanceWidget";
-import HiringFunnelWidget from "../../components/dashboard/HiringFunnelWidget";
-import PayrollCostTrendWidget from "../../components/dashboard/PayrollCostTrendWidget";
-import SatisfactionWidget from "../../components/dashboard/SatisfactionWidget";
-import ProductivityWidget from "../../components/dashboard/ProductivityWidget";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import WelcomeCard from "../../components/shared/Dashboardgreeting.jsx";
+import OrgKpisWidget from "../../components/dashboard/OrgKpisWidget.jsx";
+import DepartmentPerformanceWidget from "../../components/dashboard/DepartmentPerformanceWidget.jsx";
+import HiringFunnelWidget from "../../components/dashboard/HiringFunnelWidget.jsx";
+import PayrollCostTrendWidget from "../../components/dashboard/PayrollCostTrendWidget.jsx";
+import SatisfactionWidget from "../../components/dashboard/SatisfactionWidget.jsx";
+import ProductivityWidget from "../../components/dashboard/ProductivityWidget.jsx";
 
 export default function AdminDashboard() {
   return (

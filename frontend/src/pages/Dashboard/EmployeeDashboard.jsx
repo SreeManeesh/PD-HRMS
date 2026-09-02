@@ -1,17 +1,17 @@
 ﻿/**
  * Employee Dashboard — 
  */
-import MainLayout from "../../components/layout/MainLayout";
-import AttendanceWidget from "../../components/dashboard/AttendanceWidget";
-import LeaveBalanceWidget from "../../components/dashboard/LeaveBalanceWidget";
-import PayslipWidget from "../../components/dashboard/PayslipWidget";
-import BirthdaysWidget from "../../components/dashboard/BirthdaysWidget";
-import SelfAssessmentWidget from "../../components/dashboard/SelfAssessmentWidget";
-import ComplianceCoursesWidget from "../../components/dashboard/ComplianceCoursesWidget";
-import DashboardQuickActions from "../../components/dashboard/DashboardQuickActions";
-import CollapsibleDashboardSection from "../../components/dashboard/CollapsibleDashboardSection";
-import PendingPoliciesWidget from "../../components/dashboard/PendingPoliciesWidget";
-import RecentNotificationsWidget from "../../components/dashboard/RecentNotificationsWidget";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import AttendanceWidget from "../../components/dashboard/AttendanceWidget.jsx";
+import LeaveBalanceWidget from "../../components/dashboard/LeaveBalanceWidget.jsx";
+import PayslipWidget from "../../components/dashboard/PayslipWidget.jsx";
+import BirthdaysWidget from "../../components/dashboard/BirthdaysWidget.jsx";
+import SelfAssessmentWidget from "../../components/dashboard/SelfAssessmentWidget.jsx";
+import ComplianceCoursesWidget from "../../components/dashboard/ComplianceCoursesWidget.jsx";
+import DashboardQuickActions from "../../components/dashboard/DashboardQuickActions.jsx";
+import CollapsibleDashboardSection from "../../components/dashboard/CollapsibleDashboardSection.jsx";
+import PendingPoliciesWidget from "../../components/dashboard/PendingPoliciesWidget.jsx";
+import RecentNotificationsWidget from "../../components/dashboard/RecentNotificationsWidget.jsx";
 import "./EmployeeDashboard.css";
 
 

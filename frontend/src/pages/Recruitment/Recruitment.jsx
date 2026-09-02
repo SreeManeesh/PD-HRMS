@@ -16,12 +16,12 @@ import {
   UserPlus,
   AlertTriangle,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getRequisitions,
   addRequisition,
@@ -34,11 +34,11 @@ import {
   getOffers,
   createOffer,
   updateOfferStatus,
-} from "../../services/Recruitmentservice";
+} from "../../services/Recruitmentservice.js";
 
-import { getEmployees } from "../../services/employeeService";
-import { getDepartments, getGrades } from "../../services/Orgmanagementservice";
-import CandidateLifecycleTab from "./CandidateLifecycleTab";
+import { getEmployees } from "../../services/employeeService.js";
+import { getDepartments, getGrades } from "../../services/Orgmanagementservice.js";
+import CandidateLifecycleTab from "./CandidateLifecycleTab.jsx";
 
 const requisitionStatusMeta = {
   Draft: { color: "#64748b", bg: "#f1f5f9" },

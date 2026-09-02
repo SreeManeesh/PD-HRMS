@@ -1,0 +1,3 @@
+app.hrms.protecciodata.co.in {
+    reverse_proxy frontend:80
+}

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Clock, Download, Lock, Play } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import { useAuth } from "../../context/AuthContext";
-import { exportReportCsv, getFieldCatalog, getOrgScope, getReportTemplates, runCustomReport, runStandardReport } from "../../services/Reportsservice";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { exportReportCsv, getFieldCatalog, getOrgScope, getReportTemplates, runCustomReport, runStandardReport } from "../../services/Reportsservice.js";
 
 const card = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-sm)" };
 const input = { height: 36, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--card)", color: "var(--text)" };

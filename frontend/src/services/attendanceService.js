@@ -3,7 +3,7 @@
  * Talks to the real backend (VITE_API_URL → /api).
  */
 
-import api from "./api";
+import api from "./api.js";
 
 export const getMyAttendance = async ({ employeeId, month, year } = {}) => {
   const res = await api.get("/attendance", { params: { employeeId, month, year, limit: 100 } });

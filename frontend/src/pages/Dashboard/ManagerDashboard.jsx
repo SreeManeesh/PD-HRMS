@@ -4,19 +4,19 @@
  * — so this renders the same personal widgets as EmployeeDashboard.jsx, plus
  * a Team section on top.
  */
-import MainLayout from "../../components/layout/MainLayout";
-import TeamApprovalsWidget from "../../components/dashboard/TeamApprovalsWidget";
-import TeamAttendanceWidget from "../../components/dashboard/TeamAttendanceWidget";
-import AttendanceWidget from "../../components/dashboard/AttendanceWidget";
-import LeaveBalanceWidget from "../../components/dashboard/LeaveBalanceWidget";
-import PayslipWidget from "../../components/dashboard/PayslipWidget";
-import HolidaysWidget from "../../components/dashboard/HolidaysWidget";
-import AnnouncementsWidget from "../../components/dashboard/AnnouncementsWidget";
-import BirthdaysWidget from "../../components/dashboard/BirthdaysWidget";
-import SelfAssessmentWidget from "../../components/dashboard/SelfAssessmentWidget";
-import ComplianceCoursesWidget from "../../components/dashboard/ComplianceCoursesWidget";
-import DashboardQuickActions from "../../components/dashboard/DashboardQuickActions";
-import CollapsibleDashboardSection from "../../components/dashboard/CollapsibleDashboardSection";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import TeamApprovalsWidget from "../../components/dashboard/TeamApprovalsWidget.jsx";
+import TeamAttendanceWidget from "../../components/dashboard/TeamAttendanceWidget.jsx";
+import AttendanceWidget from "../../components/dashboard/AttendanceWidget.jsx";
+import LeaveBalanceWidget from "../../components/dashboard/LeaveBalanceWidget.jsx";
+import PayslipWidget from "../../components/dashboard/PayslipWidget.jsx";
+import HolidaysWidget from "../../components/dashboard/HolidaysWidget.jsx";
+import AnnouncementsWidget from "../../components/dashboard/AnnouncementsWidget.jsx";
+import BirthdaysWidget from "../../components/dashboard/BirthdaysWidget.jsx";
+import SelfAssessmentWidget from "../../components/dashboard/SelfAssessmentWidget.jsx";
+import ComplianceCoursesWidget from "../../components/dashboard/ComplianceCoursesWidget.jsx";
+import DashboardQuickActions from "../../components/dashboard/DashboardQuickActions.jsx";
+import CollapsibleDashboardSection from "../../components/dashboard/CollapsibleDashboardSection.jsx";
 
 
 export default function ManagerDashboard({ user }) {

@@ -1,4 +1,4 @@
-import api from "./api";
+import api from "./api.js";
 
 export async function getMyTickets(params = {}) {
   const res = await api.get("/helpdesk/tickets", { params: { ...params, scope: "mine" } });

@@ -1,8 +1,8 @@
 ﻿import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Info, MoreVertical } from "lucide-react";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getHRDashboardSnapshot } from "../../services/hrDashboardService";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getHRDashboardSnapshot } from "../../services/hrDashboardService.js";
 
 const SEVERITY_STYLES = {
   warning: { iconColor: "#d97706", iconBg: "#fef3c7", buttonBg: "var(--primary)", Icon: AlertTriangle },

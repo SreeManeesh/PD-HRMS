@@ -3,7 +3,7 @@
  * Connected to real Asset Management backend APIs.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 /* =========================================================
    INVENTORY

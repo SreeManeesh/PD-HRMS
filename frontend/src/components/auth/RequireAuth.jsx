@@ -5,8 +5,8 @@
  */
 
 import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "../../context/AuthContext";
-import Spinner from "../shared/Spinner";
+import { useAuth } from "../../context/AuthContext.jsx";
+import Spinner from "../shared/Spinner.jsx";
 
 export default function RequireAuth({ children, permission }) {
   const { user, loading, permissions } = useAuth();

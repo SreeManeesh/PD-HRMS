@@ -4,7 +4,7 @@
  * async functions resolving { data } after a simulated network delay.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 /**
  * Get all onboarding records

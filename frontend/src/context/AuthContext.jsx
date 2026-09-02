@@ -2,7 +2,7 @@
 // JWT is stored in localStorage; session is restored on page load via GET /auth/me.
 
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import api from "../services/api";
+import api from "../services/api.js";
 
 // Role accounts for quick sign-in (same credentials as the seeded database).
 const DEMO_ACCOUNTS = [

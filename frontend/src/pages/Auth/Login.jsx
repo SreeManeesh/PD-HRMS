@@ -1,8 +1,8 @@
 ﻿// Sign-in page — supports both email/password and role-based quick access.
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useAuth, DEMO_ACCOUNTS } from "../../context/AuthContext";
-import Spinner from "../../components/shared/Spinner";
+import { useAuth, DEMO_ACCOUNTS } from "../../context/AuthContext.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
 
 /* ─── Feature bullets shown on the left panel ───────── */
 const FEATURES = [

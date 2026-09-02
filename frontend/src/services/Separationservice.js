@@ -3,7 +3,7 @@
  * Connected to real Separation Management backend APIs.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 /* =========================================================
    SEPARATIONS

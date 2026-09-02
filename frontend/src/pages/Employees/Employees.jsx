@@ -8,15 +8,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Filter, Users } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import { getEmployees, createEmployee, updateEmployee } from "../../services/employeeService";
-import { useAuth } from "../../context/AuthContext";
-import { departments, statuses } from "../../mock/employees";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import { getEmployees, createEmployee, updateEmployee } from "../../services/employeeService.js";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { departments, statuses } from "../../mock/employees.js";
 
 const EMPLOYEE_STATUS_META = {
   Active:     { label: "Active",     color: "#16a34a", bg: "#f0fdf4" },

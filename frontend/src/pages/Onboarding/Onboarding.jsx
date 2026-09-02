@@ -7,13 +7,13 @@
 
 import { useState, useEffect } from "react";
 import { Users, CheckCircle2, AlertTriangle, PackageX, Calendar, ChevronRight, Lock } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import { getOnboardingRecords, getOnboardingSummary, updateChecklistItemStatus } from "../../services/onboardingService";
-import { checklistItemStatusMeta, checklistOwnerMeta, CHECKLIST_CATEGORIES } from "../../mock/onboarding";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import { getOnboardingRecords, getOnboardingSummary, updateChecklistItemStatus } from "../../services/onboardingService.js";
+import { checklistItemStatusMeta, checklistOwnerMeta, CHECKLIST_CATEGORIES } from "../../mock/onboarding.js";
 
 function StatCard({ icon: Icon, label, value, color, bg }) {
   return (

@@ -15,12 +15,12 @@
 //   AlertTriangle,
 //   ShieldAlert,
 // } from "lucide-react";
-// import MainLayout from "../../components/layout/MainLayout";
-// import PageHeader from "../../components/shared/PageHeader";
-// import StatusBadge from "../../components/shared/StatusBadge";
-// import Spinner from "../../components/shared/Spinner";
-// import EmptyState from "../../components/shared/EmptyState";
-// import Modal from "../../components/shared/Modal";
+// import MainLayout from "../../components/layout/MainLayout.jsx";
+// import PageHeader from "../../components/shared/PageHeader.jsx";
+// import StatusBadge from "../../components/shared/StatusBadge.jsx";
+// import Spinner from "../../components/shared/Spinner.jsx";
+// import EmptyState from "../../components/shared/EmptyState.jsx";
+// import Modal from "../../components/shared/Modal.jsx";
 // import {
 //   getInventory,
 //   addInventoryItem,
@@ -32,8 +32,8 @@
 //   fulfillRequest,
 //   acknowledgeReceipt,
 //   returnAsset,
-// } from "../../services/assetService";
-// import { ASSET_CATEGORIES, CATEGORIES_REQUIRING_APPROVAL, DATA_BEARING_CATEGORIES, assetStatusMeta, requestStatusMeta } from "../../mock/assets";
+// } from "../../services/assetService.js";
+// import { ASSET_CATEGORIES, CATEGORIES_REQUIRING_APPROVAL, DATA_BEARING_CATEGORIES, assetStatusMeta, requestStatusMeta } from "../../mock/assets.js";
 
 // const ME = { id: "EMP001", name: "Matsya Singh" };
 // const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -565,12 +565,12 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 
 import {
   getInventory,
@@ -584,7 +584,7 @@ import {
   fulfillRequest,
   acknowledgeReceipt,
   returnAsset,
-} from "../../services/assetService";
+} from "../../services/assetService.js";
 
 /* =========================================================
    CONSTANTS

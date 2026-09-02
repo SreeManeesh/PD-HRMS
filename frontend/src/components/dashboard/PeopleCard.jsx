@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Users } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getHRDashboardSnapshot } from "../../services/hrDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getHRDashboardSnapshot } from "../../services/hrDashboardService.js";
 
 export default function PeopleCard() {
   const navigate = useNavigate();

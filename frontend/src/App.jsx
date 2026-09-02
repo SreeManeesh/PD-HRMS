@@ -8,9 +8,9 @@
  * ready to view this through real routing/auth instead.
  */
 
-import { AuthProvider } from "./context/AuthContext";
-import { SearchProvider } from "./context/SearchContext";
-import AppRouter from "./routes/AppRouter";
+import { AuthProvider } from "./context/AuthContext.jsx";
+import { SearchProvider } from "./context/SearchContext.jsx";
+import AppRouter from "./routes/AppRouter.jsx";
 
 export default function App() {
   return (

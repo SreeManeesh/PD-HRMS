@@ -15,12 +15,12 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getSeparations,
   initiateSeparation,
@@ -32,9 +32,9 @@ import {
   revokeAccess,
   convertToAlumni,
   getAlumni,
-} from "../../services/separationService";
+} from "../../services/Separationservice.js";
 
-import { getEmployees } from "../../services/employeeService";
+import { getEmployees } from "../../services/employeeService.js";
 
 const currency = (n) => `?${Number(n).toLocaleString("en-IN")}`;
 const fmtDate = (value) => {

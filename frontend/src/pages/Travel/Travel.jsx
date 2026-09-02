@@ -16,12 +16,12 @@ import {
   IndianRupee,
   ReceiptText,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getAllRequests,
   raiseRequest,
@@ -34,8 +34,8 @@ import {
   resolveSettlementBalance,
   closeZeroBalanceSettlement,
   getMaskedPassportRef,
-} from "../../services/travelService";
-import { TRAVEL_MODES, requestStatusMeta, travelPolicy, employeeGradeDirectory } from "../../mock/travel";
+} from "../../services/Travelservice.js";
+import { TRAVEL_MODES, requestStatusMeta, travelPolicy, employeeGradeDirectory } from "../../mock/Travel.js";
 
 const ME = { id: "EMP001", name: "Matsya Singh", grade: "L4" };
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });

@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Clock } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getTodayAttendance } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getTodayAttendance } from "../../services/employeeDashboardService.js";
 
 export default function AttendanceWidget() {
   const navigate = useNavigate();

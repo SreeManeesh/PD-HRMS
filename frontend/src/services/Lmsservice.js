@@ -3,7 +3,7 @@
  * Mirrors leaveService/attendanceService: async functions resolving to { data }.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 export const getCourses = async () => {
   const res = await api.get("/lms/courses");

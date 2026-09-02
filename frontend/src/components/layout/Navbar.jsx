@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSearch } from "../../context/SearchContext";
-import { useAuth } from "../../context/AuthContext";
-import { getInboxNotifications, markAllRead as markAllNotificationsRead, markAsRead } from "../../services/notificationService";
+import { useSearch } from "../../context/SearchContext.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { getInboxNotifications, markAllRead as markAllNotificationsRead, markAsRead } from "../../services/notificationService.js";
 
 /* ─── Constants ──────────────────────────────────────── */
 const TYPE_COLOR = {

@@ -1,4 +1,4 @@
-import api from "./api";
+import api from "./api.js";
 
 export const getPolicies = async () => (await api.get("/policies")).data;
 export const createPolicy = async (policy) => (await api.post("/policies", policy)).data;

@@ -7,10 +7,10 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Mail, Phone, MapPin, Calendar, Building2, Briefcase } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import { getEmployee } from "../../services/employeeService";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import { getEmployee } from "../../services/employeeService.js";
 
 const EMPLOYEE_STATUS_META = {
   Active:     { label: "Active",     color: "#16a34a", bg: "#f0fdf4" },

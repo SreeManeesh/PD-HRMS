@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BriefcaseBusiness, CheckCircle2, FileCheck2, ShieldCheck } from "lucide-react";
 import { useParams } from "react-router-dom";
-import { decideCandidateOffer, getCandidatePortal, getPublicJobs, submitCandidateApplication, uploadCandidateDocument } from "../../services/candidateLifecycleService";
+import { decideCandidateOffer, getCandidatePortal, getPublicJobs, submitCandidateApplication, uploadCandidateDocument } from "../../services/candidateLifecycleService.js";
 import "./CandidatePortal.css";
 
 const EMPTY_FORM = { requisitionId: "", firstName: "", lastName: "", email: "", phone: "", resumeSummary: "" };

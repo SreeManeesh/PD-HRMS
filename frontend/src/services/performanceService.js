@@ -4,7 +4,7 @@
  * Each function returns { data } matching the frontend's API contract.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 export const getGoals = async (employeeId) => {
   const res = await api.get("/performance/goals", { params: { employeeId } });

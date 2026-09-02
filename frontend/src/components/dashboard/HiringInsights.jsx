@@ -1,9 +1,9 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Users2 } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getHRDashboardSnapshot } from "../../services/hrDashboardService";
-import HiringChart from "./HiringChart";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getHRDashboardSnapshot } from "../../services/hrDashboardService.js";
+import HiringChart from "./HiringChart.jsx";
 
 export default function HiringInsights() {
   const navigate = useNavigate();

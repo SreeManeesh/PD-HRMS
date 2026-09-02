@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Receipt } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getPayslipStatus } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getPayslipStatus } from "../../services/employeeDashboardService.js";
 
 export default function PayslipWidget() {
   const navigate = useNavigate();

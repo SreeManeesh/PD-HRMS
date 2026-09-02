@@ -1,4 +1,4 @@
-import api from "./api";
+import api from "./api.js";
 
 const data = (response) => ({ data: response.data.data });
 

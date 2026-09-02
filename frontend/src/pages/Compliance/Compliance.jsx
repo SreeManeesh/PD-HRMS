@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Archive, CalendarClock, CheckCircle2, LayoutDashboard, Lock, Plus, Search, ShieldAlert, Unlock } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import { useAuth } from "../../context/AuthContext";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   addObligation, applyCaseLegalHold, applyRecordLegalHold, clearCaseLegalHold,
   clearRecordLegalHold, getCaseDetail, getCaseSummaries, getComplianceAuditLog,
   getDashboardSummary, getObligations, getRetentionRecords, markObligationFiled,
   queryAuditFeed, runRetentionJob,
-} from "../../services/Complianceservice";
+} from "../../services/Complianceservice.js";
 
 const CATEGORIES = ["PF Filing", "ESI Filing", "TDS Filing", "POSH Training Review", "Policy Acknowledgement Review", "Other Statutory"];
 const statusMeta = {

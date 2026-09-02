@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "../../context/AuthContext";
-import { getLifecycleApplications, firstApproveApplication, secondApproveApplication, rejectLifecycleApplication, verifyCandidateDocument, convertCandidateToEmployee } from "../../services/candidateLifecycleService";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { getLifecycleApplications, firstApproveApplication, secondApproveApplication, rejectLifecycleApplication, verifyCandidateDocument, convertCandidateToEmployee } from "../../services/candidateLifecycleService.js";
 
 const btn = { border: 0, borderRadius: 7, padding: "8px 12px", background: "var(--primary)", color: "white", fontWeight: 700, cursor: "pointer", marginRight: 7, marginTop: 7 };
 const statusColor = { "HR Review": "#d97706", "Second Approval": "#7c3aed", "Offer Sent": "#0284c7", "Employee Created": "#16a34a", Rejected: "#dc2626" };

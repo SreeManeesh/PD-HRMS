@@ -1,4 +1,4 @@
-import api from "./api";
+import api from "./api.js";
 
 const unwrap = (response) => ({ data: response.data.data, total: response.data.total });
 

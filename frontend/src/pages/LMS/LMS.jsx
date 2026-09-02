@@ -16,13 +16,13 @@ import {
   Download,
   ShieldCheck,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import { saveBlobAsFile } from "../../utils/certificateDownload";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import { saveBlobAsFile } from "../../utils/certificateDownload.js";
 import {
   getCourses,
   addCourse,
@@ -41,13 +41,13 @@ import {
   completeCourseContent,
   uploadCourseContentFile,
   uploadCourseThumbnail,
-} from "../../services/lmsService";
+} from "../../services/Lmsservice.js";
 
-import { getEmployees } from "../../services/employeeService";
-import CourseContentViewer from "../../pages/LMS/CourseContentViewer";
-import { getFileUrl } from "../../utils/uploadFileUrl";
-import CertificateManagement from "./CertificateManagement";
-import { useAuth } from "../../context/AuthContext";
+import { getEmployees } from "../../services/employeeService.js";
+import CourseContentViewer from "./CourseContentViewer.jsx";
+import { getFileUrl } from "../../utils/uploadFileUrl.js";
+import CertificateManagement from "./CertificateManagement.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 
 

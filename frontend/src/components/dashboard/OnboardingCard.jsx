@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect } from "react";
 import { UserPlus, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { getOnboardingRecords } from "../../services/onboardingService";
+import { getOnboardingRecords } from "../../services/onboardingService.js";
 
 export default function OnboardingCard() {
   const navigate = useNavigate();

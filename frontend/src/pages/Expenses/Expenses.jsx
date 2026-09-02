@@ -7,16 +7,16 @@
 
 import { useState, useEffect } from "react";
 import { Plus, AlertTriangle, Paperclip, Check, X, Copy } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getMyExpenseClaims, getPendingApprovals, submitExpenseClaim, approveClaim, rejectClaim,
-} from "../../services/expenseService";
-import { EXPENSE_CATEGORIES, EXPENSE_POLICY, expenseStatusMeta, LOCKED_STATUSES } from "../../mock/expenses";
+} from "../../services/Expenseservice.js";
+import { EXPENSE_CATEGORIES, EXPENSE_POLICY, expenseStatusMeta, LOCKED_STATUSES } from "../../mock/Expenses.js";
 
 const CURRENT_EMPLOYEE = { id: "EMP014", name: "Ananya Verma" };
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });

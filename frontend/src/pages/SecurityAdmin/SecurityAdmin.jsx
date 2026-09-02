@@ -19,12 +19,12 @@ import {
   CheckCircle2,
   DatabaseBackup,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getRoles,
   grantPermission,
@@ -52,8 +52,8 @@ import {
   executeRestore,
   getAuditLog,
   verifyAuditChain,
-} from "../../services/securityService";
-import { PERMISSION_CATALOG, MFA_RESTRICTED_ROLE_IDS, userStatusMeta, severityMeta } from "../../mock/security";
+} from "../../services/Securityservice.js";
+import { PERMISSION_CATALOG, MFA_RESTRICTED_ROLE_IDS, userStatusMeta, severityMeta } from "../../mock/Security.js";
 
 const ME_NAME = "Matsya Singh";
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "�");

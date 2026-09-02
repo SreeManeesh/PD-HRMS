@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { FileCheck2 } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getPendingPolicies } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getPendingPolicies } from "../../services/employeeDashboardService.js";
 
 const formatDate = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "No deadline";
 

@@ -12,13 +12,13 @@ import {
   History,
   CheckCircle2,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import { useAuth } from "../../context/AuthContext";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getPolicies,
   createPolicy,
@@ -27,8 +27,8 @@ import {
   getAcknowledgements,
   getAllAcknowledgements,
   acknowledgePolicy,
-} from "../../services/Policyservice";
-import { policyStatusMeta, ackStatusMeta } from "../../mock/Policies";
+} from "../../services/Policyservice.js";
+import { policyStatusMeta, ackStatusMeta } from "../../mock/Policies.js";
 const fmtDate = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
 
 const formatDevice = (userAgent = "") => {

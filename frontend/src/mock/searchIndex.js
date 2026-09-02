@@ -5,9 +5,9 @@
  * returns the same shape.
  */
 
-import { employees } from "./employees";
-import { leaveRequests } from "./leave";
-import { payrollRuns } from "./payroll";
+import { employees } from "./employees.js";
+import { leaveRequests } from "./leave.js";
+import { payrollRuns } from "./payroll.js";
 
 /**
  * Builds the global search corpus at startup.

@@ -7,7 +7,7 @@
  * Usage (from AuthContext):
  *   <WelcomeCard />
  */
-import { useAuth } from "../../context/AuthContext";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 export default function WelcomeCard() {
   const { user } = useAuth();

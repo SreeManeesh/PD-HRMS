@@ -11,8 +11,8 @@
  */
 
 import { useState, useEffect } from "react";
-import Sidebar from "./Sidebar";
-import Navbar from "./Navbar";
+import Sidebar from "./Sidebar.jsx";
+import Navbar from "./Navbar.jsx";
 
 export default function MainLayout({ children }) {
   // Open by default on desktop, closed on mobile

@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bell, CheckCheck, History, Mail, Plus, Send, Settings2, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import StatusBadge from "../../components/shared/StatusBadge";
-import { useAuth } from "../../context/AuthContext";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   dispatchTestNotification, getInboxNotifications, getMergeFieldCatalog,
   getNotificationHistory, getTemplates, getUserPreferences, markAllRead,
   markAsRead, saveTemplate, updateUserPreference,
-} from "../../services/notificationService";
+} from "../../services/notificationService.js";
 import "./Notifications.css";
 
 const CATEGORIES = ["Leave Approved", "Leave Rejected", "Payslip Ready", "Ticket Resolved", "Policy Published", "New Device Login", "Compliance Training Due", "Expense Approved", "Onboarding Reminder"];

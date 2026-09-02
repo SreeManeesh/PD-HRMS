@@ -14,12 +14,12 @@ import {
   Clock3,
   XCircle,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getMyLeaveBalance,
   getLeaveRequests,
@@ -27,9 +27,9 @@ import {
   applyLeave,
   approveLeave,
   rejectLeave,
-} from "../../services/leaveService";
-import { useAuth } from "../../context/AuthContext";
-import { leaveStatusMeta } from "../../mock/leave";
+} from "../../services/leaveService.js";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { leaveStatusMeta } from "../../mock/leave.js";
 import "./Leave.css";
 
 const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626"];

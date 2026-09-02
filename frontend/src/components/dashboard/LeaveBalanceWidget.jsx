@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Wallet } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getLeaveBalanceSummary } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getLeaveBalanceSummary } from "../../services/employeeDashboardService.js";
 
 export default function LeaveBalanceWidget() {
   const navigate = useNavigate();

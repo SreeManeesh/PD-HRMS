@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Megaphone } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getActiveAnnouncements } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getActiveAnnouncements } from "../../services/employeeDashboardService.js";
 
 export default function AnnouncementsWidget() {
   const navigate = useNavigate();

@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { ClipboardList } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getTeamApprovalsCount } from "../../services/managerDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getTeamApprovalsCount } from "../../services/Managerdashboardservice.js";
 
 export default function TeamApprovalsWidget() {
   const navigate = useNavigate();

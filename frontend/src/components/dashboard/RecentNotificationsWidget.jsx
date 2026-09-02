@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getRecentNotifications } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getRecentNotifications } from "../../services/employeeDashboardService.js";
 
 export default function RecentNotificationsWidget() {
   const navigate = useNavigate();

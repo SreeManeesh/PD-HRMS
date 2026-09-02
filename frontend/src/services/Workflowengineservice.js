@@ -4,7 +4,7 @@
  * Each function mirrors the page's expected `{ data }` envelope.
  */
 
-import api from "./api";
+import api from "./api.js";
 
 export const getRoster = async () => {
   const res = await api.get("/workflow/roster");

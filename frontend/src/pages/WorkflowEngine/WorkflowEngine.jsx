@@ -10,12 +10,12 @@
 
 import { useState, useEffect } from "react";
 import { GitBranch, ListChecks, History, Plus, RefreshCw, Check, X, UserPlus } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import { useAuth } from "../../context/AuthContext";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getRoster,
   getDefinitions,
@@ -28,7 +28,7 @@ import {
   actOnStep,
   runSlaCheck,
   manuallyAssignApprover,
-} from "../../services/Workflowengineservice";
+} from "../../services/Workflowengineservice.js";
 
 const definitionStatusMeta = {
   Active: { color: "#16a34a", bg: "#f0fdf4" },

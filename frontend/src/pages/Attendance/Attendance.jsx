@@ -6,14 +6,14 @@
 
 import { useState, useEffect } from "react";
 import { Clock, UserCheck, UserX, Coffee, Home } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import { getMyAttendance, getTeamSummary, checkIn, checkOut } from "../../services/attendanceService";
-import { useAuth } from "../../context/AuthContext";
-import { attendanceStatusMeta } from "../../mock/attendance";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import { getMyAttendance, getTeamSummary, checkIn, checkOut } from "../../services/attendanceService.js";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { attendanceStatusMeta } from "../../mock/attendance.js";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 

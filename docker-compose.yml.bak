@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
 
   db:
@@ -8,6 +10,8 @@ services:
       POSTGRES_USER: hrms_admin
       POSTGRES_PASSWORD: hrms_password
       POSTGRES_DB: hrms_db
+    ports:
+      - "1003:5432"
     volumes:
       - hrms_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,26 +21,29 @@ services:
       retries: 10
 
   api:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: hrms-api
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file:
+      - ./backend/.env
     environment:
-      DATABASE_URL: postgresql://hrms_admin:hrms_password@db:5432/hrms_db
+      DATABASE_URL: "postgresql://hrms_admin:hrms_password@db:5432/hrms_db?schema=public"
     ports:
       - "1004:4000"
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy && npm run prisma:seed && node dist/index.js"
+    command: sh -c "npx prisma migrate deploy && npm run prisma:seed && node dist/src/index.js"
 
   minio:
     image: minio/minio:latest
     container_name: hrms-minio
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: hrms_minio
-      MINIO_ROOT_PASSWORD: hrms_minio_password
+      MINIO_ROOT_USER: hrmsadmin
+      MINIO_ROOT_PASSWORD: hrmsminio123
     ports:
       - "1005:9000"
       - "1006:9001"
@@ -44,9 +51,9 @@ services:
       - hrms_minio_data:/data
     command: server /data --console-address ":9001"
 
-  frontend:
-    image: nginx:alpine
-    container_name: hrms-frontend
+  frontend:                      ← the block goes HERE,
+    image: nginx:alpine            at the same indent level
+    container_name: hrms-frontend  as db:, api:, minio:
     restart: unless-stopped
     ports:
       - "1007:80"
@@ -56,20 +63,6 @@ services:
     depends_on:
       - api
 
-  proxy:
-    image: caddy:alpine
-    container_name: hrms-proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    depends_on:
-      - frontend
-
 volumes:
   hrms_pgdata:
-  hrms_minio_data:
-  caddy_data:
-  caddy_config:
+  hrms_minio_data:                ← delete any frontend lines from here

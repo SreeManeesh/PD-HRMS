@@ -1,8 +1,8 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { GraduationCap } from "lucide-react";
-import DashboardWidgetCard from "./DashboardWidgetCard";
-import { useDashboardWidget } from "../../hooks/useDashboardWidget";
-import { getUpcomingComplianceCourses } from "../../services/employeeDashboardService";
+import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
+import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
+import { getUpcomingComplianceCourses } from "../../services/employeeDashboardService.js";
 
 const fmtDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null;
 

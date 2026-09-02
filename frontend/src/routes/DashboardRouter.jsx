@@ -1,8 +1,8 @@
-﻿import { useAuth } from "../context/AuthContext";
-import EmployeeDashboard from "../pages/Dashboard/EmployeeDashboard";
-import HRDashboard from "../pages/Dashboard/HRDashboard";
-import ManagerDashboard from "../pages/Dashboard/ManagerDashboard";
-import AdminDashboard from "../pages/Dashboard/Admindashboard";
+﻿import { useAuth } from "../context/AuthContext.jsx";
+import EmployeeDashboard from "../pages/Dashboard/EmployeeDashboard.jsx";
+import HRDashboard from "../pages/Dashboard/HRDashboard.jsx";
+import ManagerDashboard from "../pages/Dashboard/ManagerDashboard.jsx";
+import AdminDashboard from "../pages/Dashboard/AdminDashboard.jsx";
 
 /**
  * Picks which dashboard to render based on the logged-in user's real role

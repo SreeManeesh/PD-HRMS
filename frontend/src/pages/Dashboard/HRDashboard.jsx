@@ -1,12 +1,12 @@
-﻿import MainLayout from "../../components/layout/MainLayout";
-import WelcomeCard from "../../components/shared/Dashboardgreeting";
-import AlertCard from "../../components/dashboard/AlertCard";
-import HiringInsights from "../../components/dashboard/HiringInsights";
-import QuickActions from "../../components/dashboard/QuickActions";
-import PeopleCard from "../../components/dashboard/PeopleCard";
-import PayrollCard from "../../components/dashboard/PayrollCard";
-import ResourcesCard from "../../components/dashboard/ResourcesCard";
-import HiringChart from "../../components/dashboard/HiringChart";
+﻿import MainLayout from "../../components/layout/MainLayout.jsx";
+import WelcomeCard from "../../components/shared/Dashboardgreeting.jsx";
+import AlertCard from "../../components/dashboard/AlertCard.jsx";
+import HiringInsights from "../../components/dashboard/HiringInsights.jsx";
+import QuickActions from "../../components/dashboard/QuickActions.jsx";
+import PeopleCard from "../../components/dashboard/PeopleCard.jsx";
+import PayrollCard from "../../components/dashboard/PayrollCard.jsx";
+import ResourcesCard from "../../components/dashboard/ResourcesCard.jsx";
+import HiringChart from "../../components/dashboard/HiringChart.jsx";
 
 export default function HRDashboard({ topSlot = null }) {
   return (

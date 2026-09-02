@@ -17,12 +17,12 @@ import {
   Circle,
   Sparkles,
 } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
 import {
   getGoals,
   addGoal,
@@ -50,8 +50,8 @@ import {
   approveManagerGoal,
   getAdminEmployeePerformanceDetail,
   rejectManagerGoal,
-} from "../../services/performanceService";
-import { goalStatusMeta, reviewPhaseMeta, feedbackTypeMeta, colleagues } from "../../mock/performance";
+} from "../../services/performanceService.js";
+import { goalStatusMeta, reviewPhaseMeta, feedbackTypeMeta, colleagues } from "../../mock/Performance.js";
 
 
 function getCurrentEmployeeCode() {

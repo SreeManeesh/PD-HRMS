@@ -7,18 +7,18 @@
 
 import { useState, useEffect } from "react";
 import { Plus, Paperclip, AlertTriangle, Lock, RotateCcw, Eye, MessageSquare } from "lucide-react";
-import MainLayout from "../../components/layout/MainLayout";
-import PageHeader from "../../components/shared/PageHeader";
-import StatusBadge from "../../components/shared/StatusBadge";
-import Spinner from "../../components/shared/Spinner";
-import EmptyState from "../../components/shared/EmptyState";
-import Modal from "../../components/shared/Modal";
-import { useAuth } from "../../context/AuthContext";
+import MainLayout from "../../components/layout/MainLayout.jsx";
+import PageHeader from "../../components/shared/PageHeader.jsx";
+import StatusBadge from "../../components/shared/StatusBadge.jsx";
+import Spinner from "../../components/shared/Spinner.jsx";
+import EmptyState from "../../components/shared/EmptyState.jsx";
+import Modal from "../../components/shared/Modal.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getMyTickets, getAgentQueue, getAllQueueNames, raiseTicket, resolveTicket, reopenTicket,
   addTicketComment, assignTicket, updateTicketStatus,
-} from "../../services/Helpdeskservice";
-import { TICKET_CATEGORIES, ticketStatusMeta } from "../../mock/helpdesk";
+} from "../../services/Helpdeskservice.js";
+import { TICKET_CATEGORIES, ticketStatusMeta } from "../../mock/Helpdesk.js";
 
 const fmtDateTime = (d) => new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 const cleanText = (value) => typeof value === "string" ? value.replaceAll("�", "-") : value;
