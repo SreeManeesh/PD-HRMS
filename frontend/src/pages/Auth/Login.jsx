@@ -72,18 +72,28 @@ export default function Login() {
           pointerEvents: "none",
         }} />
 
-        {/* Robot mascot */}
-        <img
-          src="/robot.png"
-          alt="HRMS Assistant"
-          style={{
-            position: "absolute",
-            top: "40px",
-            right: "40px",
-            width: "130px",
-            filter: "drop-shadow(0 8px 24px rgba(15,118,110,0.4))",
-          }}
-        />
+                {/* Robot mascot */}
+        <div style={{
+          position: "absolute",
+          top: "36px",
+          right: "48px",
+          width: "150px",
+          height: "150px",
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(45,212,191,0.18) 0%, rgba(45,212,191,0.05) 60%, transparent 75%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}>
+          <img
+            src="/robot.png"
+            alt="HRMS Assistant"
+            style={{
+              width: "110px",
+              filter: "drop-shadow(0 10px 20px rgba(0,0,0,0.35))",
+            }}
+          />
+        </div>
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "52px" }}>
           <img
@@ -315,7 +325,7 @@ export default function Login() {
               <p style={{ fontSize: "11px", color: "#8ba3b8", marginTop: "12px", textAlign: "center" }}>
                 Use your assigned credentials or select a role above to explore.
                 <br />
-                Use <span style={{ fontWeight: "bold" }}>Password@123</span> as password to login.
+                Use <span style={{ fontWeight: "bold" }}>Proteccio@Data@2026@</span> as password to login.
               </p>
             </div>
           </div>
