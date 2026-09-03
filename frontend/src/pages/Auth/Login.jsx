@@ -45,7 +45,7 @@ export default function Login() {
       display: "flex",
       background: "#0d1b2a",
     }}>
-      {/* ── Left decorative panel (hidden on small screens via inline media trick) ── */}
+      {/* ── Left decorative panel ── */}
       <div style={{
         flex: "0 0 45%",
         display: "flex",
@@ -72,30 +72,8 @@ export default function Login() {
           pointerEvents: "none",
         }} />
 
-                {/* Robot mascot */}
-        <div style={{
-          position: "absolute",
-          top: "36px",
-          right: "48px",
-          width: "150px",
-          height: "150px",
-          borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(45,212,191,0.18) 0%, rgba(45,212,191,0.05) 60%, transparent 75%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}>
-          <img
-            src="/robot.png"
-            alt="HRMS Assistant"
-            style={{
-              width: "110px",
-              filter: "drop-shadow(0 10px 20px rgba(0,0,0,0.35))",
-            }}
-          />
-        </div>
         {/* Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "52px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "24px" }}>
           <img
             src="/logo.png"
             alt="Proteccio HRMS"
@@ -107,17 +85,54 @@ export default function Login() {
           </div>
         </div>
 
-        <h1 style={{ fontSize: "36px", fontWeight: 800, color: "#f0f9ff", lineHeight: 1.2, letterSpacing: "-0.5px", marginBottom: "16px" }}>
+        {/* Robot hero — floating mascot with orbiting icons and glow platform */}
+        <div style={{ position: "relative", display: "flex", justifyContent: "center", marginBottom: "24px" }}>
+          {/* orbiting rings (decorative) */}
+          <div className="login-orbit" style={{ width: "330px", height: "330px", top: "-25px", left: "50%", marginLeft: "-165px" }}>
+            <div className="login-orbit-icon" style={{ top: "-24px", left: "50%", marginLeft: "-24px" }}>👥</div>
+          </div>
+          <div className="login-orbit" style={{ width: "230px", height: "230px", top: "15px", left: "50%", marginLeft: "-115px", animationDirection: "reverse", animationDuration: "32s" }}>
+            <div className="login-orbit-icon" style={{ bottom: "-18px", left: "50%", marginLeft: "-24px" }}>🔒</div>
+            <div className="login-orbit-icon" style={{ top: "35px", left: "-26px" }}>📊</div>
+          </div>
+
+          {/* the robot */}
+          <img
+            className="login-robot"
+            src="/robot-hero.png"
+            alt="Proteccio HRMS Assistant"
+            style={{
+              width: "250px",
+              position: "relative",
+              zIndex: 1,
+              filter: "drop-shadow(0 18px 36px rgba(16,185,129,0.35))",
+            }}
+          />
+
+          {/* pulsing glow platform */}
+          <div className="login-platform" style={{
+            position: "absolute",
+            bottom: "-14px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "200px",
+            height: "32px",
+            borderRadius: "50%",
+            background: "radial-gradient(ellipse, rgba(16,185,129,0.5) 0%, rgba(16,185,129,0.15) 55%, transparent 75%)",
+          }} />
+        </div>
+
+        <h1 style={{ fontSize: "32px", fontWeight: 800, color: "#f0f9ff", lineHeight: 1.2, letterSpacing: "-0.5px", marginBottom: "14px" }}>
           Your complete<br />
           <span style={{ color: "#2dd4bf" }}>HR platform.</span>
         </h1>
 
-        <p style={{ fontSize: "15px", color: "#8ba3b8", lineHeight: 1.7, marginBottom: "44px", maxWidth: "360px" }}>
+        <p style={{ fontSize: "15px", color: "#8ba3b8", lineHeight: 1.7, marginBottom: "28px", maxWidth: "360px" }}>
           Everything your team needs — from payroll to performance — in one powerful, easy-to-use suite.
         </p>
 
         {/* Feature list */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {FEATURES.map((f, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: "14px" }}>
               <span style={{
@@ -238,13 +253,11 @@ export default function Login() {
                     onMouseLeave={(e) => (e.currentTarget.style.color = "#5a7a8e")}
                   >
                     {showPassword ? (
-                      // Eye-off icon (password visible → click to hide)
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
                         <line x1="1" y1="1" x2="23" y2="23" />
                       </svg>
                     ) : (
-                      // Eye icon (password hidden → click to show)
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
@@ -324,8 +337,6 @@ export default function Login() {
 
               <p style={{ fontSize: "11px", color: "#8ba3b8", marginTop: "12px", textAlign: "center" }}>
                 Use your assigned credentials or select a role above to explore.
-                <br />
-                Use <span style={{ fontWeight: "bold" }}>Proteccio@Data@2026@</span> as password to login.
               </p>
             </div>
           </div>
