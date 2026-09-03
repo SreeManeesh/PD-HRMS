@@ -325,7 +325,7 @@ export default function Login() {
               <p style={{ fontSize: "11px", color: "#8ba3b8", marginTop: "12px", textAlign: "center" }}>
                 Use your assigned credentials or select a role above to explore.
                 <br />
-                Use <span style={{ fontWeight: "bold" }}>Proteccio@Data@2026@</span> as password to login.
+                Please Contact to <span style={{ fontWeight: "bold" }}>Proteccio Data Admin</span> for credentials to login.
               </p>
             </div>
           </div>
