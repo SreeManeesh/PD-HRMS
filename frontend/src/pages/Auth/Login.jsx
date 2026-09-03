@@ -72,6 +72,18 @@ export default function Login() {
           pointerEvents: "none",
         }} />
 
+        {/* Robot mascot */}
+        <img
+          src="/robot.png"
+          alt="HRMS Assistant"
+          style={{
+            position: "absolute",
+            top: "40px",
+            right: "40px",
+            width: "130px",
+            filter: "drop-shadow(0 8px 24px rgba(15,118,110,0.4))",
+          }}
+        />
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "52px" }}>
           <img
