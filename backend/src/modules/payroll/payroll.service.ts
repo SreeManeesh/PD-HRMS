@@ -221,7 +221,19 @@ export async function getPayslipPdf(id: string) {
 
   const earningsRows = [...rows.earnings];
   const deductionsRows = [...rows.deductions];
-  const employerRows = [...rows.employer];
+
+  // Employer-side costs: prefer the persisted contribution amounts (authoritative,
+  // always reflects what was processed), falling back to the designer engine's
+  // employer components when the slip predates contribution tracking.
+  const storedEmployer = (slip.employerContributions ?? {}) as Record<string, number>;
+  const employerEntries = Object.entries(storedEmployer).filter(([, v]) => Number(v) > 0);
+  const employerRows =
+    employerEntries.length > 0
+      ? employerEntries.map(([k, v]) => ({
+          label: employerLabel(blueprint, k),
+          amount: Number(v),
+        }))
+      : [...rows.employer];
 
   const grossTotal = computed
     ? Math.round(computed.earningsTotal)
@@ -230,6 +242,21 @@ export async function getPayslipPdf(id: string) {
     ? Math.round(computed.deductionsTotal)
     : Math.round(deductionsRows.reduce((s, d) => s + d.amount, 0));
   const net = computed ? Math.round(computed.net) : Math.round(netPay);
+
+  // Attendance summary from the reconciliation stored on the slip (Step 2/4).
+  const att = (slip.attendanceSummary ?? {}) as Record<string, unknown>;
+  const attendanceRows =
+    slip.attendanceSummary && Object.keys(slip.attendanceSummary as object).length
+      ? [
+          { label: "Working Days", value: String(att.workingDays ?? 0) },
+          { label: "Present Days", value: String(att.presentDays ?? 0) },
+          { label: "Late Days", value: String(att.lateDays ?? 0) },
+          { label: "Paid Leave Days", value: String(att.paidLeaveDays ?? 0) },
+          { label: "Unpaid (LOP) Days", value: String(att.unpaidLeaveDays ?? 0) },
+          { label: "Overtime Hours", value: String(att.overtimeHours ?? 0) },
+          { label: "Attendance %", value: att.ratio !== undefined ? `${Math.round(Number(att.ratio) * 100)}%` : "—" },
+        ]
+      : undefined;
 
   const buffer = await generatePayslipPdf(blueprint, {
     employee: {
@@ -244,9 +271,28 @@ export async function getPayslipPdf(id: string) {
     earnings: earningsRows,
     deductions: deductionsRows,
     employer: employerRows,
+    attendance: attendanceRows,
   });
 
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
+}
+
+/** Map a stored employer-contribution key onto a blueprint employer component
+ *  label so the PDF section matches the designer's terminology. */
+function employerLabel(blueprint: Blueprint, key: string): string {
+  const hint: Record<string, string> = {
+    providentFund: "epf_employer",
+    esi: "esi_employer",
+    gratuity: "gratuity",
+  };
+  const fallback: Record<string, string> = {
+    providentFund: "EPF (Employer)",
+    esi: "ESI (Employer)",
+    gratuity: "Gratuity",
+  };
+  const target = hint[key];
+  const comp = target ? blueprint.components.find((c) => c.id.toLowerCase() === target) : undefined;
+  return comp?.label ?? fallback[key] ?? key;
 }
 
 const FALLBACK_UI = { x: 0, y: 0, w: 60, h: 24 };

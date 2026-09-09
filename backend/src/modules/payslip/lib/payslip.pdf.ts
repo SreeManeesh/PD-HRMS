@@ -11,6 +11,7 @@ export interface RenderData {
   earnings: { label: string; amount: number }[];
   deductions: { label: string; amount: number }[];
   employer?: { label: string; amount: number }[];
+  attendance?: { label: string; value: string }[];
   tax?: Record<string, string | number>;
 }
 
@@ -147,6 +148,19 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
       doc.font("Helvetica").fontSize(9);
       for (const ec of data.employer) {
         doc.fillColor("#64748b").text(`${ec.label}: ${inr(ec.amount)}`, m.left + 8, y);
+        y += 12;
+      }
+      y += 6;
+    }
+
+    // ── Attendance summary (informational) ──
+    if (data.attendance?.length) {
+      doc.fillColor("#475569").fontSize(10).font("Helvetica-Bold")
+        .text("Attendance Summary", m.left, y);
+      y += 14;
+      doc.font("Helvetica").fontSize(9);
+      for (const a of data.attendance) {
+        doc.fillColor("#475569").text(`${a.label}: ${a.value}`, m.left + 8, y);
         y += 12;
       }
       y += 6;
