@@ -427,8 +427,8 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     "date", "leave",
   ] as const;
   const headerRegex: Record<(typeof knownKeys)[number], RegExp> = {
-    name: /name|employee/,
-    id: /employee\s?code|emp\s?id|(^|\s)id($|\s)|^id$/i,
+    name: /\bname\b|^employee$/i,
+    id: /employee\s*(id|code|number|no)|emp\s*\.?\s*id|\bid\b/i,
     date: /^date$|^date\s|date\b/i,
     login: /login|check\s?in|\bin($|\s)/i,
     logout: /logout|check\s?out|\bout($|\s)|punch\s?out/i,
