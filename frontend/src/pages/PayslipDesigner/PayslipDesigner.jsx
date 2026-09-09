@@ -29,6 +29,7 @@ import {
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import { getCompanyBranding } from "../../services/payslipBrandingService.js";
+import { assetUrl } from "../../utils/assetUrl.js";
 import { FIELD_TREE, inr } from "./format.js";
 import "./PayslipDesigner.css";
 
@@ -533,10 +534,10 @@ export function PayslipDesignerPanel() {
     const deductions = allVisible.filter((c) => c.kind === "deduction" && (!c.nestId || nestedComps.includes(c)));
     return `<div class="pd-preview-sheet" style="font-family:${t.font};color:#0e1e2c;max-width:640px;margin:0 auto">
       <div style="background:${t.primaryColor};color:#fff;border-radius:6px;padding:14px 18px;display:flex;align-items:center;gap:12px">
-        ${blueprint.theme.logo ? `<img src="${blueprint.theme.logo}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : ""}
+        ${companyBranding?.logoUrl ? `<img src="${assetUrl(companyBranding.logoUrl)}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : (blueprint.theme.logo ? `<img src="${blueprint.theme.logo}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : "")}
         <div>
           <h2 style="margin:0;font-size:16px">${companyBranding?.companyName || blueprint.settings?.companyName || "Company"}</h2>
-          <div style="opacity:.85;font-size:12px">Salary Payslip · FY ${blueprint.financialYear}</div>
+          <div style="opacity:.85;font-size:12px">${companyBranding?.tagline || `Salary Payslip · FY ${blueprint.financialYear}`}</div>
         </div>
       </div>
       ${sec("Earnings", earnings, t.primaryColor)}
@@ -545,7 +546,7 @@ export function PayslipDesignerPanel() {
         <span>Net Pay</span><span>${calcResult ? inr(calcResult.net) : "—"}</span>
       </div>
     </div>`;
-  }, [blueprint, calcResult, companyBranding?.companyName]);
+  }, [blueprint, calcResult, companyBranding?.companyName, companyBranding?.logoUrl, companyBranding?.tagline]);
 
   const engSummary = useMemo(() => {
     if (!calcResult) return [];

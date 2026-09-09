@@ -11,7 +11,7 @@ import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
-import { getMyAttendance, getTeamSummary, checkIn, checkOut, uploadAttendanceFile } from "../../services/attendanceService.js";
+import { getMyAttendance, checkIn, checkOut, uploadAttendanceFile } from "../../services/attendanceService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { attendanceStatusMeta } from "../../mock/attendance.js";
 
@@ -45,7 +45,6 @@ export default function Attendance() {
   const [month, setMonth]     = useState(now.getMonth() + 1);
   const [year, setYear]       = useState(now.getFullYear());
   const [records, setRecords] = useState([]);
-  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [checkedIn, setCheckedIn] = useState(false);
@@ -67,12 +66,8 @@ export default function Attendance() {
     try {
       // Staff see the whole team's monthly attendance; employees only their own.
       const isStaff = user.role !== "EMPLOYEE";
-      const [recRes, sumRes] = await Promise.all([
-        getMyAttendance({ month, year, ...(isStaff ? {} : { employeeId: user.id }) }),
-        getTeamSummary({ month, year }),
-      ]);
+      const recRes = await getMyAttendance({ month, year, ...(isStaff ? {} : { employeeId: user.id }) });
       setRecords(recRes.data);
-      setSummary(sumRes.data);
     } catch {
       // Leave current data as-is on error.
     } finally {
@@ -184,7 +179,7 @@ export default function Attendance() {
             </button>
             <button
                 id="clear-upload-btn"
-                onClick={() => { setUploadedRecords([]); setPage(1); setUploadMsg(null); }}
+                onClick={() => { setUploadedRecords([]); setRecords([]); setPage(1); setUploadMsg(null); }}
                 style={{ display: "flex", alignItems: "center", gap: "7px", padding: "10px 20px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px", cursor: "pointer" }}
               >
                 <RotateCcw size={16} />
@@ -225,15 +220,24 @@ export default function Attendance() {
           </div>
         )}
 
-        {summary && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "14px", marginBottom: "24px" }}>
-            <StatCard icon={UserCheck} label="Present"     value={summary.present} color="#16a34a" bg="#f0fdf4" />
-            <StatCard icon={Home}      label="WFH"          value={summary.wfh}     color="#0284c7" bg="#f0f9ff" />
-            <StatCard icon={Clock}     label="Late"         value={summary.late}    color="#d97706" bg="#fffbeb" />
-            <StatCard icon={UserX}     label="Absent"       value={summary.absent}  color="#dc2626" bg="#fef2f2" />
-            <StatCard icon={Coffee}    label="On Leave"     value={summary.onLeave} color="#7c3aed" bg="#f5f3ff" />
-          </div>
-        )}
+        {(() => {
+          const cardCounts = {
+            Present: displayRecords.filter((r) => r.status === "Present").length,
+            WFH: displayRecords.filter((r) => r.status === "WFH").length,
+            Late: displayRecords.filter((r) => r.status === "Late").length,
+            Absent: displayRecords.filter((r) => r.status === "Absent" || r.status === "LOP").length,
+            Leave: displayRecords.filter((r) => r.status === "Leave").length,
+          };
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "14px", marginBottom: "24px" }}>
+              <StatCard icon={UserCheck} label="Present" value={cardCounts.Present} color="#16a34a" bg="#f0fdf4" />
+              <StatCard icon={Home} label="WFH" value={cardCounts.WFH} color="#0284c7" bg="#f0f9ff" />
+              <StatCard icon={Clock} label="Late" value={cardCounts.Late} color="#d97706" bg="#fffbeb" />
+              <StatCard icon={UserX} label="Absent" value={cardCounts.Absent} color="#dc2626" bg="#fef2f2" />
+              <StatCard icon={Coffee} label="On Leave" value={cardCounts.Leave} color="#7c3aed" bg="#f5f3ff" />
+            </div>
+          );
+        })()}
 
         {/* Month / year picker + status summary chips */}
         <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "16px", flexWrap: "wrap" }}>
