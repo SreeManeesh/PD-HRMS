@@ -216,7 +216,14 @@ export default function Payroll() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([getPayrollRuns(), getPayslips(user.id), getEmployees({ limit: 10000 })])
+    // Each call resolves independently so a failure (e.g. employees list) can
+    // never blank the whole dashboard — Employee Payroll keeps working even if
+    // runs or payslips error out and vice versa.
+    Promise.all([
+      getPayrollRuns().catch(() => ({ data: [] })),
+      getPayslips(user.id).catch(() => ({ data: [] })),
+      getEmployees({ limit: 5000 }).catch(() => ({ data: [] })),
+    ])
       .then(([runRes, slipRes, empRes]) => {
         setRuns(runRes.data);
         setPayslips(slipRes.data);
@@ -233,7 +240,6 @@ export default function Payroll() {
           setActiveEmpId((cur) => cur || managerId);
         }
       })
-      .catch(() => setLoading(false))
       .finally(() => setLoading(false));
   }, [user.id]);
 
