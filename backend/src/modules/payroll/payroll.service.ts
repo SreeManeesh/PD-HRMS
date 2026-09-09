@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, type SalaryStructure } from "@prisma/client";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import {
@@ -9,7 +9,7 @@ import {
   buildPayslipAmounts,
   periodLabel,
 } from "../../serializers/payroll.serializer";
-import { countWeekdays, round2, toNumber } from "../../serializers/helpers";
+import { round2, toNumber } from "../../serializers/helpers";
 import { generatePayslipPdf } from "../payslip/lib/payslip.pdf";
 import type { Blueprint } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
@@ -293,6 +293,87 @@ function fallbackComponents() {
 }
 
 /**
+ * Single source of truth for computing one employee's monthly payslip from
+ * their salary structure + attendance reconciliation. Used by BOTH payroll
+ * processing (persists the slip) and the "Employee Payroll" preview panel
+ * (recalcs on the fly) so the two never drift apart.
+ */
+async function computeEmployeePayslip(
+  employee: { id: string },
+  structure: {
+    id: string;
+    basicSalary: unknown; hra: unknown; conveyanceAllowance: unknown; medicalAllowance: unknown;
+    performanceBonus: unknown; otherAllowances: unknown; providentFund: unknown; professionalTax: unknown;
+    incomeTax: unknown; healthInsurance: unknown;
+    employee?: { annualSalary?: unknown } | null;
+  },
+  year: number,
+  month: number,
+) {
+  const amounts = buildPayslipAmounts(structure as SalaryStructure);
+  const { summary, shiftHours } = await reconcileEmployee(employee.id, year, month);
+
+  // Prorate against calendar working days: LOP / unpaid days reduce pay.
+  const workingDays = Math.max(summary.workingDays, 1);
+  const payableDays = Math.max(workingDays - summary.unpaidLeaveDays, 0);
+  const ratio = payableDays / workingDays;
+
+  const earnings: Record<string, number> = {
+    basicSalary: round2(amounts.earnings.basicSalary * ratio),
+    hra: round2(amounts.earnings.hra * ratio),
+    conveyanceAllowance: round2(amounts.earnings.conveyanceAllowance * ratio),
+    medicalAllowance: round2(amounts.earnings.medicalAllowance * ratio),
+    performanceBonus: round2(amounts.earnings.performanceBonus * ratio),
+    otherAllowances: round2(amounts.earnings.otherAllowances * ratio),
+    total: 0,
+  };
+  // Overtime at time-and-a-half of the basic hourly rate (not LOP-prorated —
+  // it is genuinely extra time worked beyond the scheduled shift end).
+  const shiftDayHours = Math.max(shiftHours || 9, 1);
+  const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
+  earnings.overtime = round2(summary.overtimeHours * hourlyBasic * OT_MULTIPLIER);
+  earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
+
+  // PF scales with prorated earnings; statutory flat items stay monthly-fixed.
+  const withholding: Record<string, number> = {
+    providentFund: round2(amounts.deductions.providentFund * ratio),
+    professionalTax: amounts.deductions.professionalTax,
+    incomeTax: amounts.deductions.incomeTax,
+    healthInsurance: amounts.deductions.healthInsurance,
+    total: 0,
+  };
+  withholding.total = Math.round(
+    withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance
+  );
+  // Never deduct more than the earnings actually earned (net stays >= 0),
+  // e.g. full-month absence yields gross 0 -> take-home 0.
+  withholding.total = Math.min(withholding.total, Math.max(earnings.total, 0));
+
+  const slipNet = earnings.total - withholding.total;
+
+  // Employer-side statutory costs (PF, ESI, gratuity) — tracked on the slip
+  // for reporting (Form 12A, PF/ESI returns) but not subtracted from net pay.
+  const monthlySalary = toNumber(structure.employee?.annualSalary) / 12;
+  const proratedBasic = Number(earnings.basicSalary ?? 0);
+  const esiEligible = monthlySalary > 0 && monthlySalary <= ESI_GROSS_CEILING;
+  const employerContributions: Record<string, number> = {
+    providentFund: round2(proratedBasic * EPF_EMPLOYER_RATE),
+    esi: esiEligible ? round2(earnings.total * ESI_EMPLOYER_RATE) : 0,
+    gratuity: round2(proratedBasic * GRATUITY_RATE),
+  };
+
+  return {
+    earnings,
+    deductions: withholding,
+    employerContributions,
+    netPay: slipNet,
+    fullGross: amounts.earnings.total,
+    summary,
+    ratio,
+  };
+}
+
+/**
  * Process a payroll run: validate it's in Draft, generate payslips for all
  * active employees from their active salary structure, and move to Processing.
  * High-impact action — requires payroll:write + four-eyes via approve.
@@ -337,69 +418,20 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
   for (const emp of employees) {
     const structure = structureByEmployee.get(emp.id);
     if (!structure) continue;
-    const amounts = buildPayslipAmounts(structure);
-    const { summary, shiftHours } = await reconcileEmployee(emp.id, parsed.year, parsed.month);
+    const comp = await computeEmployeePayslip(emp, structure, parsed.year, parsed.month);
 
-    // Prorate against calendar working days: LOP / unpaid days reduce pay.
-    const workingDays = Math.max(summary.workingDays, 1);
-    const payableDays = Math.max(workingDays - summary.unpaidLeaveDays, 0);
-    const ratio = payableDays / workingDays;
-
-    const earnings: Record<string, number> = {
-      basicSalary: round2(amounts.earnings.basicSalary * ratio),
-      hra: round2(amounts.earnings.hra * ratio),
-      conveyanceAllowance: round2(amounts.earnings.conveyanceAllowance * ratio),
-      medicalAllowance: round2(amounts.earnings.medicalAllowance * ratio),
-      performanceBonus: round2(amounts.earnings.performanceBonus * ratio),
-      otherAllowances: round2(amounts.earnings.otherAllowances * ratio),
-      total: 0,
-    };
-    // Overtime at time-and-a-half of the basic hourly rate (not LOP-prorated —
-    // it is genuinely extra time worked beyond the scheduled shift end).
-    const shiftDayHours = Math.max(shiftHours || 9, 1);
-    const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
-    earnings.overtime = round2(summary.overtimeHours * hourlyBasic * OT_MULTIPLIER);
-    earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
-
-    // PF scales with prorated earnings; statutory flat items stay monthly-fixed.
-    const withholding: Record<string, number> = {
-      providentFund: round2(amounts.deductions.providentFund * ratio),
-      professionalTax: amounts.deductions.professionalTax,
-      incomeTax: amounts.deductions.incomeTax,
-      healthInsurance: amounts.deductions.healthInsurance,
-      total: 0,
-    };
-    withholding.total = Math.round(
-      withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance
-    );
-    // Never deduct more than the earnings actually earned (net stays >= 0),
-    // e.g. full-month absence yields gross 0 -> take-home 0.
-    withholding.total = Math.min(withholding.total, Math.max(earnings.total, 0));
-
-    const slipNet = earnings.total - withholding.total;
-    gross += earnings.total;
-    deductions += withholding.total;
-    net += slipNet;
-
-    // Employer-side statutory costs (PF, ESI, gratuity) — tracked on the slip
-    // for reporting (Form 12A, PF/ESI returns) but not subtracted from net pay.
-    const monthlySalary = toNumber(structure.employee.annualSalary) / 12;
-    const proratedBasic = Number(earnings.basicSalary ?? 0);
-    const esiEligible = monthlySalary > 0 && monthlySalary <= ESI_GROSS_CEILING;
-    const employerContributions: Record<string, number> = {
-      providentFund: round2(proratedBasic * EPF_EMPLOYER_RATE),
-      esi: esiEligible ? round2(earnings.total * ESI_EMPLOYER_RATE) : 0,
-      gratuity: round2(proratedBasic * GRATUITY_RATE),
-    };
+    gross += comp.earnings.total;
+    deductions += comp.deductions.total;
+    net += comp.netPay;
 
     slipData.push({
       employeeId: emp.id,
       salaryStructureId: structure.id,
-      earnings,
-      deductions: withholding,
-      employerContributions,
-      netPay: slipNet,
-      attendanceSummary: { ...summary, ratio: Math.round(ratio * 100) / 100 },
+      earnings: comp.earnings,
+      deductions: comp.deductions,
+      employerContributions: comp.employerContributions,
+      netPay: comp.netPay,
+      attendanceSummary: { ...comp.summary, ratio: Math.round(comp.ratio * 100) / 100 },
     });
   }
 
@@ -500,20 +532,22 @@ export function parseRunPublicId(id: string): { year: number; month: number } {
   return { year, month };
 }
 
-function isUnpaidLeave(lt: { code: string; name: string }): boolean {
-  return lt.code === "LT07" || /without pay|unpaid|lwp/i.test(lt.name);
-}
-
 /**
  * Computed per-employee payroll for a month, with salary adjusted for unpaid
- * leave days ("Leave Without Pay") taken in that month. Used by the
- * "Employee Payroll" panel — recalculates gross / deductions / net on the fly.
+ * leave days ("Leave Without Pay"). Uses the exact same reconciliation-driven
+ * computation as payroll processing, so the "Employee Payroll" panel always
+ * matches the actual (approved) payslip.
  */
 export async function getEmployeePayrollSummary(employeeCode: string, month: number, year: number) {
   const emp = await prisma.employee.findUnique({
     where: { employeeCode },
     include: {
-      salaryStructures: { where: { isActive: true }, orderBy: { effectiveFrom: "desc" }, take: 1 },
+      salaryStructures: {
+        where: { isActive: true },
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+        include: { employee: { select: { annualSalary: true } } },
+      },
     },
   });
   if (!emp) throw AppError.notFound("Employee not found");
@@ -522,35 +556,11 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
 
   const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
 
-  const amounts = buildPayslipAmounts(structure);
-  const gross = amounts.earnings.total;
-  const standardDeductions = amounts.deductions.total;
-
-  const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const monthEnd = new Date(Date.UTC(year, month, 0));
-  const workingDays = countWeekdays(monthStart, monthEnd);
-
-  // Approved leaves overlapping the month — only unpaid types reduce pay.
-  const leaves = await prisma.leaveRequest.findMany({
-    where: {
-      employeeId: emp.id,
-      status: "Approved",
-      startDate: { lte: monthEnd },
-      endDate: { gte: monthStart },
-    },
-    include: { leaveType: true },
-  });
-
-  let leaveDays = 0;
-  for (const l of leaves) {
-    const st = l.startDate > monthStart ? l.startDate : monthStart;
-    const en = l.endDate < monthEnd ? l.endDate : monthEnd;
-    if (en < st) continue;
-    if (isUnpaidLeave(l.leaveType)) leaveDays += countWeekdays(st, en);
-  }
-
-  const leaveDeduction = leaveDays > 0 ? Math.round((gross / workingDays) * leaveDays) : 0;
-  const netPay = gross - leaveDeduction - standardDeductions;
+  const comp = await computeEmployeePayslip(emp, structure, year, month);
+  // LOP impact in rupees — the value clawed back for unpaid/present days that
+  // was removed from the full-month gross (shown for transparency; gross is
+  // already the prorated, actually-paid figure).
+  const leaveDeduction = Math.max(comp.fullGross - comp.earnings.total, 0);
 
   return {
     data: {
@@ -560,19 +570,19 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
       status: run?.status ?? "Not Processed",
       employeeId: emp.employeeCode,
       employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-      gross,
-      leaveDays,
-      workingDays,
+      gross: comp.earnings.total,
+      leaveDays: comp.summary.unpaidLeaveDays,
+      workingDays: comp.summary.workingDays,
       leaveDeduction,
       deductions: {
-        providentFund: toNumber(amounts.deductions.providentFund),
-        professionalTax: toNumber(amounts.deductions.professionalTax),
-        incomeTax: toNumber(amounts.deductions.incomeTax),
-        healthInsurance: toNumber(amounts.deductions.healthInsurance),
+        providentFund: comp.deductions.providentFund,
+        professionalTax: comp.deductions.professionalTax,
+        incomeTax: comp.deductions.incomeTax,
+        healthInsurance: comp.deductions.healthInsurance,
         leaveDeduction,
-        total: standardDeductions + leaveDeduction,
+        total: comp.deductions.total,
       },
-      netPay,
+      netPay: comp.netPay,
     },
   };
 }
