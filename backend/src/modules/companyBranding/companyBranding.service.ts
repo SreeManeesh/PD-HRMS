@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "crypto";
 import path from "path";
+import fs from "fs";
 import minioClient, { MINIO_BUCKET, ensureMinioBucket } from "../../config/minio";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
@@ -75,11 +76,20 @@ async function storeImage(folder: "logo" | "signature", file: Express.Multer.Fil
   if (!file) throw AppError.badRequest("Image file is required");
   await ensureMinioBucket();
   const extension = path.extname(file.originalname).toLowerCase();
-  const objectName = `company/${folder}/${randomUUID()}${extension}`;
-  await minioClient.putObject(MINIO_BUCKET, objectName, file.buffer, file.size, {
-    "Content-Type": file.mimetype,
-  });
-  return `/uploads/company/${folder}/${path.basename(objectName)}`;
+  const name = `${randomUUID()}${extension}`;
+  const objectName = `company/${folder}/${name}`;
+  try {
+    await minioClient.putObject(MINIO_BUCKET, objectName, file.buffer, file.size, {
+      "Content-Type": file.mimetype,
+    });
+  } catch {
+    // MinIO unavailable (e.g. local dev without the object store) — persist on
+    // local disk instead so uploads still work and survive a refresh.
+    const dir = path.join(process.cwd(), "uploads", "company", folder);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), file.buffer);
+  }
+  return `/uploads/company/${folder}/${name}`;
 }
 
 export async function uploadLogo(file: Express.Multer.File, actorUserId?: string) {

@@ -10,6 +10,7 @@ import {
   periodLabel,
 } from "../../serializers/payroll.serializer";
 import { round2, toNumber } from "../../serializers/helpers";
+import { salaryStructureBreakdown } from "../../lib/salaryStructure";
 import { generatePayslipPdf, buildSections, type ComponentRow } from "../payslip/lib/payslip.pdf";
 import { computePayroll } from "../payslip/payslip.service";
 import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
@@ -97,8 +98,10 @@ export async function getPayslip(id: string) {
   return { data: serializePayslipList([slip])[0] };
 }
 
-/** Load a payslip and render it as a rupee-formatted PDF. */
-export async function getPayslipPdf(id: string) {
+/** Load a payslip and render it as a rupee-formatted PDF from the ACTIVE Smart
+ *  Payslip Designer template (the "generated payslip"), so PDFs everywhere —
+ *  download, email attachments, portal — reflect what was actually designed. */
+export async function getPayslipPdf(id: string, access?: { role?: string; employeeCode?: string }, templateId?: string) {
   const parts = id.split("-");
   if (parts.length < 4 || parts[0] !== "PS" || !/^\d{4}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) {
     throw AppError.badRequest("Invalid payslip id");
@@ -106,6 +109,12 @@ export async function getPayslipPdf(id: string) {
   const year = Number(parts[1]);
   const month = Number(parts[2]);
   const employeeCode = parts.slice(3).join("-");
+
+  // Employees can only render their own payslip.
+  const isAdminOrHr = access?.role === "ADMIN" || access?.role === "HR";
+  if (!isAdminOrHr && access?.employeeCode && access.employeeCode !== employeeCode) {
+    throw AppError.forbidden("Employees can only view their own payslip");
+  }
 
   const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
   const employee = await prisma.employee.findUnique({
@@ -124,14 +133,19 @@ export async function getPayslipPdf(id: string) {
   const deductions = slip.deductions as Record<string, number>;
   const netPay = Number(slip.netPay ?? 0);
 
-  // Use the active Smart Payslip Designer template so the PDF layout, theme,
-  // labels and logo always match what the admin configured. Fall back to a
-  // minimal built-in blueprint if no template is published yet.
-  let template = await prisma.payslipTemplate.findFirst({
-    where: { isActive: true, status: "Published" },
-    orderBy: { updatedAt: "desc" },
-    include: { versions: { where: { isActive: true }, orderBy: { version: "desc" }, take: 1 } },
-  });
+  // Use the selected (or active) Smart Payslip Designer template so the PDF
+  // layout, theme, labels and logo always match what the admin configured.
+  // Fall back to a minimal built-in blueprint if no template is available.
+  let template = templateId
+    ? await prisma.payslipTemplate.findFirst({
+        where: { id: templateId },
+        include: { versions: { where: { isActive: true }, orderBy: { version: "desc" }, take: 1 } },
+      })
+    : await prisma.payslipTemplate.findFirst({
+        where: { isActive: true, status: "Published" },
+        orderBy: { updatedAt: "desc" },
+        include: { versions: { where: { isActive: true }, orderBy: { version: "desc" }, take: 1 } },
+      });
   let blueprint: Blueprint;
   if (template) {
     blueprint = template.versions[0]?.blueprint as unknown as Blueprint;
@@ -719,10 +733,27 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
 
   const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
 
+  const breakdown = salaryStructureBreakdown(emp.annualSalary ? Number(emp.annualSalary) : 0);
   const structure = emp.salaryStructures[0];
-  if (!structure) {
-    // Gracefully surface employees without a configured salary (instead of a
-    // hard error) so the Employee Payroll panel can still list/see them.
+  // Fall back to a structure derived from the employee's "Yearly Salary
+  // Package" so every existing and newly registered employee reflects a gross
+  // (annual ÷ 12) even before a salary structure row was created.
+  const derivedStructure = structure ?? {
+    id: "derived",
+    basicSalary: breakdown.basicSalary,
+    hra: breakdown.hra,
+    conveyanceAllowance: breakdown.conveyanceAllowance,
+    medicalAllowance: breakdown.medicalAllowance,
+    performanceBonus: breakdown.performanceBonus,
+    otherAllowances: breakdown.otherAllowances,
+    providentFund: breakdown.providentFund,
+    professionalTax: breakdown.professionalTax,
+    incomeTax: breakdown.incomeTax,
+    healthInsurance: breakdown.healthInsurance,
+    employee: { annualSalary: emp.annualSalary ? Number(emp.annualSalary) : null },
+  } as unknown as SalaryStructure;
+  if (!structure && breakdown.incomeTax === 0 && breakdown.basicSalary === 0) {
+    // No salary configured at all — surface a clean zero summary.
     return {
       data: {
         period: periodLabel({ month, year }),
@@ -749,11 +780,14 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
     };
   }
 
-  const comp = await computeEmployeePayslip(emp, structure, year, month);
-  // LOP impact in rupees — the value clawed back for unpaid/present days that
-  // was removed from the full-month gross (shown for transparency; gross is
-  // already the prorated, actually-paid figure).
-  const leaveDeduction = Math.max(comp.fullGross - comp.earnings.total, 0);
+  const comp = await computeEmployeePayslip(emp, derivedStructure, year, month);
+  // Gross is pulled from the employee's yearly salary package (annual/12) so
+  // the panel always shows the contracted monthly package rather than an
+  // attendance-prorated figure. Leave (LOP) impact is reported separately.
+  const annualSalary = toNumber(emp.annualSalary);
+  const monthlyPackage = annualSalary > 0 ? annualSalary / 12 : comp.fullGross;
+  const gross = Math.round(monthlyPackage);
+  const leaveDeduction = Math.max(gross - comp.earnings.total, 0);
 
   return {
     data: {
@@ -763,7 +797,8 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
       status: run?.status ?? "Not Processed",
       employeeId: emp.employeeCode,
       employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-      gross: comp.earnings.total,
+      gross,
+      annualSalary: Math.round(annualSalary),
       leaveDays: comp.summary.unpaidLeaveDays,
       workingDays: comp.summary.workingDays,
       leaveDeduction,
