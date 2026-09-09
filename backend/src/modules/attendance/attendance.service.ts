@@ -407,6 +407,7 @@ async function resolveUploadEmployee(idValue: string, nameValue: string) {
 
 export interface AttendanceUploadResult {
   imported: number;
+  totalImported: number;
   skipped: number;
   errors: string[];
   data: ReturnType<typeof serializeAttendanceList>;
@@ -507,9 +508,29 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     approvedByValue: string;
   };
 
-  const imported: ReturnType<typeof serializeAttendanceList> = [];
+  // Resolve employees ONCE into maps (no per-row DB lookups) so 100k+ rows
+  // parse quickly.
+  const employeeRows = await prisma.employee.findMany({
+    select: { id: true, employeeCode: true, firstName: true, lastName: true },
+  });
+  const byCode = new Map<string, (typeof employeeRows)[number]>();
+  const byName = new Map<string, (typeof employeeRows)[number]>();
+  for (const e of employeeRows) {
+    byCode.set(e.employeeCode.toLowerCase(), e);
+    byName.set(`${e.firstName.toLowerCase()} ${e.lastName.toLowerCase()}`.trim(), e);
+  }
+  const resolve = (idValue: string, nameValue: string): (typeof employeeRows)[number] | null => {
+    const id = (idValue || "").trim().toLowerCase();
+    if (id && byCode.has(id)) return byCode.get(id)!;
+    const n = (nameValue || "").trim().toLowerCase();
+    if (n && byName.has(n)) return byName.get(n)!;
+    return null;
+  };
+
+  const hhmm = (d: Date | null): string | null => d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : null;
+
+  const seen = new Map<string, ImportCandidate>();
   const errors: string[] = [];
-  const candidates: ImportCandidate[] = [];
 
   for (const [rowNo, cells] of dataRows.entries()) {
     if (cells.every((c) => c === "")) continue;
@@ -529,7 +550,7 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
       errors.push(`Row ${rowNo + 1}: unrecognised date "${dateValue}"`);
       continue;
     }
-    const employee = await resolveUploadEmployee(idValue, name);
+    const employee = resolve(idValue, name);
     if (!employee) {
       errors.push(`Row ${rowNo + 1}: no employee found for id "${idValue}" / name "${name}"`);
       continue;
@@ -549,7 +570,8 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     const status = login || logout ? "Present" : approvedLeave ? "Leave" : "Absent";
 
     const isoDate = `${dateParts.y}-${String(dateParts.m).padStart(2, "0")}-${String(dateParts.d).padStart(2, "0")}`;
-    candidates.push({
+    // Dedupe by (employee, date) — a later row for the same pair wins.
+    seen.set(`${employee.id}|${isoDate}`, {
       employee,
       dateParts,
       isoDate,
@@ -565,22 +587,72 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     });
   }
 
-  // Import EVERY parsed row — do not drop duplicates/skip data. Rows are
-  // upserted per (employee, date); a later row for the same employee/date
-  // overwrites the earlier one, but every distinct row in the file is shown.
-  const selected = candidates;
-  const deduped = 0;
+  const candidates = [...seen.values()];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imported: any[] = [];
 
-  for (const c of selected) {
-    const punch = await prisma.attendancePunch.upsert({
-      where: { employeeId_punchDate: { employeeId: c.employee.id, punchDate: c.punchDate } },
-      update: { punchIn: c.punchIn, punchOut: c.punchOut, status: c.status, method: "Upload" },
-      create: { employeeId: c.employee.id, punchDate: c.punchDate, punchIn: c.punchIn, punchOut: c.punchOut, status: c.status, method: "Upload" },
-      include: PUNCH_INCLUDE,
+  // Which (employee, date) pairs already exist → split into insert vs update.
+  const empIds = [...new Set(candidates.map((c) => c.employee.id))];
+  const dateSet = [...new Set(candidates.map((c) => c.punchDate.getTime()))].map((t) => new Date(t));
+  const existingSet = new Set<string>();
+  if (candidates.length) {
+    const existing = await prisma.attendancePunch.findMany({
+      where: { employeeId: { in: empIds }, punchDate: { in: dateSet } },
+      select: { employeeId: true, punchDate: true },
     });
+    for (const p of existing) existingSet.add(`${p.employeeId}|${p.punchDate.getTime()}`);
+  }
 
-    imported.push(serializeAttendanceList([punch])[0]);
+  const toInsert: ImportCandidate[] = [];
+  const toUpdate: ImportCandidate[] = [];
+  for (const c of candidates) {
+    if (existingSet.has(`${c.employee.id}|${c.punchDate.getTime()}`)) toUpdate.push(c);
+    else toInsert.push(c);
+  }
 
+  // Bulk inserts (new pairs) — createMany in chunks.
+  const CHUNK = 2000;
+  for (let i = 0; i < toInsert.length; i += CHUNK) {
+    const chunk = toInsert.slice(i, i + CHUNK).map((c) => ({
+      employeeId: c.employee.id,
+      punchDate: c.punchDate,
+      punchIn: c.punchIn,
+      punchOut: c.punchOut,
+      status: c.status,
+      method: "Upload" as const,
+    }));
+    await prisma.attendancePunch.createMany({ data: chunk, skipDuplicates: true });
+  }
+
+  // Updates (existing pairs) — batched transactions.
+  for (let i = 0; i < toUpdate.length; i += CHUNK) {
+    const chunk = toUpdate.slice(i, i + CHUNK);
+    await prisma.$transaction(
+      chunk.map((c) => prisma.attendancePunch.update({
+        where: { employeeId_punchDate: { employeeId: c.employee.id, punchDate: c.punchDate } },
+        data: { punchIn: c.punchIn, punchOut: c.punchOut, status: c.status, method: "Upload" as const },
+      }))
+    );
+  }
+
+  // Return a bounded sample (frontend uses `imported` count; the records table
+  // reloads from the API with its own pagination).
+  const SAMPLE = 1000;
+  const sample = [...toUpdate, ...toInsert].slice(0, SAMPLE).map((c) => ({
+    id: "",
+    employeeId: c.employee.employeeCode,
+    employeeName: `${c.employee.firstName} ${c.employee.lastName}`.trim(),
+    date: c.isoDate,
+    checkIn: hhmm(c.punchIn),
+    checkOut: hhmm(c.punchOut),
+    status: c.status,
+    leave: c.status === "Leave" ? "Yes" : "No",
+    hoursWorked: c.punchIn && c.punchOut ? Math.round(((c.punchOut.getTime() - c.punchIn.getTime()) / 3_600_000) * 100) / 100 : 0,
+  }));
+  imported.push(...sample);
+
+  // Leave sync is best-effort (attendance always imported regardless).
+  for (const c of candidates) {
     if (c.leaveIndicated && c.leaveTypeValue.trim()) {
       try {
         await upsertLeaveRequestFromUpload({
@@ -598,5 +670,11 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     }
   }
 
-  return { imported: imported.length, skipped: errors.length + deduped, errors, data: imported };
+  return {
+    imported: toInsert.length + toUpdate.length,
+    totalImported: toInsert.length + toUpdate.length,
+    skipped: errors.length,
+    errors,
+    data: imported,
+  };
 }

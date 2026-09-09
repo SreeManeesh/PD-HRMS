@@ -30,6 +30,6 @@ export const uploadAttendanceFile = async (file) => {
   formData.append("file", file);
   // axios sets the multipart boundary automatically when posting FormData.
   // Supports: xlsx, xlsm, xlsb, xls, xltx, xltm, xlt, xlam, xla, xlw, csv, tsv, txt, prn, dif, slk, xml
-  const res = await api.post("/attendance/upload", formData, { timeout: 120000 });
+  const res = await api.post("/attendance/upload", formData, { timeout: 300000 });
   return res.data.data; // { imported, skipped, errors, data: rows[] }
 };
