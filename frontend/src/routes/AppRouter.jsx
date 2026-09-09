@@ -19,6 +19,7 @@ const EmployeeProfile = lazy(() => import("../pages/Employees/EmployeeProfile"))
 const Attendance = lazy(() => import("../pages/Attendance/Attendance"));
 const Leave = lazy(() => import("../pages/Leave/Leave"));
 const Payroll = lazy(() => import("../pages/Payroll/Payroll"));
+const PayslipDesigner = lazy(() => import("../pages/PayslipDesigner/PayslipDesigner"));
 const Recruitment         = lazy(() => import("../pages/Recruitment/Recruitment"));
 const Onboarding          = lazy(() => import("../pages/Onboarding/Onboarding"));
 const Performance         = lazy(() => import("../pages/Performance/Performance"));
@@ -76,6 +77,7 @@ export default function AppRouter() {
           <Route path="/attendance" element={<RequireAuth><Attendance /></RequireAuth>} />
           <Route path="/leave" element={<RequireAuth><Leave /></RequireAuth>} />
           <Route path="/payroll" element={<RequireAuth><Payroll /></RequireAuth>} />
+          <Route path="/payroll/designer" element={<RequireAuth><PayslipDesigner /></RequireAuth>} />
           <Route path="/performance" element={<RequireAuth><Performance /></RequireAuth>} />
 
           {/* Talent */}

@@ -29,6 +29,7 @@ const EMPLOYEE_STATUS_META = {
 function AddEmployeeModal({ isOpen, onClose, onCreated }) {
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", designation: "", department: "",
+    state: "", country: "", annualSalary: "",
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -57,10 +58,13 @@ function AddEmployeeModal({ isOpen, onClose, onCreated }) {
         email: form.email.trim(),
         designation: form.designation.trim(),
         department: form.department,
+        state: form.state.trim(),
+        country: form.country.trim(),
+        annualSalary: form.annualSalary ? Number(form.annualSalary) : undefined,
       });
       onCreated();
       onClose();
-      setForm({ firstName: "", lastName: "", email: "", designation: "", department: "" });
+      setForm({ firstName: "", lastName: "", email: "", designation: "", department: "", state: "", country: "", annualSalary: "" });
     } catch (err) {
       setError(err.message || "Could not create employee");
     } finally {
@@ -98,6 +102,12 @@ function AddEmployeeModal({ isOpen, onClose, onCreated }) {
         </div>
         {field("Work Email *", "email", "email")}
         {field("Designation *", "designation")}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {field("State", "state")}
+          {field("Country", "country")}
+        </div>
+        {field("Yearly Salary Package", "annualSalary", "number")}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Department *</label>
@@ -143,6 +153,7 @@ function AddEmployeeModal({ isOpen, onClose, onCreated }) {
 function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", designation: "", department: "",
+    state: "", country: "", annualSalary: "",
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -152,6 +163,7 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
     if (employee) {
       setForm({
         firstName: employee.firstName || "", lastName: employee.lastName || "", email: employee.email || "", designation: employee.designation || "", department: employee.department || "",
+        state: employee.state || "", country: employee.country || "", annualSalary: employee.annualSalary ?? "",
       });
       setError("");
       setErrors({});
@@ -181,6 +193,9 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
         email: form.email.trim(),
         designation: form.designation.trim(),
         department: form.department,
+        state: form.state.trim(),
+        country: form.country.trim(),
+        annualSalary: form.annualSalary ? Number(form.annualSalary) : undefined,
       });
       onUpdated();
       onClose();
@@ -221,6 +236,12 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
         </div>
         {field("Work Email *", "email", "email")}
         {field("Designation *", "designation")}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {field("State", "state")}
+          {field("Country", "country")}
+        </div>
+        {field("Yearly Salary Package", "annualSalary", "number")}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Department *</label>

@@ -2,14 +2,10 @@
  * Leave Management Page — Module 6
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus,
   CalendarDays,
-  Umbrella,
-  HeartPulse,
-  Sparkles,
-  CircleDollarSign,
   CheckCircle2,
   Clock3,
   XCircle,
@@ -32,30 +28,33 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { leaveStatusMeta } from "../../mock/leave.js";
 import "./Leave.css";
 
-const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626"];
+const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626", "#16a34a", "#db2777", "#ea580c", "#0ea5e9"];
 
-function leaveIcon(name = "") {
-  const normalized = name.toLowerCase();
-  if (normalized.includes("sick")) return HeartPulse;
-  if (normalized.includes("earned")) return Sparkles;
-  if (normalized.includes("unpaid")) return CircleDollarSign;
-  return Umbrella;
-}
+function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, onClear }) {
+  const PAGE = 6;
+  const [legendPage, setLegendPage] = useState(0);
 
-function LeaveBalanceOverview({ balances, selectedId, onSelect }) {
-  const availableTotal = balances.reduce((sum, item) => sum + Number(item.available || 0), 0);
-  const distributionTotal = availableTotal || balances.length || 1;
-  const segments = balances.map((item, index) => {
+  const availableTotal = distributionTypes.reduce((sum, item) => sum + Number(item.available || 0), 0);
+  const distributionTotal = availableTotal || distributionTypes.length || 1;
+  const segments = distributionTypes.map((item, index) => {
     const value = availableTotal ? Number(item.available || 0) : 1;
-    const precedingValue = balances
+    const precedingValue = distributionTypes
       .slice(0, index)
-      .reduce((sum, balance) => sum + (availableTotal ? Number(balance.available || 0) : 1), 0);
+      .reduce((sum, it) => sum + (availableTotal ? Number(it.available || 0) : 1), 0);
     const start = (precedingValue / distributionTotal) * 100;
     const end = start + (value / distributionTotal) * 100;
     return { item, start, end, color: LEAVE_COLORS[index % LEAVE_COLORS.length] };
   });
-  const gradientStops = segments.map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`);
-  const selected = balances.find((item) => item.leaveTypeId === selectedId) || balances[0];
+  // Donut only uses balances that actually have availability > 0 (keeps chart meaningful).
+  const donutSegments = segments.filter((s) => availableTotal ? Number(s.item.available) > 0 : true);
+  const gradientStops = donutSegments.length
+    ? donutSegments.map((s) => `${s.color} ${s.start}% ${s.end}%`)
+    : ["#e2e8f0 0 100%"];
+  const selected = selectedId ? distributionTypes.find((item) => item.leaveTypeId === selectedId) || null : null;
+
+  const legendPages = Math.max(1, Math.ceil(distributionTypes.length / PAGE));
+  const legendPageSafe = Math.min(legendPage, legendPages - 1);
+  const legendPageItems = distributionTypes.slice(legendPageSafe * PAGE, legendPageSafe * PAGE + PAGE);
 
   const handleDonutClick = (event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -63,7 +62,7 @@ function LeaveBalanceOverview({ balances, selectedId, onSelect }) {
     const y = event.clientY - (bounds.top + bounds.height / 2);
     const angle = (Math.atan2(y, x) * (180 / Math.PI) + 450) % 360;
     const percentage = (angle / 360) * 100;
-    const segment = segments.find((entry) => percentage >= entry.start && percentage < entry.end);
+    const segment = donutSegments.find((entry) => percentage >= entry.start && percentage < entry.end);
     if (segment) onSelect(segment.item.leaveTypeId);
   };
 
@@ -73,7 +72,7 @@ function LeaveBalanceOverview({ balances, selectedId, onSelect }) {
         <div className="leave-donut-wrap">
           <div
             className="leave-donut"
-            style={{ background: `conic-gradient(${gradientStops.join(", ") || "#e2e8f0 0 100%"})` }}
+            style={{ background: `conic-gradient(${gradientStops.join(", ")})` }}
             onClick={handleDonutClick}
             role="img"
             aria-label={`${availableTotal} total leave days available. Select a coloured section for details.`}
@@ -86,23 +85,42 @@ function LeaveBalanceOverview({ balances, selectedId, onSelect }) {
         </div>
 
         <div className="leave-donut-legend">
-          <p className="leave-eyebrow">Leave distribution</p>
-          <h2>My leave balance</h2>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+            <div>
+              <p className="leave-eyebrow">Leave distribution</p>
+              <h2>My leave balance</h2>
+            </div>
+            {selected && (
+              <button type="button" className="leave-clear-btn" onClick={() => onClear?.()} title="Clear leave selection">
+                ✕ Clear selection
+              </button>
+            )}
+          </div>
           <p className="leave-helper">Select a colour or card to view its complete balance.</p>
           <div className="leave-legend-list">
-            {balances.map((item, index) => (
-              <button
-                type="button"
-                key={item.leaveTypeId}
-                className={selected?.leaveTypeId === item.leaveTypeId ? "leave-legend active" : "leave-legend"}
-                onClick={() => onSelect(item.leaveTypeId)}
-              >
-                <span className="leave-legend-dot" style={{ background: LEAVE_COLORS[index % LEAVE_COLORS.length] }} />
-                <span>{item.leaveTypeName}</span>
-                <strong>{item.available}</strong>
-              </button>
-            ))}
+            {legendPageItems.map((item, index) => {
+              const globalIndex = legendPageSafe * PAGE + index;
+              return (
+                <button
+                  type="button"
+                  key={item.leaveTypeId}
+                  className={selected?.leaveTypeId === item.leaveTypeId ? "leave-legend active" : "leave-legend"}
+                  onClick={() => onSelect(item.leaveTypeId)}
+                >
+                  <span className="leave-legend-dot" style={{ background: LEAVE_COLORS[globalIndex % LEAVE_COLORS.length] }} />
+                  <span>{item.leaveTypeName}</span>
+                  <strong>{item.available}</strong>
+                </button>
+              );
+            })}
           </div>
+          {distributionTypes.length > PAGE && (
+            <div className="leave-pagination">
+              <button type="button" onClick={() => setLegendPage((p) => Math.max(0, p - 1))} disabled={legendPageSafe === 0}>‹ Prev</button>
+              <span>Page {legendPageSafe + 1} of {legendPages}</span>
+              <button type="button" onClick={() => setLegendPage((p) => Math.min(legendPages - 1, p + 1))} disabled={legendPageSafe >= legendPages - 1}>Next ›</button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -319,6 +337,24 @@ export default function Leave() {
     return counts;
   }, {});
 
+  // Full catalog merged with balances — used by the distribution card + cards
+  // so every leave type is visible and pagination works.
+  const distributionTypes = useMemo(() => {
+    const balByType = new Map(balances.map((b) => [b.leaveTypeId, b]));
+    const source = leaveTypes.length > 0 ? leaveTypes : balances;
+    return source.map((t) => {
+      const bal = balByType.get(t.leaveTypeId || (t.id));
+      return {
+        leaveTypeId: t.leaveTypeId || t.id,
+        leaveTypeName: t.leaveTypeName || t.name,
+        total: bal ? Number(bal.total) : Number(t.maxDays || 0),
+        used: bal ? Number(bal.used) : 0,
+        pending: bal ? Number(bal.pending || 0) : 0,
+        available: bal ? Number(bal.available) : 0,
+      };
+    });
+  }, [balances, leaveTypes]);
+
   if (loading) return <MainLayout><Spinner /></MainLayout>;
 
   return (
@@ -331,27 +367,7 @@ export default function Leave() {
           </button>}
         </PageHeader>
 
-        <LeaveBalanceOverview balances={balances} selectedId={selectedBalanceId} onSelect={setSelectedBalanceId} />
-
-        <div className="leave-balance-cards">
-          {balances.map((balance, index) => {
-            const Icon = leaveIcon(balance.leaveTypeName);
-            const active = balance.leaveTypeId === selectedBalanceId;
-            return (
-              <button
-                type="button"
-                key={balance.leaveTypeId}
-                className={active ? "leave-balance-card active" : "leave-balance-card"}
-                onClick={() => setSelectedBalanceId(balance.leaveTypeId)}
-                style={{ "--leave-color": LEAVE_COLORS[index % LEAVE_COLORS.length] }}
-              >
-                <span className="leave-card-icon"><Icon size={17} /></span>
-                <span><strong>{balance.available}</strong><small>{balance.leaveTypeName}</small></span>
-                <span className="leave-card-total">of {balance.total}</span>
-              </button>
-            );
-          })}
-        </div>
+        <LeaveBalanceOverview distributionTypes={distributionTypes} selectedId={selectedBalanceId} onSelect={setSelectedBalanceId} onClear={() => setSelectedBalanceId(null)} />
 
         {/* Requests table */}
         <div className="leave-request-header">

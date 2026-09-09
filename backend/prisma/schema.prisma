@@ -182,14 +182,14 @@ model User {
   lastLogin    DateTime? @map("last_login")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
 
-  role          Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  employee      Employee?
-  auditLogs     AuditLog[]
-  refreshTokens RefreshToken[]
-  notifications Notification[]
-  notificationPreferences NotificationPreference[]
-  notificationTemplatesCreated NotificationTemplate[] @relation("NotificationTemplateCreator")
-  notificationDeliveries NotificationDelivery[]
+  role                         Role                     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  employee                     Employee?
+  auditLogs                    AuditLog[]
+  refreshTokens                RefreshToken[]
+  notifications                Notification[]
+  notificationPreferences      NotificationPreference[]
+  notificationTemplatesCreated NotificationTemplate[]   @relation("NotificationTemplateCreator")
+  notificationDeliveries       NotificationDelivery[]
 
   @@index([roleId])
   @@map("users")
@@ -206,6 +206,9 @@ model Employee {
   personalEmail      String?   @map("personal_email") @db.VarChar(150)
   personalMobile     String?   @map("personal_mobile") @db.VarChar(20)
   address            String?
+  state              String?   @db.VarChar(60)
+  country            String?   @db.VarChar(60)
+  annualSalary       Decimal?  @map("annual_salary") @db.Decimal(14, 2)
   departmentId       String?   @map("department_id") @db.Uuid
   designationId      String?   @map("designation_id") @db.Uuid
   locationId         String?   @map("location_id") @db.Uuid
@@ -250,7 +253,7 @@ model Employee {
   assignedTickets  HelpdeskTicket[]           @relation("HelpdeskAssignee")
   helpdeskComments HelpdeskComment[]
 
-  courseEnrollments CourseEnrollment[]
+  courseEnrollments      CourseEnrollment[]
   policyAcknowledgements PolicyAcknowledgement[]
 
   taskAssignments    Task[]              @relation("TaskAssignee")
@@ -258,11 +261,16 @@ model Employee {
   taskHistoryActions TaskHistory[]       @relation("TaskHistoryActor")
   taskTimeEntries    TaskTimeEntry[]     @relation("TaskTimeEntryEmployee")
 
-  assetsHeld    Asset[]        @relation("AssetCurrentHolder")
-  assetRequests AssetRequest[]
-  assetHistory  AssetHistory[]
-  separations   Separation[]
-  alumni        Alumni[]
+  assetsHeld              Asset[]                  @relation("AssetCurrentHolder")
+  assetRequests           AssetRequest[]
+  assetHistory            AssetHistory[]
+  separations             Separation[]
+  alumni                  Alumni[]
+  taxSelections           EmployeeTaxSelection[]
+  payslipTemplatesCreated PayslipTemplate[]        @relation("PayslipTemplatesCreated")
+  payslipVersionsAuthored PayslipTemplateVersion[] @relation("PayslipVersionAuthored")
+  taxSelectionUpdates     EmployeeTaxSelection[]   @relation("EmployeeTaxSelectionUpdatedBy")
+  payslipOverrideAuthored TemplateOverride[]       @relation("PayslipOverrideAuthor")
 
   @@index([departmentId])
   @@index([designationId])
@@ -292,18 +300,18 @@ model AuditLog {
 // ── Compliance Management ────────────────────────────────────────────────
 
 model ComplianceObligation {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title          String    @db.VarChar(180)
-  category       String    @db.VarChar(80)
-  dueDate        DateTime  @map("due_date") @db.Date
-  owner          String    @db.VarChar(160)
-  recurrence     String    @default("One-off") @db.VarChar(30)
-  status         String    @default("Pending") @db.VarChar(30)
-  filedAt        DateTime? @map("filed_at") @db.Timestamp(6)
-  filedByUserId  String?   @map("filed_by_user_id") @db.Uuid
-  createdByUserId String?  @map("created_by_user_id") @db.Uuid
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String    @db.VarChar(180)
+  category        String    @db.VarChar(80)
+  dueDate         DateTime  @map("due_date") @db.Date
+  owner           String    @db.VarChar(160)
+  recurrence      String    @default("One-off") @db.VarChar(30)
+  status          String    @default("Pending") @db.VarChar(30)
+  filedAt         DateTime? @map("filed_at") @db.Timestamp(6)
+  filedByUserId   String?   @map("filed_by_user_id") @db.Uuid
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@index([status, dueDate])
   @@map("compliance_obligations")
@@ -1769,4 +1777,160 @@ model Alumni {
 
   @@index([employeeId])
   @@map("alumni")
+}
+
+// ── Smart Payslip Designer (Module 7 Extended) ───────────────────────────────
+// JSON-blueprint driven payslip designer: templates, versioned blueprints,
+// config-driven country/state/tax rules, tax regime selections and overrides.
+
+model PayslipTemplate {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @db.VarChar(160)
+  description   String?
+  country       String   @default("India") @db.VarChar(60)
+  state         String?  @db.VarChar(60)
+  financialYear Int      @default(2026) @map("financial_year")
+  status        String   @default("Draft") @db.VarChar(20)
+  isActive      Boolean  @default(false) @map("is_active")
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  creator   Employee?                @relation("PayslipTemplatesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  versions  PayslipTemplateVersion[]
+  overrides TemplateOverride[]
+
+  @@index([status])
+  @@map("payslip_templates")
+}
+
+model PayslipTemplateVersion {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId    String   @map("template_id") @db.Uuid
+  version       Int      @map("version_no")
+  blueprint     Json
+  changeSummary String?  @map("change_summary")
+  status        String   @default("Draft") @db.VarChar(20)
+  isActive      Boolean  @default(false) @map("is_active")
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  template PayslipTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  creator  Employee?       @relation("PayslipVersionAuthored", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, version])
+  @@index([status])
+  @@map("payslip_template_versions")
+}
+
+/**
+ * Config-driven country rule (attaches components, applies thresholds).
+ */
+model CountryRule {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  country       String    @db.VarChar(60)
+  name          String    @db.VarChar(120)
+  ruleType      String    @default("COMPONENT") @map("rule_type") @db.VarChar(30)
+  priority      Int       @default(100)
+  conditions    Json
+  actions       Json
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  version       String    @default("1.0") @db.VarChar(20)
+  status        String    @default("Active") @db.VarChar(20)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([country, status])
+  @@map("country_rules")
+}
+
+/**
+ * Config-driven state rule (statutory components: PT, LWF, …).
+ */
+model StateRule {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  country       String    @default("India") @db.VarChar(60)
+  state         String    @db.VarChar(60)
+  name          String    @db.VarChar(120)
+  ruleType      String    @default("COMPONENT") @map("rule_type") @db.VarChar(30)
+  priority      Int       @default(100)
+  conditions    Json
+  actions       Json
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  version       String    @default("1.0") @db.VarChar(20)
+  status        String    @default("Active") @db.VarChar(20)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([country, state, status])
+  @@map("state_rules")
+}
+
+/**
+ * Versioned, config-driven tax rules (slabs / exemptions / deductions / cess).
+ */
+model TaxRule {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  country       String    @default("India") @db.VarChar(60)
+  regime        String    @db.VarChar(20) // OLD | NEW
+  ruleType      String    @map("rule_type") @db.VarChar(40) // SLAB | EXEMPTION | DEDUCTION_LIMIT | REBATE | CESS | SURCHARGE | STD_DEDUCTION
+  name          String    @db.VarChar(160)
+  slabOrder     Int       @default(0) @map("slab_order")
+  slabMin       Decimal?  @map("slab_min") @db.Decimal(16, 2)
+  slabMax       Decimal?  @map("slab_max") @db.Decimal(16, 2)
+  rate          Decimal?  @db.Decimal(8, 4)
+  amount        Decimal?  @db.Decimal(16, 2)
+  limitValue    Decimal?  @map("limit_value") @db.Decimal(16, 2)
+  section       String?   @db.VarChar(30)
+  formula       String?
+  financialYear Int       @map("financial_year")
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  version       String    @default("1.0") @db.VarChar(20)
+  status        String    @default("Active") @db.VarChar(20)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([country, regime, financialYear, status])
+  @@map("tax_rules")
+}
+
+/**
+ * Employee's chosen tax regime for a financial year.
+ */
+model EmployeeTaxSelection {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String   @map("employee_id") @db.Uuid
+  financialYear Int      @map("financial_year")
+  regime        String   @db.VarChar(20) // OLD | NEW
+  source        String   @default("EMPLOYEE") @db.VarChar(20)
+  updatedById   String?  @map("updated_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  updatedBy Employee? @relation("EmployeeTaxSelectionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, financialYear])
+  @@map("employee_tax_selections")
+}
+
+/**
+ * HR manual override of an auto-assigned payslip component.
+ */
+model TemplateOverride {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId       String   @map("template_id") @db.Uuid
+  componentId      String   @map("component_id") @db.VarChar(80)
+  systemAssignment String   @map("system_assignment") @db.VarChar(120)
+  manualOverride   String   @map("manual_override") @db.VarChar(120)
+  overrideReason   String?  @map("override_reason")
+  overriddenById   String?  @map("overridden_by_id") @db.Uuid
+  overriddenAt     DateTime @default(now()) @map("overridden_at") @db.Timestamp(6)
+
+  template     PayslipTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  overriddenBy Employee?       @relation("PayslipOverrideAuthor", fields: [overriddenById], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, componentId])
+  @@index([templateId])
+  @@map("template_overrides")
 }

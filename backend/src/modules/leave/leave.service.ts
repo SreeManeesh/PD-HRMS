@@ -254,6 +254,146 @@ export async function rejectLeave(requestId: string, approverEmployeeId: string,
   return { data: { id: updated.id, status: "Rejected", comments: rejectionReason } };
 }
 
+/** Resolve a leave type from a display name/code (e.g. "Sick Leave", "SL",
+ *  "Emergency", "LT02"). Creates an "Emergency Leave" type on demand. */
+export async function resolveLeaveTypeByText(value: string) {
+  const v = (value ?? "").trim();
+  const lower = v.toLowerCase();
+  if (!lower) return prisma.leaveType.findUnique({ where: { code: "LT03" } });
+
+  if (/^lt\d+$/i.test(lower)) {
+    const byCode = await prisma.leaveType.findUnique({ where: { code: v.toUpperCase() } });
+    if (byCode) return byCode;
+  }
+  const byName = await prisma.leaveType.findFirst({ where: { name: { equals: v, mode: "insensitive" } } });
+  if (byName) return byName;
+  const byContains = await prisma.leaveType.findFirst({ where: { name: { contains: v, mode: "insensitive" } } });
+  if (byContains) return byContains;
+
+  if (/emergence|emergency/i.test(lower)) {
+    return prisma.leaveType.upsert({
+      where: { code: "LT08" },
+      update: {},
+      create: { code: "LT08", name: "Emergency Leave", defaultAnnualDays: 5, carryForward: false },
+    });
+  }
+
+  return prisma.leaveType.findUnique({ where: { code: "LT03" } });
+}
+
+/** Resolve an approver employee PK from a human-readable "Approved By" value
+ *  (role names like Manager / CEO / HR, or an employee code / name). */
+export async function resolveApproverIdFromText(value: string, employeeId: string) {
+  const v = (value ?? "").trim();
+  if (!v) return null;
+  const lower = v.toLowerCase();
+
+  if (/ceo/i.test(lower)) {
+    const ceo = await prisma.employee.findFirst({
+      where: { designation: { title: { contains: "CEO", mode: "insensitive" } } },
+      select: { id: true },
+    });
+    if (ceo) return ceo.id;
+  }
+  if (/\bhr\b|human\s?resources/i.test(lower)) {
+    const hr = await prisma.employee.findFirst({
+      where: { designation: { title: { contains: "HR", mode: "insensitive" } } },
+      select: { id: true },
+    });
+    if (hr) return hr.id;
+  }
+  if (/manager|mgr/i.test(lower)) {
+    const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { reportingManagerId: true } });
+    if (emp?.reportingManagerId) return emp.reportingManagerId;
+  }
+  if (/^emp\d+$/i.test(lower)) {
+    const byCode = await prisma.employee.findUnique({ where: { employeeCode: v.toUpperCase() }, select: { id: true } });
+    if (byCode) return byCode.id;
+  }
+  const byName = await prisma.employee.findFirst({
+    where: {
+      OR: [
+        { firstName: { contains: v, mode: "insensitive" } },
+        { lastName: { contains: v, mode: "insensitive" } },
+        { employeeCode: { equals: v, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true },
+  });
+  return byName?.id ?? null;
+}
+
+/**
+ * Create (or keep) a leave request from an uploaded attendance row. Imported
+ * rows are left "Pending" unless the file explicitly marks them approved —
+ * the Leave Requests & Approvals table then shows Approve/Reject for them.
+ * Emergency leave is always imported as Pending so it requires a decision.
+ */
+export interface UploadedLeaveInput {
+  employeeId: string;          // PK
+  employeeCode: string;
+  date: string;                // YYYY-MM-DD
+  leaveTypeValue?: string;
+  approvalValue?: string;      // e.g. Approved | Pending | empty
+  approvedByValue?: string;    // Manager | CEO | HR | code | name | empty
+  reason?: string;
+}
+
+export async function upsertLeaveRequestFromUpload(input: UploadedLeaveInput) {
+  const leaveType = await resolveLeaveTypeByText(input.leaveTypeValue ?? "");
+  if (!leaveType) return null;
+
+  const isEmergency = /emergence|emergency/i.test(input.leaveTypeValue ?? "");
+  const explicitlyApproved =
+    /approv/i.test(input.approvalValue ?? "") && !/pending|reject/i.test(input.approvalValue ?? "");
+  const status = isEmergency || !explicitlyApproved ? "Pending" : "Approved";
+
+  const start = new Date(`${input.date}T00:00:00Z`);
+  const end = start;
+
+  const existing = await prisma.leaveRequest.findFirst({
+    where: { employeeId: input.employeeId, leaveTypeId: leaveType.id, startDate: start, endDate: end },
+    select: { id: true },
+  });
+  if (existing) return null; // idempotent — same day+type already imported
+
+  const approvedBy = status === "Approved"
+    ? await resolveApproverIdFromText(input.approvedByValue ?? "", input.employeeId)
+    : null;
+
+  const request = await prisma.$transaction(async (tx) => {
+    const created = await tx.leaveRequest.create({
+      data: {
+        employeeId: input.employeeId,
+        leaveTypeId: leaveType.id,
+        startDate: start,
+        endDate: end,
+        reason: input.reason?.trim() || `${leaveType.name} requested via attendance upload`,
+        status,
+        approvedBy,
+        approvedOn: status === "Approved" ? new Date() : null,
+        comments: status === "Approved" ? "Auto-approved on import." : null,
+      },
+      include: REQUEST_INCLUDE,
+    });
+
+    if (status === "Approved") {
+      const year = start.getUTCFullYear();
+      await tx.leaveBalance.upsert({
+        where: { employeeId_leaveTypeId_year: { employeeId: input.employeeId, leaveTypeId: leaveType.id, year } },
+        create: {
+          employeeId: input.employeeId, leaveTypeId: leaveType.id, year,
+          totalDays: leaveType.defaultAnnualDays, usedDays: 1,
+        },
+        update: { usedDays: { increment: 1 } },
+      });
+    }
+    return created;
+  });
+
+  return serializeLeaveRequestList([request])[0];
+}
+
 export function normalizeDateRange(start: Date, end: Date): { start: Date; end: Date } {
   return { start: startOfDay(start), end: startOfDay(end) };
 }

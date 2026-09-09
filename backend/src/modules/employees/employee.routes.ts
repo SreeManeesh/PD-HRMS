@@ -34,6 +34,9 @@ const createBodySchema = z.object({
   gender: z.string().optional(),
   dob: z.string().optional(),
   password: z.string().min(8).optional(),
+  state: z.string().optional(),
+  country: z.string().optional(),
+  annualSalary: z.coerce.number().nonnegative().optional(),
 });
 
 const updateBodySchema = createBodySchema.partial();

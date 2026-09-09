@@ -8,6 +8,8 @@ services:
       POSTGRES_USER: hrms_admin
       POSTGRES_PASSWORD: hrms_password
       POSTGRES_DB: hrms_db
+    ports:
+      - "127.0.0.1:5433:5432"
     volumes:
       - hrms_pgdata:/var/lib/postgresql/data
     healthcheck:

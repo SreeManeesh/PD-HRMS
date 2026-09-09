@@ -24,3 +24,12 @@ export const checkOut = async (employeeId) => {
   const res = await api.post("/attendance/check-out", { employeeId });
   return res.data;
 };
+
+export const uploadAttendanceFile = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  // axios sets the multipart boundary automatically when posting FormData.
+  // Supports: xlsx, xlsm, xlsb, xls, xltx, xltm, xlt, xlam, xla, xlw, csv, tsv, txt, prn, dif, slk, xml
+  const res = await api.post("/attendance/upload", formData);
+  return res.data; // { imported, skipped, errors, data }
+};

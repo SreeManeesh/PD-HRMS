@@ -3,6 +3,7 @@ import { z } from "zod";
 import { validate } from "../../middlewares/validate";
 import { authenticate } from "../../middlewares/auth";
 import { requirePermission } from "../../middlewares/rbac";
+import { attendanceUpload } from "../../middlewares/attendanceUpload";
 import * as attendanceController from "./attendance.controller";
 
 const router = Router();
@@ -33,5 +34,8 @@ router.post("/check-in", authenticate, requirePermission("attendance:write"), va
 
 // POST /api/attendance/check-out — attendance:write
 router.post("/check-out", authenticate, requirePermission("attendance:write"), validate({ body: checkOutBodySchema }), attendanceController.doCheckOut);
+
+// POST /api/attendance/upload — attendance:write (bulk CSV / Excel / text import)
+router.post("/upload", authenticate, requirePermission("attendance:write"), attendanceUpload.single("file"), attendanceController.uploadAttendance);
 
 export default router;

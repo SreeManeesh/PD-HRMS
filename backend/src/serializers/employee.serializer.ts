@@ -23,7 +23,7 @@ type EmployeeWithRelations = Employee & {
  */
 export function serializeEmployee(emp: EmployeeWithRelations) {
   const activeStructure = emp.salaryStructures?.find((s) => s.isActive);
-  const annualSalary = activeStructure
+  const structureSalary = activeStructure
     ? toNumber(activeStructure.basicSalary) +
       toNumber(activeStructure.hra) +
       toNumber(activeStructure.conveyanceAllowance) +
@@ -31,6 +31,7 @@ export function serializeEmployee(emp: EmployeeWithRelations) {
       toNumber(activeStructure.performanceBonus) +
       toNumber(activeStructure.otherAllowances)
     : 0;
+  const salarySource = emp.annualSalary != null ? toNumber(emp.annualSalary) : structureSalary;
 
     const genderPath = emp.gender?.toLowerCase() === "female" ? "women" : "men";
     const avatarId = hashStringToRange(emp.employeeCode, 1, 99);
@@ -45,10 +46,13 @@ export function serializeEmployee(emp: EmployeeWithRelations) {
     designation: emp.designation?.title ?? "",
     department: emp.department?.name ?? "",
     location: emp.location?.name ?? "",
+    state: emp.state ?? "",
+    country: emp.country ?? "",
     employmentType: emp.employmentType,
     status: emp.status,
     joinDate: formatDate(emp.dateOfJoining),
-    salary: Math.round(annualSalary),
+    salary: Math.round(salarySource),
+    annualSalary: Math.round(salarySource),
     managerId: emp.reportingManager?.employeeCode ?? null,
     gender: emp.gender ?? "",
     dob: emp.dateOfBirth ? formatDate(emp.dateOfBirth) : null,

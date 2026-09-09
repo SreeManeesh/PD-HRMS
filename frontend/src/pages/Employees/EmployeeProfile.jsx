@@ -140,6 +140,8 @@ export default function EmployeeProfile() {
               <InfoRow icon={Mail}      label="Email"         value={employee.email} />
               <InfoRow icon={Phone}     label="Phone"         value={employee.phone} />
               <InfoRow icon={MapPin}    label="Location"      value={employee.location} />
+              <InfoRow icon={MapPin}    label="State"         value={employee.state} />
+              <InfoRow icon={MapPin}    label="Country"       value={employee.country} />
               <InfoRow icon={Calendar}  label="Date of Birth" value={employee.dob ? new Date(employee.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} />
             </div>
           )}
@@ -158,7 +160,7 @@ export default function EmployeeProfile() {
               <p style={{ fontSize: "13.5px", color: "var(--subtext)", marginBottom: "16px" }}>Salary details are visible to authorised HR personnel only.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "16px" }}>
                 {[
-                  { label: "Annual CTC", value: `$${employee.salary?.toLocaleString() ?? "—"}` },
+                  { label: "Yearly Salary Package", value: `$${employee.salary?.toLocaleString() ?? "—"}` },
                   { label: "Monthly Gross", value: `$${Math.round(employee.salary / 12)?.toLocaleString() ?? "—"}` },
                 ].map((item) => (
                   <div key={item.label} style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "16px" }}>

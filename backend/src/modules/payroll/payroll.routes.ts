@@ -11,8 +11,23 @@ const payslipQuerySchema = z.object({
   employeeId: z.string().optional(),
 });
 
+const employeeSummaryQuerySchema = z.object({
+  employeeId: z.string().min(1),
+  month: z.coerce.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2000).max(2100),
+});
+
 // GET /api/payroll/runs — payroll:read
 router.get("/runs", authenticate, requirePermission("payroll:read"), payrollController.runs);
+
+// GET /api/payroll/employee-summary — payroll:read (computed gross/deductions/net with leave deduction)
+router.get(
+  "/employee-summary",
+  authenticate,
+  requirePermission("payroll:read"),
+  validate({ query: employeeSummaryQuerySchema }),
+  payrollController.employeeSummary
+);
 
 // GET /api/payroll/runs/:id — payroll:read
 router.get("/runs/:id", authenticate, requirePermission("payroll:read"), payrollController.runDetail);
@@ -28,5 +43,8 @@ router.get("/payslips", authenticate, requirePermission("payroll:read"), validat
 
 // GET /api/payroll/payslips/:id — payroll:read
 router.get("/payslips/:id", authenticate, requirePermission("payroll:read"), payrollController.payslipDetail);
+
+// GET /api/payroll/payslips/:id/pdf — payroll:read (rupee-formatted PDF)
+router.get("/payslips/:id/pdf", authenticate, requirePermission("payroll:read"), payrollController.payslipPdf);
 
 export default router;

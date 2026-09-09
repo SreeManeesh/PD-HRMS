@@ -72,12 +72,23 @@ api.interceptors.response.use(
     }
 
     // Do NOT expose raw stack traces — re-throw a clean object
+    // Handle Blob error bodies (responseType: "blob") by reading the JSON back.
+    let message = null;
+    const data = error.response?.data;
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text();
+        const parsed = JSON.parse(text);
+        message = parsed?.message || null;
+      } catch {
+        message = null;
+      }
+    } else {
+      message = data?.message || null;
+    }
     return Promise.reject({
       status: error.response?.status || 0,
-      message:
-        error.response?.data?.message ||
-        error.message ||
-        "An unexpected error occurred. Please try again.",
+      message: message || error.message || "An unexpected error occurred. Please try again.",
     });
   }
 );

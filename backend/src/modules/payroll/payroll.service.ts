@@ -6,11 +6,14 @@ import {
   serializePayslipList,
   runPublicId,
   buildPayslipAmounts,
+  periodLabel,
 } from "../../serializers/payroll.serializer";
+import { countWeekdays, toNumber } from "../../serializers/helpers";
+import { generatePayslipPdf } from "./payslip.pdf";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
-  employee: { select: { employeeCode: true, firstName: true, lastName: true } },
+  employee: { select: { employeeCode: true, firstName: true, lastName: true, department: { select: { name: true } }, designation: { select: { title: true } } } },
   payrollRun: true,
 };
 
@@ -45,7 +48,9 @@ export async function listPayslips(employeeId?: string) {
 export async function getPayslip(id: string) {
   // Public payslip id format: PS-YYYY-MM-EMPCODE
   const parts = id.split("-");
-  if (parts.length < 5 || parts[0] !== "PS") throw AppError.badRequest("Invalid payslip id");
+  if (parts.length < 4 || parts[0] !== "PS" || !/^\d{4}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) {
+    throw AppError.badRequest("Invalid payslip id");
+  }
   const year = Number(parts[1]);
   const month = Number(parts[2]);
   const employeeCode = parts.slice(3).join("-");
@@ -60,6 +65,52 @@ export async function getPayslip(id: string) {
   });
   if (!slip) throw AppError.notFound("Payslip not found");
   return { data: serializePayslipList([slip])[0] };
+}
+
+/** Load a payslip and render it as a rupee-formatted PDF. */
+export async function getPayslipPdf(id: string) {
+  const parts = id.split("-");
+  if (parts.length < 4 || parts[0] !== "PS" || !/^\d{4}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) {
+    throw AppError.badRequest("Invalid payslip id");
+  }
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const employeeCode = parts.slice(3).join("-");
+
+  const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
+  const employee = await prisma.employee.findUnique({
+    where: { employeeCode },
+    include: { department: { select: { name: true } }, designation: { select: { title: true } } },
+  });
+  if (!run || !employee) throw AppError.notFound("Payslip not found");
+
+  const slip = await prisma.payslip.findUnique({
+    where: { payrollRunId_employeeId: { payrollRunId: run.id, employeeId: employee.id } },
+    include: { employee: { select: { employeeCode: true, firstName: true, lastName: true } }, payrollRun: true },
+  });
+  if (!slip) throw AppError.notFound("Payslip not found");
+
+  const earnings = slip.earnings as Record<string, number>;
+  const deductions = slip.deductions as Record<string, number>;
+  const gross = Number(earnings?.total ?? 0);
+  const netPay = Number(slip.netPay ?? 0);
+
+  const buffer = await generatePayslipPdf({
+    companyName: "Proteccio HRMS",
+    employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+    employeeId: employee.employeeCode,
+    department: employee.department?.name,
+    designation: employee.designation?.title,
+    period: `${periodLabel({ month, year })}`,
+    paidOn: slip.paidOn ? slip.paidOn.toISOString().slice(0, 10) : null,
+    paymentMode: slip.paymentMode,
+    earnings,
+    deductions,
+    netPay,
+    gross,
+  });
+
+  return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
 }
 
 /**
@@ -204,4 +255,81 @@ export function parseRunPublicId(id: string): { year: number; month: number } {
   const month = Number(match[2]);
   if (month < 1 || month > 12) throw AppError.badRequest("Invalid month in payroll run id");
   return { year, month };
+}
+
+function isUnpaidLeave(lt: { code: string; name: string }): boolean {
+  return lt.code === "LT07" || /without pay|unpaid|lwp/i.test(lt.name);
+}
+
+/**
+ * Computed per-employee payroll for a month, with salary adjusted for unpaid
+ * leave days ("Leave Without Pay") taken in that month. Used by the
+ * "Employee Payroll" panel — recalculates gross / deductions / net on the fly.
+ */
+export async function getEmployeePayrollSummary(employeeCode: string, month: number, year: number) {
+  const emp = await prisma.employee.findUnique({
+    where: { employeeCode },
+    include: {
+      salaryStructures: { where: { isActive: true }, orderBy: { effectiveFrom: "desc" }, take: 1 },
+    },
+  });
+  if (!emp) throw AppError.notFound("Employee not found");
+  const structure = emp.salaryStructures[0];
+  if (!structure) throw AppError.badRequest("No active salary structure for this employee");
+
+  const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
+
+  const amounts = buildPayslipAmounts(structure);
+  const gross = amounts.earnings.total;
+  const standardDeductions = amounts.deductions.total;
+
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 0));
+  const workingDays = countWeekdays(monthStart, monthEnd);
+
+  // Approved leaves overlapping the month — only unpaid types reduce pay.
+  const leaves = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId: emp.id,
+      status: "Approved",
+      startDate: { lte: monthEnd },
+      endDate: { gte: monthStart },
+    },
+    include: { leaveType: true },
+  });
+
+  let leaveDays = 0;
+  for (const l of leaves) {
+    const st = l.startDate > monthStart ? l.startDate : monthStart;
+    const en = l.endDate < monthEnd ? l.endDate : monthEnd;
+    if (en < st) continue;
+    if (isUnpaidLeave(l.leaveType)) leaveDays += countWeekdays(st, en);
+  }
+
+  const leaveDeduction = leaveDays > 0 ? Math.round((gross / workingDays) * leaveDays) : 0;
+  const netPay = gross - leaveDeduction - standardDeductions;
+
+  return {
+    data: {
+      period: periodLabel({ month, year }),
+      month,
+      year,
+      status: run?.status ?? "Not Processed",
+      employeeId: emp.employeeCode,
+      employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+      gross,
+      leaveDays,
+      workingDays,
+      leaveDeduction,
+      deductions: {
+        providentFund: toNumber(amounts.deductions.providentFund),
+        professionalTax: toNumber(amounts.deductions.professionalTax),
+        incomeTax: toNumber(amounts.deductions.incomeTax),
+        healthInsurance: toNumber(amounts.deductions.healthInsurance),
+        leaveDeduction,
+        total: standardDeductions + leaveDeduction,
+      },
+      netPay,
+    },
+  };
 }

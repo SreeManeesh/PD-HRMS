@@ -6,6 +6,7 @@ import recruitmentRoutes from "../modules/recruitment/recruitment.routes";
 import attendanceRoutes from "../modules/attendance/attendance.routes";
 import leaveRoutes from "../modules/leave/leave.routes";
 import payrollRoutes from "../modules/payroll/payroll.routes";
+import payslipDesignerRoutes from "../modules/payslip/payslip.routes";
 import searchRoutes from "../modules/search/search.routes";
 import workflowRoutes from "../modules/workflow/workflow.routes";
 import performanceRoutes from "../modules/performance/performance.routes";
@@ -35,6 +36,7 @@ if (!serviceName || serviceName === "recruitment") router.use("/candidate-lifecy
 if (!serviceName || serviceName === "attendance") router.use("/attendance", attendanceRoutes);
 if (!serviceName || serviceName === "leave") router.use("/leave", leaveRoutes);
 if (!serviceName || serviceName === "payroll") router.use("/payroll", payrollRoutes);
+if (!serviceName || serviceName === "payroll") router.use("/payslip", payslipDesignerRoutes);
 if (!serviceName || serviceName === "search") router.use("/search", searchRoutes);
 if (!serviceName || serviceName === "workflow") router.use("/workflow", workflowRoutes);
 if (!serviceName || serviceName === "performance") router.use("/performance", performanceRoutes);

@@ -96,6 +96,9 @@ export interface CreateEmployeeInput {
   gender?: string;
   dob?: string;
   password?: string;
+  state?: string;
+  country?: string;
+  annualSalary?: number;
 }
 
 function toOptionalDate(value?: string): Date | null {
@@ -183,6 +186,9 @@ export async function createEmployee(input: CreateEmployeeInput) {
       reportingManagerId: input.managerId ?? null,
       dateOfJoining: new Date(input.dateOfJoining ?? new Date()),
       employmentType: input.employmentType ?? "Full-Time",
+      state: input.state ?? null,
+      country: input.country ?? null,
+      annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : null,
     },
     include: EMPLOYEE_INCLUDE,
   });
@@ -221,6 +227,9 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
     reportingManager: input.managerId ? { connect: { id: input.managerId } } : undefined,
     employmentType: input.employmentType ?? undefined,
     dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
+    state: input.state ?? undefined,
+    country: input.country ?? undefined,
+    annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : undefined,
   };
 
   const updated = await prisma.employee.update({

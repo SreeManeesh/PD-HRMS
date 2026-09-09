@@ -2,12 +2,13 @@ import type { AttendancePunch, Employee } from "@prisma/client";
 import { formatDate, formatTime, toNumber } from "./helpers";
 
 type PunchWithEmployee = AttendancePunch & {
-  employee?: { employeeCode: string } | null;
+  employee?: { employeeCode: string; firstName: string; lastName: string } | null;
 };
 
 /**
  * Maps a DB attendance punch to the frontend contract (see mock/attendance.js).
- * checkIn/checkOut are "HH:MM" strings; hoursWorked is computed.
+ * checkIn/checkOut are "HH:MM" strings; hoursWorked is computed; leave is
+ * "Yes" when the record was imported as a leave day.
  */
 export function serializeAttendance(punch: PunchWithEmployee) {
   const hoursWorked =
@@ -18,10 +19,14 @@ export function serializeAttendance(punch: PunchWithEmployee) {
   return {
     id: punch.id,
     employeeId: punch.employee?.employeeCode ?? "",
+    employeeName: punch.employee
+      ? `${punch.employee.firstName} ${punch.employee.lastName}`.trim()
+      : "",
     date: formatDate(punch.punchDate),
     checkIn: formatTime(punch.punchIn),
     checkOut: formatTime(punch.punchOut),
     status: punch.status,
+    leave: punch.status === "Leave" ? "Yes" : "No",
     hoursWorked,
   };
 }
