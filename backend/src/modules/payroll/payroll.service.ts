@@ -716,10 +716,38 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
     },
   });
   if (!emp) throw AppError.notFound("Employee not found");
-  const structure = emp.salaryStructures[0];
-  if (!structure) throw AppError.badRequest("No active salary structure for this employee");
 
   const run = await prisma.payrollRun.findUnique({ where: { month_year: { month, year } } });
+
+  const structure = emp.salaryStructures[0];
+  if (!structure) {
+    // Gracefully surface employees without a configured salary (instead of a
+    // hard error) so the Employee Payroll panel can still list/see them.
+    return {
+      data: {
+        period: periodLabel({ month, year }),
+        month,
+        year,
+        status: run?.status ?? "Not Processed",
+        employeeId: emp.employeeCode,
+        employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+        gross: 0,
+        leaveDays: 0,
+        workingDays: 0,
+        leaveDeduction: 0,
+        noSalaryStructure: true,
+        deductions: {
+          providentFund: 0,
+          professionalTax: 0,
+          incomeTax: 0,
+          healthInsurance: 0,
+          leaveDeduction: 0,
+          total: 0,
+        },
+        netPay: 0,
+      },
+    };
+  }
 
   const comp = await computeEmployeePayslip(emp, structure, year, month);
   // LOP impact in rupees — the value clawed back for unpaid/present days that

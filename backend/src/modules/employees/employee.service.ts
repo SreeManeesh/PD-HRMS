@@ -200,6 +200,10 @@ export async function createEmployee(input: CreateEmployeeInput) {
     newValue: { employeeCode: emp.employeeCode, firstName: emp.firstName, lastName: emp.lastName },
   });
 
+  // Auto-create an active salary structure so the employee immediately shows up
+  // in payroll (summary + runs) with a computed salary breakdown.
+  await ensureActiveSalaryStructure(emp.id, input.annualSalary);
+
   return { data: serializeEmployeeList([emp])[0] };
 }
 
@@ -207,6 +211,38 @@ async function generateEmployeeCode(): Promise<string> {
   const last = await prisma.employee.findFirst({ orderBy: { employeeCode: "desc" }, select: { employeeCode: true } });
   const nextNumber = last ? (Number(last.employeeCode.replace(/\D/g, "")) || 0) + 1 : 1;
   return `EMP${String(nextNumber).padStart(3, "0")}`;
+}
+
+/** Derive a monthly salary-structure split from an annual salary (mirrors the
+ *  seed baseline). Employees without an active structure are invisible to
+ *  payroll, so create one automatically when an employee is created/updated. */
+async function ensureActiveSalaryStructure(employeeId: string, annualSalary?: number | null) {
+  const existing = await prisma.salaryStructure.findFirst({ where: { employeeId, isActive: true } });
+  if (existing) return existing;
+
+  const monthly = Math.max(Number(annualSalary) || 0, 0) / 12;
+  const basic = Math.round((monthly * 0.5) / 10) * 10;
+  const hra = Math.round((monthly * 0.2) / 10) * 10;
+  const conveyance = 400;
+  const medical = 250;
+  const other = Math.max(0, Math.round((monthly - basic - hra - conveyance - medical) / 10) * 10);
+
+  return prisma.salaryStructure.create({
+    data: {
+      employeeId,
+      effectiveFrom: new Date(),
+      basicSalary: basic,
+      hra,
+      conveyanceAllowance: conveyance,
+      medicalAllowance: medical,
+      performanceBonus: 0,
+      otherAllowances: other,
+      providentFund: Math.round((basic * 0.12) / 10) * 10,
+      professionalTax: 200,
+      incomeTax: Math.round((monthly * 0.05) / 10) * 10,
+      healthInsurance: 180,
+    },
+  });
 }
 
 export async function updateEmployee(id: string, input: Partial<CreateEmployeeInput>) {
@@ -245,6 +281,13 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
     oldValue: { employeeCode: existing.employeeCode },
     newValue: { employeeCode: updated.employeeCode, firstName: updated.firstName, lastName: updated.lastName },
   });
+
+  // Create a salary structure on first payroll setup when the employee got a
+  // salary (or update keeps an existing one in place).
+  await ensureActiveSalaryStructure(
+    updated.id,
+    input.annualSalary ?? (existing.annualSalary ? Number(existing.annualSalary) : undefined)
+  );
 
   return { data: serializeEmployeeList([updated])[0] };
 }

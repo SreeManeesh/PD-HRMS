@@ -73,6 +73,18 @@ export default function PayslipDesigner() {
   const [notice, setNotice] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [activeView, setActiveView] = useState("design");
+
+  // ── Custom component creation (Nesting manager) ──
+  const [showNewComp, setShowNewComp] = useState(false);
+  const [ncLabel, setNcLabel] = useState("");
+  const [ncKind, setNcKind] = useState("earning");
+  const [ncType, setNcType] = useState("fixed");
+  const [ncValue, setNcValue] = useState("0");
+  const [ncPct, setNcPct] = useState("0");
+  const [ncSource, setNcSource] = useState("basic");
+  const [ncFormula, setNcFormula] = useState("0");
+  const [ncPriority, setNcPriority] = useState("20");
+  const [ncNest, setNcNest] = useState("");
   const [calcResult, setCalcResult] = useState(null);
   const [taxCompare, setTaxCompare] = useState(null);
   const [validation, setValidation] = useState(null);
@@ -462,6 +474,37 @@ export default function PayslipDesigner() {
     setNotice("Layout auto-arranged into a clean, non-overlapping grid");
   };
 
+  const createComponent = () => {
+    if (!blueprint || !ncLabel.trim()) return;
+    mutateBlueprint((next) => {
+      const base = ncLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      let id = base || uid();
+      if (next.components.some((c) => c.id === id)) id = `${id}_${uid().slice(0, 4)}`;
+      const order = next.components.length;
+      const logic = { type: ncType, calculationPriority: Math.max(1, Number(ncPriority) || 20) };
+      if (ncType === "fixed") logic.value = Number(ncValue) || 0;
+      else if (ncType === "percentage") { logic.sourceField = ncSource || "basic"; logic.pct = Number(ncPct) || 0; }
+      else logic.formula = ncFormula || "0";
+      next.components = [...next.components, {
+        id,
+        label: ncLabel.trim(),
+        kind: ncKind,
+        logic,
+        ui: { x: 20, y: 10 + order * 30, w: 60, h: 24 },
+        nestId: ncNest || null,
+        displayOrder: order,
+        visible: true,
+      }];
+    });
+    setShowNewComp(false);
+    setNcLabel("");
+    setNcKind("earning");
+    setNcType("fixed");
+    setNcValue("0");
+    setNcPriority("20");
+    setNcNest("");
+  };
+
   const liveHtml = useMemo(() => {
     if (!blueprint) return "";
     const t = blueprint.theme || DEFAULT_THEME;
@@ -775,6 +818,63 @@ export default function PayslipDesigner() {
                 })}
               />
             ))}
+            <button className="pd-btn" onClick={() => setShowNewComp((s) => !s)}><Plus size={15} /> New Component</button>
+            {showNewComp && (
+              <div style={{ background: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14, marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>Create a new component</div>
+                <input value={ncLabel} onChange={(e) => setNcLabel(e.target.value)} placeholder="Component label (e.g. Shift Allowance)" style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13 }} />
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <label style={{ fontSize: 12.5 }}>Type
+                    <select value={ncKind} onChange={(e) => setNcKind(e.target.value)} style={{ display: "block", height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }}>
+                      <option value="earning">Earning</option>
+                      <option value="deduction">Deduction</option>
+                      <option value="employer">Employer Contribution</option>
+                      <option value="reimbursement">Reimbursement</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12.5 }}>Logic
+                    <select value={ncType} onChange={(e) => setNcType(e.target.value)} style={{ display: "block", height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }}>
+                      <option value="fixed">Fixed ₹</option>
+                      <option value="percentage">% of field</option>
+                      <option value="formula">Formula</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12.5 }}>Nest
+                      <select value={ncNest} onChange={(e) => setNcNest(e.target.value)} style={{ display: "block", height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }}>
+                        <option value="">— unassigned —</option>
+                        {blueprint.nests.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+                      </select>
+                    </label>
+                  <label style={{ fontSize: 12.5 }}>Priority
+                    <input value={ncPriority} onChange={(e) => setNcPriority(e.target.value)} type="number" style={{ display: "block", width: 70, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }} />
+                  </label>
+                </div>
+                {ncType === "fixed" && (
+                  <label style={{ fontSize: 12.5 }}>Value (₹)
+                    <input value={ncValue} onChange={(e) => setNcValue(e.target.value)} type="number" style={{ display: "block", width: 140, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }} />
+                  </label>
+                )}
+                {ncType === "percentage" && (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <label style={{ fontSize: 12.5 }}>% of
+                      <input value={ncPct} onChange={(e) => setNcPct(e.target.value)} type="number" style={{ display: "block", width: 80, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }} />
+                    </label>
+                    <label style={{ fontSize: 12.5 }}>Source field
+                      <input value={ncSource} onChange={(e) => setNcSource(e.target.value)} style={{ display: "block", width: 140, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }} />
+                    </label>
+                  </div>
+                )}
+                {ncType === "formula" && (
+                  <label style={{ fontSize: 12.5 }}>Formula
+                    <input value={ncFormula} onChange={(e) => setNcFormula(e.target.value)} placeholder="e.g. basic * 0.02" style={{ display: "block", width: 220, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", marginTop: 4, padding: "0 6px" }} />
+                  </label>
+                )}
+                <div>
+                  <button className="pd-btn primary" onClick={createComponent} disabled={!ncLabel.trim()}><Plus size={15} /> Add Component</button>
+                  <button className="pd-btn" onClick={() => setShowNewComp(false)} style={{ marginLeft: 8 }}>Cancel</button>
+                </div>
+              </div>
+            )}
             <button className="pd-btn" onClick={() => {
               const n = prompt("Nest name");
               if (n) mutateBlueprint((next) => { next.nests = [...next.nests, { id: uid(), name: n, displayOrder: (next.nests.length + 1) * 10 }]; });
