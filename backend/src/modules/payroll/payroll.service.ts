@@ -24,6 +24,12 @@ const SLIP_INCLUDE = {
 /** Overtime compensating factor: time-and-a-half of the basic hourly rate. */
 const OT_MULTIPLIER = 1.5;
 
+// Statutory employer-side rates (aligned with the designer's country catalog).
+const EPF_EMPLOYER_RATE = 0.13; // 12% EPF+EPS + 0.5% EDLI + admin charges
+const ESI_EMPLOYER_RATE = 0.0325; // 3.25% of gross wages (ESI-eligible salaried)
+const GRATUITY_RATE = 0.0481; // 4.81% of basic per month (Payment of Gratuity Act)
+const ESI_GROSS_CEILING = 21000; // monthly gross wages ceiling for ESI coverage
+
 export async function listPayrollRuns() {
   const runs = await prisma.payrollRun.findMany({
     include: RUN_INCLUDE,
@@ -287,7 +293,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     prisma.employee.findMany({ where: { status: "Active" }, select: { id: true, employeeCode: true } }),
     prisma.salaryStructure.findMany({
       where: { isActive: true },
-      include: { employee: { select: { id: true, status: true } } },
+      include: { employee: { select: { id: true, status: true, annualSalary: true } } },
     }),
   ]);
 
@@ -357,12 +363,23 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     deductions += withholding.total;
     net += slipNet;
 
+    // Employer-side statutory costs (PF, ESI, gratuity) — tracked on the slip
+    // for reporting (Form 12A, PF/ESI returns) but not subtracted from net pay.
+    const monthlySalary = toNumber(structure.employee.annualSalary) / 12;
+    const proratedBasic = Number(earnings.basicSalary ?? 0);
+    const esiEligible = monthlySalary > 0 && monthlySalary <= ESI_GROSS_CEILING;
+    const employerContributions: Record<string, number> = {
+      providentFund: round2(proratedBasic * EPF_EMPLOYER_RATE),
+      esi: esiEligible ? round2(earnings.total * ESI_EMPLOYER_RATE) : 0,
+      gratuity: round2(proratedBasic * GRATUITY_RATE),
+    };
+
     slipData.push({
       employeeId: emp.id,
       salaryStructureId: structure.id,
       earnings,
       deductions: withholding,
-      employerContributions: {},
+      employerContributions,
       netPay: slipNet,
       attendanceSummary: { ...summary, ratio: Math.round(ratio * 100) / 100 },
     });
