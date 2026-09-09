@@ -25,6 +25,15 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgresql://hrms_admin:hrms_password@db:5432/hrms_db
+      # MinIO server root credentials (see `minio` service below). These MUST
+      # match or every MinIO read/write fails with InvalidAccessKeyId — the
+      # backend/.env values are overridden here for the api container.
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: hrms_minio
+      MINIO_SECRET_KEY: hrms_minio_password
+      MINIO_BUCKET: hrms-uploads
     depends_on:
       db:
         condition: service_healthy
