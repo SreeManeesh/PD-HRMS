@@ -28,7 +28,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy && npm run prisma:seed && node dist/index.js"
+    # Migrate-only on start: seed runs ONCE manually (never on every deploy) so
+    # existing data in the hrms_pgdata volume is preserved.
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
 
   minio:
     image: minio/minio:latest
