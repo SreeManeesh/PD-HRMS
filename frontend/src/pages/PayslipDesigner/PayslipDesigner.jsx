@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  Plus, Trash2, Copy, MousePointer2, Save, Rocket, Download, Undo2, Layers,
+  Plus, Trash2, Copy, MousePointer2, Save, Rocket, Undo2, Layers,
   SlidersHorizontal, Palette, Calculator, FileText, FolderTree, CheckCircle2,
   ChevronDown, ChevronRight, LayoutGrid,
 } from "lucide-react";
@@ -24,7 +24,7 @@ import {
   listPayslipVersions, publishPayslipTemplate, restorePayslipVersion,
   getComponentCatalog, getAutoConfig,
   calculateBlueprint, compareTaxForBlueprint,
-  validateBlueprint, downloadDesignerPayslipPdf,
+  validateBlueprint,
 } from "../../services/payslipDesignerService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
@@ -106,7 +106,7 @@ export function PayslipDesignerPanel() {
     setNotice("");
     try {
       const [tempRes, verRes] = await Promise.all([getPayslipTemplate(id), listPayslipVersions(id)]);
-      const bp = tempRes.data.latestBlueprint || {
+      const bp0 = tempRes.data.latestBlueprint || {
         name: tempRes.data.name,
         country: tempRes.data.country || "India",
         state: tempRes.data.state || null,
@@ -117,6 +117,13 @@ export function PayslipDesignerPanel() {
         taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
         settings: { companyName: "Proteccio HRMS" },
       };
+      // Percentage components are based on CTC (monthly cost-to-company), not
+      // basic — migrate any legacy "basic" source on load.
+      const bp = { ...bp0, components: (bp0.components || []).map((c) =>
+        c.logic?.type === "percentage" && c.logic.sourceField === "basic"
+          ? { ...c, logic: { ...c.logic, sourceField: "ctc" } }
+          : c
+      ) };
       setBlueprint(bp);
       setVersions(verRes.data || []);
       setHistory([cloneBlueprint(bp)]);
@@ -405,27 +412,6 @@ export function PayslipDesignerPanel() {
     }
   };
 
-  const handleDownloadPdf = async () => {
-    if (!templateId) return;
-    setBusy(true);
-    setError("");
-    try {
-      const { blob, filename } = await downloadDesignerPayslipPdf(templateId, { employeeId: "", month: 9, year: 2026 });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) {
-      setError(e.message || "Could not download the payslip PDF");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleAutoConfig = async () => {
     if (!blueprint) return;
     setBusy(true);
@@ -600,7 +586,6 @@ export function PayslipDesignerPanel() {
           <button className="pd-btn" onClick={runValidation}><CheckCircle2 size={15} /> Validate</button>
           <button className="pd-btn" onClick={handleSave} disabled={saving || !canWrite}>{saving ? "Saving…" : (<><Save size={15} /> Save Draft</>)}</button>
           <button className="pd-btn primary" onClick={() => setShowConfirmPublish(true)} disabled={!canWrite || busy}><Rocket size={15} /> Publish</button>
-          <button className="pd-btn" onClick={handleDownloadPdf} disabled={!templateId || busy}><Download size={15} /> PDF</button>
         </div>
 
         {validation && (
@@ -725,7 +710,7 @@ export function PayslipDesignerPanel() {
                         {c.dataBinding?.source
                           ? c.dataBinding.source
                           : c.logic.type === "percentage"
-                            ? `${c.logic.pct || 0}% of ${c.logic.sourceField || "—"}`
+                            ? `${c.logic.pct || 0}% of ${c.logic.sourceField === "ctc" ? "CTC" : c.logic.sourceField || "—"}`
                             : c.logic.formula || (c.logic.value ?? 0)}
                       </div>
                       {isSel && (
@@ -914,7 +899,7 @@ export function PayslipDesignerPanel() {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{c.label} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({c.id})</span></div>
                       <div style={{ fontSize: 11.5, color: "var(--subtext)" }}>
-                        {c.logic.type === "percentage" ? `${c.logic.pct || 0}% of ${c.logic.sourceField}` : c.logic.type === "formula" ? `formula: ${c.logic.formula}` : `fixed: ${c.logic.value}`}
+                        {c.logic.type === "percentage" ? `${c.logic.pct || 0}% of ${c.logic.sourceField === "ctc" ? "CTC" : c.logic.sourceField}` : c.logic.type === "formula" ? `formula: ${c.logic.formula}` : `fixed: ${c.logic.value}`}
                         {c.logic.max ? ` · max ${c.logic.max.pct !== undefined ? `${c.logic.max.pct}% of ${c.logic.max.pctOf || "?"}` : (c.logic.max.value ?? c.logic.max.formula ?? "")} → ${c.logic.max.action || "none"}${c.logic.max.transferTo ? ` → ${c.logic.max.transferTo}` : ""}` : ""}
                         {c.logic.isBalancing ? " · balancing" : ""}
                       </div>
