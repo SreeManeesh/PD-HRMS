@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Smart Payslip Designer — three-area visual editor.
  *
  *  LEFT   : component library (drag onto canvas)
@@ -476,7 +476,7 @@ export function PayslipDesignerPanel() {
       const order = next.components.length;
       const logic = { type: ncType, calculationPriority: Math.max(1, Number(ncPriority) || 20) };
       if (ncType === "fixed") logic.value = Number(ncValue) || 0;
-      else if (ncType === "percentage") { logic.sourceField = ncSource || "basic"; logic.pct = Number(ncPct) || 0; }
+      else if (ncType === "percentage") { logic.sourceField = ncSource || "ctc"; logic.pct = Number(ncPct) || 0; }
       else logic.formula = ncFormula || "0";
       next.components = [...next.components, {
         id,
@@ -1180,7 +1180,7 @@ function NestThresholdEditor({ comp, onUpdateComp }) {
           <label>Type</label>
           <select value={mode} onChange={(e) => {
             const m = e.target.value;
-            if (m === "percent") set({ pct: t.pct ?? 10, pctOf: t.pctOf || "basic", value: undefined, formula: undefined });
+            if (m === "percent") set({ pct: t.pct ?? 10, pctOf: t.pctOf || "ctc", value: undefined, formula: undefined });
             else if (m === "formula") set({ formula: t.formula || "basic * 0.5", pct: undefined, pctOf: undefined, value: undefined });
             else set({ value: t.value ?? 0, pct: undefined, pctOf: undefined, formula: undefined });
           }}
@@ -1219,7 +1219,7 @@ function NestThresholdEditor({ comp, onUpdateComp }) {
           </div>
           <div className="pd-field">
             <label>Percent of</label>
-            <input value={t.pctOf || ""} onChange={(e) => set({ pctOf: e.target.value })} placeholder="basic"
+            <input value={t.pctOf || ""} onChange={(e) => set({ pctOf: e.target.value })} placeholder="ctc"
               style={{ width: "100%", height: 30, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12 }} />
           </div>
         </div>
@@ -1325,7 +1325,7 @@ function PropertyEditor({ comp, nests, onChange, onLogic, onRemove, onDuplicate,
           <div className="pd-field">
             <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--label)", marginBottom: 4 }}>Source field (of)</label>
             <select
-              value={comp.logic.sourceField || "basic"}
+              value={comp.logic.sourceField || "ctc"}
               onChange={(e) => onLogic({ sourceField: e.target.value })}
               style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
             >
@@ -1363,7 +1363,7 @@ function PropertyEditor({ comp, nests, onChange, onLogic, onRemove, onDuplicate,
           value={comp.logic.max?.pct !== undefined ? "percent" : comp.logic.max?.formula ? "formula" : "amount"}
           onChange={(e) => {
             const mode = e.target.value;
-            if (mode === "percent") onLogic({ max: { ...(comp.logic.max || {}), pct: comp.logic.max?.pct ?? 10, pctOf: comp.logic.max?.pctOf || "basic", value: undefined, formula: undefined, action: comp.logic.max?.action || "cap" } });
+            if (mode === "percent") onLogic({ max: { ...(comp.logic.max || {}), pct: comp.logic.max?.pct ?? 10, pctOf: comp.logic.max?.pctOf || "ctc", value: undefined, formula: undefined, action: comp.logic.max?.action || "cap" } });
             else if (mode === "formula") onLogic({ max: { ...(comp.logic.max || {}), pct: undefined, pctOf: undefined, formula: comp.logic.max?.formula || "basic * 0.5", value: undefined, action: comp.logic.max?.action || "cap" } });
             else onLogic({ max: { ...(comp.logic.max || {}), value: comp.logic.max?.value ?? 0, pct: undefined, pctOf: undefined, formula: undefined, action: comp.logic.max?.action || "cap" } });
           }}
@@ -1382,7 +1382,7 @@ function PropertyEditor({ comp, nests, onChange, onLogic, onRemove, onDuplicate,
             </div>
             <div className="pd-field">
               <label>Percent of field</label>
-              <input value={comp.logic.max.pctOf || ""} onChange={(e) => onLogic({ max: { ...comp.logic.max, pctOf: e.target.value, action: comp.logic.max.action || "cap" } })} placeholder="basic" />
+              <input value={comp.logic.max.pctOf || ""} onChange={(e) => onLogic({ max: { ...comp.logic.max, pctOf: e.target.value, action: comp.logic.max.action || "cap" } })} placeholder="ctc" />
             </div>
           </>
         ) : comp.logic.max?.formula ? (

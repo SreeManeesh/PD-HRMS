@@ -17,7 +17,7 @@ export const saveCompanyBranding = async (payload) => {
 const uploadAsset = async (url, file) => {
   const form = new FormData();
   form.append("file", file);
-  const res = await api.post(url, form);
+  const res = await api.post(url, form, { timeout: 60000 });
   return res.data.data;
 };
 
