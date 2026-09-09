@@ -16,6 +16,7 @@ import { computePayroll } from "../payslip/payslip.service";
 import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
 import { buildPayslipStatement, loadPayslipStatementAssets } from "./payslipStatement";
+import { PNG } from "pngjs";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
@@ -289,6 +290,20 @@ export async function getPayslipPdf(id: string) {
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
 }
 
+/** Re-encode a PNG buffer through pngjs so pdfkit embeds a clean, valid PNG.
+ *  pdfkit's bundled decoder silently ignores chunk CRC errors and can spend
+ *  ~50s+ on malformed files; decoding + re-encoding normalizes the image.
+ *  Returns null when the file isn't a decodable/reasonable PNG. */
+function sanitizePng(buffer: Buffer): Buffer | null {
+  try {
+    const img = PNG.sync.read(buffer);
+    if (!img.width || !img.height || img.width * img.height > 4_000_000) return null;
+    return PNG.sync.write(img) as Buffer;
+  } catch {
+    return null;
+  }
+}
+
 /** Load a stored company asset (logo/signature) as a data URI for PDF embedding.
  *  Uses a presigned MinIO URL + HTTP fetch (fast, avoids stream backpressure).
  *  SVGs are returned null (pdfkit can't rasterize them); raster types embed. */
@@ -304,8 +319,15 @@ async function fetchStoredImageDataUri(url: string | null | undefined): Promise<
     const signedUrl = await minioClient.presignedGetObject(MINIO_BUCKET, objectName);
     const resp = await fetch(signedUrl);
     if (!resp.ok) return null;
-    const bytes = Buffer.from(await resp.arrayBuffer());
-    return `data:${contentType};base64,${bytes.toString("base64")}`;
+    let bytes: Buffer<ArrayBufferLike> = Buffer.from(await resp.arrayBuffer());
+    let embedType = contentType;
+    if (contentType.includes("png")) {
+      const clean = sanitizePng(bytes);
+      if (!clean) return null;
+      bytes = clean;
+      embedType = "image/png";
+    }
+    return `data:${embedType};base64,${bytes.toString("base64")}`;
   } catch {
     return null;
   }
