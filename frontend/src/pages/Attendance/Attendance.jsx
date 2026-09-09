@@ -4,7 +4,7 @@
  * Features: summary stat cards, monthly record table, check-in/check-out, status badges
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Clock, UserCheck, UserX, Coffee, Home, Upload } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -54,22 +54,41 @@ export default function Attendance() {
   const [uploadMsg, setUploadMsg] = useState(null);
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
+  // Backend emits "Leave" for approved leave punches; map it onto the display
+  // meta key (attendanceStatusMeta uses "On Leave").
+  const STATUS_META_ALIAS = { Leave: "On Leave" };
+
+  // Load the user's own records + the team summary for the selected period.
+  // Re-run after uploads / check-in / check-out so cards, chips and the table
+  // always reflect the latest attendance data.
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
-    Promise.all([
-      getMyAttendance({ employeeId: user.id, month, year }),
-      getTeamSummary(),
-    ]).then(([recRes, sumRes]) => {
+    try {
+      // Staff see the whole team's monthly attendance; employees only their own.
+      const isStaff = user.role !== "EMPLOYEE";
+      const [recRes, sumRes] = await Promise.all([
+        getMyAttendance({ month, year, ...(isStaff ? {} : { employeeId: user.id }) }),
+        getTeamSummary({ month, year }),
+      ]);
       setRecords(recRes.data);
       setSummary(sumRes.data);
-    }).catch(() => setLoading(false)).finally(() => setLoading(false));
-  }, [user.id, month, year]);
+    } catch {
+      // Leave current data as-is on error.
+    } finally {
+      setLoading(false);
+    }
+  }, [user.id, user.role, month, year]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   const handleCheckIn = async () => {
     setChecking(true);
     try {
       await checkIn(user.id);
       setCheckedIn(true);
+      await loadDashboard();
     } finally {
       setChecking(false);
     }
@@ -80,6 +99,7 @@ export default function Attendance() {
     try {
       await checkOut(user.id);
       setCheckedIn(false);
+      await loadDashboard();
     } finally {
       setChecking(false);
     }
@@ -92,14 +112,17 @@ export default function Attendance() {
     setUploading(true);
     setUploadMsg(null);
     try {
-      const res = await uploadAttendanceFile(file);
-      const rows = res.data?.data ?? res.data ?? [];
-      setUploadedRecords((prev) => {
-        const merged = [...rows, ...prev.filter((r) => !rows.some((u) => u.employeeId === r.employeeId && u.date === r.date))];
-        return merged;
+      const result = await uploadAttendanceFile(file);
+      const rows = Array.isArray(result?.data) ? result.data : [];
+      setUploadedRecords((prev) => [...rows, ...prev.filter((r) => !rows.some((u) => u.employeeId === r.employeeId && u.date === r.date))]);
+      const imported = result?.imported ?? rows.length;
+      const skipped = result?.skipped ?? 0;
+      const errors = Array.isArray(result?.errors) ? result.errors : [];
+      await loadDashboard();
+      setUploadMsg({
+        ok: true,
+        text: `Imported ${imported} record${imported === 1 ? "" : "s"}${skipped ? `, ${skipped} skipped` : ""}${errors.length ? ` — ${errors[0]}` : ""}`,
       });
-      const skipped = res.data?.skipped ?? 0;
-      setUploadMsg({ ok: true, text: `Imported ${res.data?.imported ?? rows.length} record${rows.length === 1 ? "" : "s"}${skipped ? `, ${skipped} skipped` : ""}` });
     } catch (err) {
       setUploadMsg({ ok: false, text: err.message || "Upload failed" });
     } finally {
@@ -112,7 +135,7 @@ export default function Attendance() {
     ...records.filter((r) => !uploadedRecords.some((u) => u.employeeId === r.employeeId && u.date === r.date)),
   ];
 
-  const countStatus = (s) => records.filter((r) => r.status === s).length;
+  const countStatus = (s) => displayRecords.filter((r) => r.status === s).length;
 
   return (
     <MainLayout>
@@ -176,11 +199,11 @@ export default function Attendance() {
 
         {summary && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "14px", marginBottom: "24px" }}>
-            <StatCard icon={UserCheck} label="Present Today" value={summary.present} color="#16a34a" bg="#f0fdf4" />
-            <StatCard icon={Home}      label="WFH"           value={summary.wfh}     color="#0284c7" bg="#f0f9ff" />
-            <StatCard icon={Clock}     label="Late"          value={summary.late}    color="#d97706" bg="#fffbeb" />
-            <StatCard icon={UserX}     label="Absent"        value={summary.absent}  color="#dc2626" bg="#fef2f2" />
-            <StatCard icon={Coffee}    label="On Leave"      value={summary.onLeave} color="#7c3aed" bg="#f5f3ff" />
+            <StatCard icon={UserCheck} label="Present"     value={summary.present} color="#16a34a" bg="#f0fdf4" />
+            <StatCard icon={Home}      label="WFH"          value={summary.wfh}     color="#0284c7" bg="#f0f9ff" />
+            <StatCard icon={Clock}     label="Late"         value={summary.late}    color="#d97706" bg="#fffbeb" />
+            <StatCard icon={UserX}     label="Absent"       value={summary.absent}  color="#dc2626" bg="#fef2f2" />
+            <StatCard icon={Coffee}    label="On Leave"     value={summary.onLeave} color="#7c3aed" bg="#f5f3ff" />
           </div>
         )}
 
@@ -194,13 +217,14 @@ export default function Attendance() {
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
             {[2024,2025,2026].map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
-          {["Present","Late","Absent","WFH"].map((s) => {
+          {["Present","Late","Absent","WFH","Leave"].map((s) => {
             const count = countStatus(s);
             if (!count) return null;
-            const meta = attendanceStatusMeta[s];
+            const display = STATUS_META_ALIAS[s] || s;
+            const meta = attendanceStatusMeta[display] || attendanceStatusMeta["Present"];
             return (
               <span key={s} style={{ fontSize: "11px", fontWeight: 600, color: meta?.color, background: meta?.bg, padding: "3px 10px", borderRadius: "99px" }}>
-                {s}: {count}
+                {display}: {count}
               </span>
             );
           })}
@@ -226,7 +250,7 @@ export default function Attendance() {
                 </thead>
                 <tbody>
                   {displayRecords.map((r, i) => {
-                    const meta = attendanceStatusMeta[r.status] || attendanceStatusMeta["Present"];
+                    const meta = attendanceStatusMeta[STATUS_META_ALIAS[r.status] || r.status] || attendanceStatusMeta["Present"];
                     return (
                       <tr key={r.__uploaded ? `up-${r.employeeId}-${r.date}` : r.id} style={{ borderBottom: i < displayRecords.length - 1 ? "1px solid var(--border)" : "none" }}>
                         <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontWeight: 600, whiteSpace: "nowrap" }}>

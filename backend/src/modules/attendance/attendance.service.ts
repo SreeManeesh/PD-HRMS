@@ -6,6 +6,7 @@ import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import { serializeAttendanceList, serializeTeamSummary } from "../../serializers/attendance.serializer";
 import { formatDate } from "../../serializers/helpers";
+import { reconcileEmployee } from "../payroll/reconciliation.service";
 import { startOfDay } from "../../serializers/helpers";
 
 const PUNCH_INCLUDE = {
@@ -31,15 +32,16 @@ export interface AttendanceFilters {
   year?: number;
 }
 
-export async function listAttendance(filters: AttendanceFilters, actorEmployeeId?: string) {
+export async function listAttendance(filters: AttendanceFilters, actorEmployeeId?: string, role?: string) {
   const where: Prisma.AttendancePunchWhereInput = {};
 
   if (filters.employeeId) {
     where.employee = { employeeCode: filters.employeeId };
-  } else if (actorEmployeeId) {
-    // Default to the authenticated employee's own records.
+  } else if (actorEmployeeId && role === "EMPLOYEE") {
+    // Employees always see their own records.
     where.employee = { id: actorEmployeeId };
   }
+  // Staff (admin/HR/manager) without an explicit employeeId see the whole team.
 
   if (filters.month && filters.year) {
     const month = filters.month;
@@ -59,21 +61,61 @@ export async function listAttendance(filters: AttendanceFilters, actorEmployeeId
   return { data: serializeAttendanceList(rows) };
 }
 
-export async function getTeamSummary() {
-  const today = startOfDay(new Date());
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+const TRACKED_STATUSES = ["Present", "Late", "WFH", "Absent"];
 
-  const [punches, onLeaveToday] = await Promise.all([
+export async function getTeamSummary(filters: { month?: number; year?: number } = {}) {
+  // When month/year are supplied, summarize the whole calendar month per
+  // active employee-day (reusing the attendance-reconciliation classification
+  // so Present / Late / WFH / Absent / Leave match the payroll engine and the
+  // records table). Otherwise fall back to today ("Present Today" quick view).
+  if (filters.month && filters.year) {
+    const month = filters.month;
+    const year = filters.year;
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const employees = await prisma.employee.findMany({ where: { status: "Active" }, select: { id: true } });
+    const counts = { present: 0, late: 0, wfh: 0, absent: 0, onLeave: 0 };
+    let total = 0;
+    const results = await Promise.all(employees.map((emp) => reconcileEmployee(emp.id, year, month)));
+    for (const { daily } of results) {
+      for (const d of daily) {
+        if (d.status === "Holiday" || d.status === "Weekend") continue;
+        total += 1;
+        if (d.status === "Present") counts.present += 1;
+        else if (d.status === "Late") counts.late += 1;
+        else if (d.status === "WFH") counts.wfh += 1;
+        else if (d.status === "Leave") counts.onLeave += 1;
+        else counts.absent += 1; // Absent + LOP (unpaid)
+      }
+    }
+    return {
+      data: serializeTeamSummary({
+        date: formatDate(start) ?? "",
+        present: counts.present,
+        late: counts.late,
+        absent: counts.absent,
+        onLeave: counts.onLeave,
+        wfh: counts.wfh,
+        total,
+      }),
+    };
+  }
+
+  // Fallback: single-day quick view (today).
+  const start = startOfDay(new Date());
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  const date = formatDate(start) ?? "";
+
+  const [punches, leaves] = await Promise.all([
     prisma.attendancePunch.findMany({
-      where: { punchDate: { gte: today, lt: tomorrow } },
+      where: { punchDate: { gte: start, lt: end } },
       include: { employee: { select: { employeeCode: true } } },
     }),
     prisma.leaveRequest.findMany({
       where: {
         status: "Approved",
-        startDate: { lte: today },
-        endDate: { gte: today },
+        startDate: { lte: end },
+        endDate: { gte: start },
       },
       select: { id: true },
     }),
@@ -82,15 +124,19 @@ export async function getTeamSummary() {
   const present = punches.filter((p) => p.status === "Present").length;
   const late = punches.filter((p) => p.status === "Late").length;
   const wfh = punches.filter((p) => p.status === "WFH").length;
-  const total = punches.length + onLeaveToday.length; // total tracked employees
+  // Only working-status punches factor into total/absent so Holiday/Weekend
+  // records don't inflate the "absent" count.
+  const tracked = punches.filter((p) => TRACKED_STATUSES.includes(p.status)).length;
+  const onLeave = leaves.length;
+  const total = tracked + onLeave;
 
   return {
     data: serializeTeamSummary({
-      date: formatDate(today) ?? "",
+      date,
       present,
       late,
-      absent: Math.max(0, total - present - late - wfh - onLeaveToday.length),
-      onLeave: onLeaveToday.length,
+      absent: Math.max(0, total - present - late - wfh - onLeave),
+      onLeave,
       wfh,
       total,
     }),
@@ -446,8 +492,24 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     return cells;
   });
 
+  type ImportCandidate = {
+    employee: NonNullable<Awaited<ReturnType<typeof resolveUploadEmployee>>>;
+    dateParts: { y: number; m: number; d: number };
+    isoDate: string;
+    punchDate: Date;
+    punchIn: Date | null;
+    punchOut: Date | null;
+    status: string;
+    leaveIndicated: boolean;
+    leaveValue: string;
+    leaveTypeValue: string;
+    approvalValue: string;
+    approvedByValue: string;
+  };
+
   const imported: ReturnType<typeof serializeAttendanceList> = [];
   const errors: string[] = [];
+  const candidates: ImportCandidate[] = [];
 
   for (const [rowNo, cells] of dataRows.entries()) {
     if (cells.every((c) => c === "")) continue;
@@ -459,7 +521,6 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     const logoutValue = rowCell(cells, colIndex("logout"));
     const leaveValue = rowCell(cells, colIndex("leave"));
     const leaveTypeValue = rowCell(cells, colIndex("leaveType"));
-    const daysValue = rowCell(cells, colIndex("days"));
     const approvalValue = rowCell(cells, colIndex("approvalStatus"));
     const approvedByValue = rowCell(cells, colIndex("approvedBy"));
 
@@ -474,40 +535,69 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
       continue;
     }
 
-    const isLeave =
-      /^(y|yes|1|true|on\.leave|leave|leave\s*wop|lwp|absent)$/i.test(leaveValue) ||
+    // A row counts as paid leave ONLY when an admin has approved it. Without
+    // approval (or with the row just sitting in the file) and no login/logout,
+    // the employee is treated as Absent, not On Leave.
+    const leaveIndicated =
+      /^(y|yes|1|true|on\.leave|leave|leave\s*wop|lwp)$/i.test(leaveValue) ||
       /^(from|start)/i.test(leaveValue) ||
-      Boolean(leaveTypeValue.trim()) ||
-      /^pending$/i.test(approvalValue) ||
-      /^approved$/i.test(approvalValue);
+      Boolean(leaveTypeValue.trim());
+    const approvedLeave = leaveIndicated && /approv/i.test(approvalValue) && !/pending|reject/i.test(approvalValue);
+
     const login = parseTimeParts(loginValue);
     const logout = parseTimeParts(logoutValue);
-    const status = isLeave ? "Leave" : !login && !logout ? "Absent" : login && !logout ? "Present" : login && logout ? "Present" : "Absent";
+    const status = login || logout ? "Present" : approvedLeave ? "Leave" : "Absent";
 
-    const punchDate = new Date(Date.UTC(dateParts.y, dateParts.m - 1, dateParts.d));
-    const punchIn = login ? new Date(dateParts.y, dateParts.m - 1, dateParts.d, login.hours, login.minutes) : null;
-    const punchOut = logout ? new Date(dateParts.y, dateParts.m - 1, dateParts.d, logout.hours, logout.minutes) : null;
+    const isoDate = `${dateParts.y}-${String(dateParts.m).padStart(2, "0")}-${String(dateParts.d).padStart(2, "0")}`;
+    candidates.push({
+      employee,
+      dateParts,
+      isoDate,
+      punchDate: new Date(Date.UTC(dateParts.y, dateParts.m - 1, dateParts.d)),
+      punchIn: login ? new Date(dateParts.y, dateParts.m - 1, dateParts.d, login.hours, login.minutes) : null,
+      punchOut: logout ? new Date(dateParts.y, dateParts.m - 1, dateParts.d, logout.hours, logout.minutes) : null,
+      status,
+      leaveIndicated,
+      leaveValue,
+      leaveTypeValue,
+      approvalValue,
+      approvedByValue,
+    });
+  }
 
+  // Deduplicate: keep only ONE record per employee — the one on the latest
+  // date in the file (when several rows share the latest date, the last row
+  // wins so the most recent entry supersedes earlier ones).
+  const latestByEmployee = new Map<string, ImportCandidate>();
+  for (const c of candidates) {
+    const current = latestByEmployee.get(c.employee.id);
+    if (!current) { latestByEmployee.set(c.employee.id, c); continue; }
+    const dateOf = (x: ImportCandidate) => Date.UTC(x.dateParts.y, x.dateParts.m - 1, x.dateParts.d);
+    if (dateOf(c) >= dateOf(current)) latestByEmployee.set(c.employee.id, c);
+  }
+  const selected = [...latestByEmployee.values()];
+  const deduped = candidates.length - selected.length;
+
+  for (const c of selected) {
     const punch = await prisma.attendancePunch.upsert({
-      where: { employeeId_punchDate: { employeeId: employee.id, punchDate } },
-      update: { punchIn, punchOut, status, method: "Upload" },
-      create: { employeeId: employee.id, punchDate, punchIn, punchOut, status, method: "Upload" },
+      where: { employeeId_punchDate: { employeeId: c.employee.id, punchDate: c.punchDate } },
+      update: { punchIn: c.punchIn, punchOut: c.punchOut, status: c.status, method: "Upload" },
+      create: { employeeId: c.employee.id, punchDate: c.punchDate, punchIn: c.punchIn, punchOut: c.punchOut, status: c.status, method: "Upload" },
       include: PUNCH_INCLUDE,
     });
 
     imported.push(serializeAttendanceList([punch])[0]);
 
-    const isoDate = `${dateParts.y}-${String(dateParts.m).padStart(2, "0")}-${String(dateParts.d).padStart(2, "0")}`;
-    if (isLeave && leaveTypeValue.trim()) {
+    if (c.leaveIndicated && c.leaveTypeValue.trim()) {
       try {
         await upsertLeaveRequestFromUpload({
-          employeeId: employee.id,
-          employeeCode: employee.employeeCode,
-          date: isoDate,
-          leaveTypeValue,
-          approvalValue,
-          approvedByValue,
-          reason: `${leaveValue ? `Leave: ${leaveValue}. ` : ""}${leaveTypeValue} on ${isoDate}`.trim(),
+          employeeId: c.employee.id,
+          employeeCode: c.employee.employeeCode,
+          date: c.isoDate,
+          leaveTypeValue: c.leaveTypeValue,
+          approvalValue: c.approvalValue,
+          approvedByValue: c.approvedByValue,
+          reason: `${c.leaveValue ? `Leave: ${c.leaveValue}. ` : ""}${c.leaveTypeValue} on ${c.isoDate}`.trim(),
         });
       } catch {
         // Leave sync is best-effort — attendance still imported.
@@ -515,5 +605,5 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     }
   }
 
-  return { imported: imported.length, skipped: errors.length, errors, data: imported };
+  return { imported: imported.length, skipped: errors.length + deduped, errors, data: imported };
 }

@@ -12,13 +12,18 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
       month: q.month ? Number(q.month) : undefined,
       year: q.year ? Number(q.year) : undefined,
     },
-    req.auth?.employeeId
+    req.auth?.employeeId,
+    req.auth?.role
   );
   sendSuccess(res, result.data);
 });
 
-export const summary = asyncHandler(async (_req: Request, res: Response) => {
-  const result = await attendanceService.getTeamSummary();
+export const summary = asyncHandler(async (req: Request, res: Response) => {
+  const q = req.query as Record<string, string | undefined>;
+  const result = await attendanceService.getTeamSummary({
+    month: q.month ? Number(q.month) : undefined,
+    year: q.year ? Number(q.year) : undefined,
+  });
   sendSuccess(res, result.data);
 });
 

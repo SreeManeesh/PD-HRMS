@@ -10,8 +10,8 @@ export const getMyAttendance = async ({ employeeId, month, year } = {}) => {
   return res.data; // { data, total }
 };
 
-export const getTeamSummary = async () => {
-  const res = await api.get("/attendance/summary");
+export const getTeamSummary = async ({ month, year } = {}) => {
+  const res = await api.get("/attendance/summary", { params: { month, year } });
   return res.data; // { data }
 };
 
@@ -31,5 +31,5 @@ export const uploadAttendanceFile = async (file) => {
   // axios sets the multipart boundary automatically when posting FormData.
   // Supports: xlsx, xlsm, xlsb, xls, xltx, xltm, xlt, xlam, xla, xlw, csv, tsv, txt, prn, dif, slk, xml
   const res = await api.post("/attendance/upload", formData);
-  return res.data; // { imported, skipped, errors, data }
+  return res.data.data; // { imported, skipped, errors, data: rows[] }
 };
