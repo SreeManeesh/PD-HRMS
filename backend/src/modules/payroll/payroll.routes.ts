@@ -47,4 +47,8 @@ router.get("/payslips/:id", authenticate, requirePermission("payroll:read"), pay
 // GET /api/payroll/payslips/:id/pdf — payroll:read (rupee-formatted PDF)
 router.get("/payslips/:id/pdf", authenticate, requirePermission("payroll:read"), payrollController.payslipPdf);
 
+// GET /api/payroll/payslips/:id/statement — payroll:read (structured payslip data
+// consumed by the reusable PayslipTemplate; employees scoped to their own).
+router.get("/payslips/:id/statement", authenticate, requirePermission("payroll:read"), payrollController.payslipStatement);
+
 export default router;

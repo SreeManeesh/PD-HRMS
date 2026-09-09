@@ -11,8 +11,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Eye, Image as ImageIcon } from "lucide-react";
 import { Play, FileText, Download, Users, Wallet, CalendarRange, Search, ChevronDown, ChevronRight, LayoutTemplate } from "lucide-react";
+import PayslipPreviewModal from "../../components/payslip/PayslipPreviewModal.jsx";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -186,6 +187,7 @@ export default function Payroll() {
   const [running, setRunning] = useState(false);
   const [approveRun, setApproveRun] = useState(null); // run awaiting four-eyes approve
   const [approving, setApproving] = useState(false);
+  const [previewId, setPreviewId] = useState(null); // payslip id shown in the payslip preview modal
   const [activeTab, setActiveTab] = useState("annual");
   const [month, setMonth]       = useState(now.getMonth() + 1);
   const [year, setYear]         = useState(now.getFullYear());
@@ -695,6 +697,14 @@ export default function Payroll() {
                   <LayoutTemplate size={15} /> Payslip Designer
                 </button>
               )}
+              {isStaff && (
+                <button
+                  onClick={() => navigate("/payroll/branding")}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", background: "var(--card)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  <ImageIcon size={15} /> Payslip Branding
+                </button>
+              )}
             </div>
 
             {/* Tax regime selection — used when this payslip is generated */}
@@ -752,6 +762,12 @@ export default function Payroll() {
                           <p style={{ fontSize: "24px", fontWeight: 800, color: "var(--green)", fontFamily: "monospace" }}>{fmt(slip.netPay)}</p>
                         </div>
                         <button
+                          onClick={() => setPreviewId(slip.id)}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "7px 14px", background: "var(--card)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                        >
+                          <Eye size={13} /> Preview
+                        </button>
+                        <button
                           onClick={() => handleDownloadPayslip(slip.id)}
                           style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "7px 14px", background: "var(--primary-light)", color: "var(--primary)", border: "1px solid var(--border-focus)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
                         >
@@ -806,6 +822,8 @@ export default function Payroll() {
         onConfirm={handleApprovePayroll}
         onCancel={() => { setApproveRun(null); }}
       />
+
+      {previewId && <PayslipPreviewModal key={previewId} payslipId={previewId} onClose={() => setPreviewId(null)} />}
     </MainLayout>
   );
 }

@@ -6,6 +6,25 @@ import minioClient, {
 const router = Router();
 
 router.get(
+    "/company/*",
+    async (req: Request, res: Response) => {
+        try {
+            const objectName = `company/${req.params[0]}`;
+            const stat = await minioClient.statObject(MINIO_BUCKET, objectName);
+            const stream = await minioClient.getObject(MINIO_BUCKET, objectName);
+            const contentType = stat.metaData?.["content-type"];
+            if (contentType) res.setHeader("Content-Type", contentType);
+            res.setHeader("Content-Length", stat.size.toString());
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+            stream.pipe(res);
+        } catch (error) {
+            console.error("MinIO company asset retrieval error:", error);
+            return res.status(404).json({ success: false, message: "File not found" });
+        }
+    }
+);
+
+router.get(
     "/lms/*",
     async (req: Request, res: Response) => {
         try {

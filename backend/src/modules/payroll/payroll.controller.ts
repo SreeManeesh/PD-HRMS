@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { asyncHandler } from "../../lib/utils";
 import { sendSuccess } from "../../lib/response";
 import * as payrollService from "./payroll.service";
+import * as payslipStatementService from "./payslipStatement";
 import { AppError } from "../../lib/errors";
 
 export const runs = asyncHandler(async (_req: Request, res: Response) => {
@@ -41,7 +42,10 @@ export const payslipDetail = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const payslipPdf = asyncHandler(async (req: Request, res: Response) => {
-  const { buffer, filename } = await payrollService.getPayslipPdf(req.params.id);
+  const { buffer, filename } = await payrollService.getReferencePayslipPdf(req.params.id, {
+    role: req.auth?.role,
+    employeeCode: req.auth?.employeeCode,
+  });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(buffer);
@@ -55,5 +59,13 @@ export const process = asyncHandler(async (req: Request, res: Response) => {
 export const approve = asyncHandler(async (req: Request, res: Response) => {
   if (!req.auth?.employeeId) throw AppError.forbidden("Approver must be linked to an employee record");
   const result = await payrollService.approvePayrollRun(req.params.id, req.auth.employeeId, req.auth.sub);
+  sendSuccess(res, result.data);
+});
+
+export const payslipStatement = asyncHandler(async (req: Request, res: Response) => {
+  const result = await payslipStatementService.buildPayslipStatement(req.params.id, {
+    role: req.auth?.role,
+    employeeCode: req.auth?.employeeCode,
+  });
   sendSuccess(res, result.data);
 });

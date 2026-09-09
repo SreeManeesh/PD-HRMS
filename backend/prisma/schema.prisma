@@ -27,6 +27,15 @@ model Company {
   isActive           Boolean  @default(true) @map("is_active")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(6)
 
+  // ── Payslip branding (dynamic company header/footer/signature) ──
+  tagline                String?  @db.VarChar(200)
+  website                String?  @db.VarChar(150)
+  address                String?  @db.Text
+  logoUrl                String?  @map("logo_url") @db.VarChar(255)
+  signatoryName          String?  @map("signatory_name") @db.VarChar(150)
+  signatoryDesignation   String?  @map("signatory_designation") @db.VarChar(150)
+  signatureUrl           String?  @map("signature_url") @db.VarChar(255)
+
   departments   Department[]
   locations     Location[]
   businessUnits BusinessUnit[]

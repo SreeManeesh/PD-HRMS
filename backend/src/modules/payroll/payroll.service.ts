@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma";
 import { Prisma, type SalaryStructure } from "@prisma/client";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
+import minioClient, { MINIO_BUCKET } from "../../config/minio";
 import {
   serializePayrollRunList,
   serializePayslipList,
@@ -14,6 +15,7 @@ import { generatePayslipPdf, buildSections, type ComponentRow } from "../payslip
 import { computePayroll } from "../payslip/payslip.service";
 import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
+import { buildPayslipStatement, loadPayslipStatementAssets } from "./payslipStatement";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
@@ -285,6 +287,133 @@ export async function getPayslipPdf(id: string) {
   });
 
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
+}
+
+/** Load a stored company asset (logo/signature) as a data URI for PDF embedding.
+ *  SVGs are returned null (pdfkit can't rasterize them); raster types embed. */
+async function fetchStoredImageDataUri(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null;
+  const match = /^\/uploads\/company\/(logo|signature)\/([^/]+)$/.exec(url);
+  if (!match) return null;
+  const objectName = `company/${match[1]}/${match[2]}`;
+  try {
+    const stat = await minioClient.statObject(MINIO_BUCKET, objectName);
+    const contentType = stat.metaData?.["content-type"] ?? "";
+    if (!contentType.startsWith("image/") || contentType.includes("svg")) return null;
+    const stream = await minioClient.getObject(MINIO_BUCKET, objectName);
+    const chunks: Buffer[] = [];
+    for await (const c of stream as AsyncIterable<Buffer>) chunks.push(c);
+    const base64 = Buffer.concat(chunks).toString("base64");
+    return `data:${contentType};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
+function defaultReferenceBlueprint(): Blueprint {
+  return {
+    name: "Payslip",
+    country: "India",
+    state: null,
+    financialYear: new Date().getFullYear(),
+    theme: {
+      primaryColor: "#16a34a",
+      secondaryColor: "#1f2937",
+      accentColor: "#16a34a",
+      font: "Helvetica",
+      pageSize: "A4",
+      orientation: "portrait",
+      margins: { top: 40, right: 40, bottom: 40, left: 40 },
+    },
+    nests: [],
+    components: [],
+    taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+    settings: { companyName: "HRMS" },
+  };
+}
+
+interface StatementPayroll {
+  totalEarnings: number;
+  totalDeductions: number;
+  netPay: number;
+  netPayInWords: string;
+  periodLabel: string;
+  periodFull: string;
+  country: string;
+  taxRegime: string;
+  tax: { annualTax: number; monthlyTax: number };
+  workingDays: number;
+  presentDays: number;
+  lateDays: number;
+  paidLeaveDays: number;
+  unpaidLeaveDays: number;
+  holidayDays: number;
+  weeklyOffDays: number;
+  overtimeHours: number;
+  earnings: { name: string; amount: number }[];
+  deductions: { name: string; amount: number }[];
+  employerContributions: { name: string; amount: number }[];
+}
+
+/** Production payslip PDF — reference corporate A4 layout, brand-driven. */
+export async function getReferencePayslipPdf(id: string, access?: { role?: string; employeeCode?: string }) {
+  const { run, employee } = await loadPayslipStatementAssets(id);
+  const statement = (await buildPayslipStatement(id, access)).data;
+  const p = statement.payroll as unknown as StatementPayroll;
+  const company = statement.company;
+
+  const [logoData, sigData] = await Promise.all([
+    fetchStoredImageDataUri(company.logoUrl),
+    fetchStoredImageDataUri(company.signatureUrl),
+  ]);
+
+  const buffer = await generatePayslipPdf(defaultReferenceBlueprint(), {
+    employee: {
+      name: statement.employee.name,
+      employeeId: statement.employee.id,
+      department: statement.employee.department,
+      designation: statement.employee.designation,
+      period: p.periodLabel,
+      location: statement.employee.location,
+      taxRegime: p.taxRegime,
+      pan: statement.employee.pan,
+      dateOfJoining: statement.employee.dateOfJoining,
+    },
+    payroll: { gross: p.totalEarnings, net: p.netPay },
+    earnings: p.earnings.map((r) => ({ label: r.name, amount: r.amount })),
+    deductions: p.deductions.map((r) => ({ label: r.name, amount: r.amount })),
+    employer: p.employerContributions.map((r) => ({ label: r.name, amount: r.amount })),
+    tax: { regime: p.taxRegime, annualTax: p.tax.annualTax, monthlyTax: p.tax.monthlyTax },
+    company: {
+      name: company.name ?? "HRMS",
+      tagline: company.tagline ?? undefined,
+      website: company.website ?? undefined,
+      address: company.address ?? undefined,
+      logoDataUri: logoData ?? undefined,
+      signatoryName: company.signatoryName ?? undefined,
+      signatoryDesignation: company.signatoryDesignation ?? undefined,
+      signatureDataUri: sigData ?? undefined,
+    },
+    generatedOn: new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }),
+    netInWords: p.netPayInWords,
+    payPeriodLabel: p.periodFull,
+    countryLabel: p.country,
+    attNumbers: {
+      workingDays: p.workingDays,
+      presentDays: p.presentDays,
+      lateDays: p.lateDays,
+      paidLeaveDays: p.paidLeaveDays,
+      unpaidLeaveDays: p.unpaidLeaveDays,
+      holidayDays: p.holidayDays,
+      weeklyOffDays: p.weeklyOffDays,
+      overtimeHours: p.overtimeHours,
+    },
+  });
+
+  return {
+    buffer,
+    filename: `payslip_${employee.employeeCode.toLowerCase()}_${run.year}-${String(run.month).padStart(2, "0")}.pdf`,
+  };
 }
 
 /** Map a stored employer-contribution key onto a blueprint employer component
