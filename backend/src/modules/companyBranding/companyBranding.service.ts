@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "crypto";
 import path from "path";
-import minioClient, { MINIO_BUCKET } from "../../config/minio";
+import minioClient, { MINIO_BUCKET, ensureMinioBucket } from "../../config/minio";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
@@ -73,6 +73,7 @@ export async function updateBranding(input: {
 
 async function storeImage(folder: "logo" | "signature", file: Express.Multer.File) {
   if (!file) throw AppError.badRequest("Image file is required");
+  await ensureMinioBucket();
   const extension = path.extname(file.originalname).toLowerCase();
   const objectName = `company/${folder}/${randomUUID()}${extension}`;
   await minioClient.putObject(MINIO_BUCKET, objectName, file.buffer, file.size, {
