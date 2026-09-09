@@ -21,6 +21,9 @@ const SLIP_INCLUDE = {
   payrollRun: true,
 };
 
+/** Overtime compensating factor: time-and-a-half of the basic hourly rate. */
+const OT_MULTIPLIER = 1.5;
+
 export async function listPayrollRuns() {
   const runs = await prisma.payrollRun.findMany({
     include: RUN_INCLUDE,
@@ -166,6 +169,7 @@ export async function getPayslipPdf(id: string) {
     medicalAllowance: ["medical", "medical_allowance", "medical_allowances"],
     performanceBonus: ["performance_bonus"],
     otherAllowances: ["other", "other_allowances", "special_allowance"],
+    overtime: ["overtime", "ot"],
     providentFund: ["provident_fund", "epf_employee", "pf"],
     professionalTax: ["professional_tax", "pt"],
     incomeTax: ["income_tax", "tds"],
@@ -179,6 +183,7 @@ export async function getPayslipPdf(id: string) {
     medicalAllowance: "medical",
     performanceBonus: "performance_bonus",
     otherAllowances: "other",
+    overtime: "overtime",
     providentFund: "provident_fund",
     professionalTax: "professional_tax",
     incomeTax: "income_tax",
@@ -248,6 +253,7 @@ function fallbackComponents() {
     ["medical", "Medical Allowance", "earning", 4],
     ["performance_bonus", "Performance Bonus", "earning", 5],
     ["other_allowances", "Other Allowances", "earning", 6],
+    ["overtime", "Overtime", "earning", 7],
     ["provident_fund", "Provident Fund", "deduction", 40],
     ["professional_tax", "Professional Tax", "deduction", 41],
     ["income_tax", "Income Tax", "deduction", 42],
@@ -308,7 +314,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     const structure = structureByEmployee.get(emp.id);
     if (!structure) continue;
     const amounts = buildPayslipAmounts(structure);
-    const { summary } = await reconcileEmployee(emp.id, parsed.year, parsed.month);
+    const { summary, shiftHours } = await reconcileEmployee(emp.id, parsed.year, parsed.month);
 
     // Prorate against calendar working days: LOP / unpaid days reduce pay.
     const workingDays = Math.max(summary.workingDays, 1);
@@ -324,6 +330,11 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
       otherAllowances: round2(amounts.earnings.otherAllowances * ratio),
       total: 0,
     };
+    // Overtime at time-and-a-half of the basic hourly rate (not LOP-prorated —
+    // it is genuinely extra time worked beyond the scheduled shift end).
+    const shiftDayHours = Math.max(shiftHours || 9, 1);
+    const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
+    earnings.overtime = round2(summary.overtimeHours * hourlyBasic * OT_MULTIPLIER);
     earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
 
     // PF scales with prorated earnings; statutory flat items stay monthly-fixed.

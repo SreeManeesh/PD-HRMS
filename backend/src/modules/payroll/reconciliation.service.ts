@@ -21,8 +21,14 @@ export interface EmployeeReconciliation {
   periodStart: Date;
   periodEnd: Date;
   hiredWithinPeriod: boolean;
+  shiftHours: number; // scheduled shift duration in hours (used for OT rate)
   summary: AttendanceSummary;
   daily: Array<{ date: string; weekday: number; status: string }>;
+}
+
+export interface ShiftWindow {
+  startMinutes: number;
+  endMinutes: number;
 }
 
 type Punch = { punchDate: Date; status: string; punchIn: Date | null; punchOut: Date | null };
@@ -35,12 +41,14 @@ function monthBounds(year: number, month: number): { start: Date; end: Date } {
 }
 
 /** Pure reconciliation logic — given punches, approved leaves, holiday/weekoff
- *  context and a joining date, derive working/present/paid-leave/LOP days. */
+ *  context and a joining date, derive working/present/paid-leave/LOP days, plus
+ *  overtime hours clocked beyond the scheduled shift end on present days. */
 export function reconcile(
   punches: Punch[],
   leaves: ApprovedLeave[],
   holidays: DayInfo[],
-  joiningDate: Date | null
+  joiningDate: Date | null,
+  shift?: ShiftWindow | null
 ): { summary: AttendanceSummary; daily: Array<{ date: string; weekday: number; status: string }> } {
   const punchByDate = new Map<string, Punch>();
   for (const p of punches) punchByDate.set(dateKey(p.punchDate), p);
@@ -56,6 +64,7 @@ export function reconcile(
   let lateDays = 0;
   let paidLeaveDays = 0;
   let unpaidLeaveDays = 0;
+  let overtimeMinutes = 0;
   const daily: Array<{ date: string; weekday: number; status: string }> = [];
 
   for (const day of holidays) {
@@ -73,6 +82,11 @@ export function reconcile(
       status = punch.status;
       if (punch.status === "Present" || punch.status === "WFH" || punch.status === "Late") {
         presentDays += 1;
+        // Overtime: minutes worked past the scheduled shift end on a present day.
+        if (shift && punch.punchOut) {
+          const outMin = punch.punchOut.getUTCHours() * 60 + punch.punchOut.getUTCMinutes();
+          if (outMin > shift.endMinutes) overtimeMinutes += outMin - shift.endMinutes;
+        }
       } else {
         // Working-day punch without a present status (Absent/Weekend/Holiday/etc.)
         // still counts as an unpaid day for payroll purposes.
@@ -96,7 +110,7 @@ export function reconcile(
     unpaidLeaveDays,
     holidayDays: holidays.filter((d) => d.isHoliday && !d.isWeekend).length,
     weekendDays: holidays.filter((d) => d.isWeekend).length,
-    overtimeHours: 0,
+    overtimeHours: Math.round((overtimeMinutes / 60) * 100) / 100,
   };
 
   return { summary, daily };
@@ -163,12 +177,27 @@ export async function reconcileEmployee(employeeId: string, year: number, month:
     ? (await loadCalendarContext(year, month, employee.country ?? "India", employee.state)).days
     : days;
 
+  // Scheduled shift (global for now — no per-employee assignment yet). Falls
+  // back to a 09:00–18:00 window so overtime stays well-defined without config.
+  // NOTE: Prisma returns `time` columns as wall-clock local time, so read them
+  // with local getters — mirroring how punches (timestamp w/o tz) are read back
+  // as UTC and therefore use UTC getters in the reconcile loop below.
+  const shiftRow = await prisma.attendanceShift.findFirst();
+  const shift: ShiftWindow | null = shiftRow
+    ? {
+        startMinutes: shiftRow.startTime.getHours() * 60 + shiftRow.startTime.getMinutes(),
+        endMinutes: shiftRow.endTime.getHours() * 60 + shiftRow.endTime.getMinutes(),
+      }
+    : { startMinutes: 9 * 60, endMinutes: 18 * 60 };
+  const shiftHours = shift ? (shift.endMinutes - shift.startMinutes) / 60 : 9;
+
   const joining = employee.dateOfJoining ? new Date(employee.dateOfJoining.toISOString()) : null;
   const { summary, daily } = reconcile(
     punches as Punch[],
     leaves as ApprovedLeave[],
     stateDays,
-    joining?.toISOString() ? new Date(joining.toISOString()) : null
+    joining?.toISOString() ? new Date(joining.toISOString()) : null,
+    shift
   );
 
   const clipped = [...daily].filter(
@@ -183,6 +212,7 @@ export async function reconcileEmployee(employeeId: string, year: number, month:
     periodStart: start,
     periodEnd: end,
     hiredWithinPeriod: joining ? joining > start : false,
+    shiftHours,
     summary,
     daily: clipped,
   };
