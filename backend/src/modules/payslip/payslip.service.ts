@@ -414,7 +414,11 @@ export async function previewPayslip(templateId: string, input: PreviewInput) {
       ? employee.dateOfJoining.toISOString().slice(0, 10)
       : "—",
     period: `${(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])[input.month - 1]} ${input.year}`,
-    companyName: blueprint.settings?.companyName ?? "Proteccio HRMS",
+    // Company branding (from Company Settings) is dynamic — it wins over the
+    // template's static companyName so a saved branding change shows here.
+    companyName: (await prisma.company.findFirst({ where: { isActive: true }, select: { name: true } }))?.name
+      ?? blueprint.settings?.companyName
+      ?? "Proteccio HRMS",
     financialYear: blueprint.financialYear,
   };
 

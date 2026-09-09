@@ -28,6 +28,7 @@ import {
 } from "../../services/payslipDesignerService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
+import { getCompanyBranding } from "../../services/payslipBrandingService.js";
 import { FIELD_TREE, inr } from "./format.js";
 import "./PayslipDesigner.css";
 
@@ -87,6 +88,15 @@ export function PayslipDesignerPanel() {
   const [ncPriority, setNcPriority] = useState("20");
   const [ncNest, setNcNest] = useState("");
   const toast = useToast();
+  const [companyBranding, setCompanyBranding] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    getCompanyBranding()
+      .then((b) => { if (active) setCompanyBranding(b); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [calcResult, setCalcResult] = useState(null);
   const [taxCompare, setTaxCompare] = useState(null);
   const [validation, setValidation] = useState(null);
@@ -525,7 +535,7 @@ export function PayslipDesignerPanel() {
       <div style="background:${t.primaryColor};color:#fff;border-radius:6px;padding:14px 18px;display:flex;align-items:center;gap:12px">
         ${blueprint.theme.logo ? `<img src="${blueprint.theme.logo}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : ""}
         <div>
-          <h2 style="margin:0;font-size:16px">${blueprint.settings?.companyName || "Company"}</h2>
+          <h2 style="margin:0;font-size:16px">${companyBranding?.companyName || blueprint.settings?.companyName || "Company"}</h2>
           <div style="opacity:.85;font-size:12px">Salary Payslip · FY ${blueprint.financialYear}</div>
         </div>
       </div>
@@ -535,7 +545,7 @@ export function PayslipDesignerPanel() {
         <span>Net Pay</span><span>${calcResult ? inr(calcResult.net) : "—"}</span>
       </div>
     </div>`;
-  }, [blueprint, calcResult]);
+  }, [blueprint, calcResult, companyBranding?.companyName]);
 
   const engSummary = useMemo(() => {
     if (!calcResult) return [];

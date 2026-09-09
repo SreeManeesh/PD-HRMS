@@ -182,24 +182,14 @@ export default function Attendance() {
               <Upload size={16} />
               {uploading ? "Importing…" : "Upload"}
             </button>
-            {uploadedRecords.length > 0 && (
-              <button
+            <button
                 id="clear-upload-btn"
                 onClick={() => { setUploadedRecords([]); setPage(1); setUploadMsg(null); }}
-                style={{
-                  display: "flex", alignItems: "center", gap: "7px",
-                  padding: "10px 20px",
-                  background: "var(--card)",
-                  color: "var(--red)",
-                  border: "1px solid var(--red)",
-                  borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px",
-                  cursor: "pointer",
-                }}
+                style={{ display: "flex", alignItems: "center", gap: "7px", padding: "10px 20px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px", cursor: "pointer" }}
               >
                 <RotateCcw size={16} />
                 Clear Upload
               </button>
-            )}
             <button
               id={checkedIn ? "check-out-btn" : "check-in-btn"}
               onClick={checkedIn ? handleCheckOut : handleCheckIn}
