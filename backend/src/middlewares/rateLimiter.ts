@@ -11,10 +11,12 @@ export const globalRateLimiter = rateLimit({
   message: { message: "Too many requests, please try again later." },
 });
 
-/** Stricter limiter for the login endpoint (brute-force protection). */
+/** Stricter limiter for the login endpoint (brute-force protection).
+ *  Successful logins are skipped, so this only guards repeated FAILED
+ *  attempts. Cap is per IP and reset at the end of each window. */
 export const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 20, // 20 attempts / 15 min per IP
+  max: 60, // 60 failed attempts / 15 min per IP (20 was too aggressive for shared/office IPs)
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,

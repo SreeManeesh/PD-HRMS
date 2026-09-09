@@ -16,6 +16,7 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   CANDIDATE_PORTAL_URL: z.string().url().default("http://localhost:5173/candidate/offer"),
+  APP_URL: z.string().url().default("http://localhost:5173"),
   SMTP_HOST: z.string().trim().default(""),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   SMTP_SECURE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),

@@ -252,6 +252,8 @@ model Employee {
   payslips          Payslip[]
   approvedRuns      PayrollRun[]       @relation("PayrollRunApprovedBy")
   workflowRequests  WorkflowInstance[]
+  distributionRecords      PayslipDistributionRecord[]
+  distributionBatchesStarted PayslipDistributionBatch[] @relation("PayslipDistributionStartedBy")
 
   performanceGoals PerformanceGoal[]
   reviewsSubject   PerformanceReview[]        @relation("PerformanceReviewSubject")
@@ -583,6 +585,7 @@ model PayrollRun {
 
   approvedByEmployee Employee? @relation("PayrollRunApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
   payslips           Payslip[]
+  distributionBatches PayslipDistributionBatch[]
 
   @@unique([month, year])
   @@index([status])
@@ -612,9 +615,82 @@ model Payslip {
   employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   salaryStructure SalaryStructure @relation(fields: [salaryStructureId], references: [id], onDelete: Restrict)
 
+  distributionRecords PayslipDistributionRecord[]
+
   @@unique([payrollRunId, employeeId])
   @@index([employeeId])
   @@map("payslips")
+}
+
+// ── Payslip Distribution Workflow ──────────────────────────────────────────
+// A distribution run attaches to a payroll run once its payslips exist.
+// Each batch stores the selected channels + per-employee delivery records and
+// channel-level logs so HR can track send/deliver/fail, retry and report.
+
+model PayslipDistributionBatch {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId String   @map("payroll_run_id") @db.Uuid
+  status       String   @default("Pending") @db.VarChar(20) // Pending | In Progress | Completed | Partial
+  channels     Json     @map("channels") @db.JsonB
+  templateId   String?  @map("template_id") @db.Uuid
+  config       Json     @default("{}") @map("config") @db.JsonB // { employeeIds, templateId }
+  total        Int      @default(0)
+  delivered    Int      @default(0)
+  failed       Int      @default(0)
+  startedBy    String?  @map("started_by") @db.Uuid
+  startedAt    DateTime? @map("started_at") @db.Timestamp(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamp(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  payrollRun PayrollRun                     @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  startedByEmployee Employee?                @relation("PayslipDistributionStartedBy", fields: [startedBy], references: [id], onDelete: SetNull)
+  records    PayslipDistributionRecord[]
+  logs       PayslipDistributionLog[]
+
+  @@index([payrollRunId])
+  @@map("payslip_distribution_batches")
+}
+
+model PayslipDistributionRecord {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId      String    @map("batch_id") @db.Uuid
+  payslipId    String    @map("payslip_id") @db.Uuid
+  employeeId   String    @map("employee_id") @db.Uuid
+  channel      String    @default("") @db.VarChar(30)
+  status       String    @default("Pending") @db.VarChar(20) // Pending | Delivered | Failed
+  attempts     Int       @default(0)
+  errorMessage String?   @map("error_message") @db.VarChar(500)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamp(6)
+  viewedAt     DateTime? @map("viewed_at") @db.Timestamp(6)
+  downloadedAt DateTime? @map("downloaded_at") @db.Timestamp(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  batch    PayslipDistributionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  payslip  Payslip                   @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+  employee Employee                  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  logs     PayslipDistributionLog[]
+
+  @@unique([batchId, payslipId])
+  @@index([batchId])
+  @@index([employeeId])
+  @@map("payslip_distribution_records")
+}
+
+model PayslipDistributionLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId   String   @map("batch_id") @db.Uuid
+  recordId  String?  @map("record_id") @db.Uuid
+  channel   String   @db.VarChar(30)
+  status    String   @db.VarChar(30)
+  message   String?  @db.VarChar(500)
+  meta      Json     @default("{}") @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  batch  PayslipDistributionBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  record PayslipDistributionRecord?     @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@map("payslip_distribution_logs")
 }
 
 // ── Workflow Engine (Module 21) ────────────────────────────────────────────
