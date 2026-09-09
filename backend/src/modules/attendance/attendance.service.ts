@@ -565,18 +565,11 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     });
   }
 
-  // Deduplicate: keep only ONE record per employee — the one on the latest
-  // date in the file (when several rows share the latest date, the last row
-  // wins so the most recent entry supersedes earlier ones).
-  const latestByEmployee = new Map<string, ImportCandidate>();
-  for (const c of candidates) {
-    const current = latestByEmployee.get(c.employee.id);
-    if (!current) { latestByEmployee.set(c.employee.id, c); continue; }
-    const dateOf = (x: ImportCandidate) => Date.UTC(x.dateParts.y, x.dateParts.m - 1, x.dateParts.d);
-    if (dateOf(c) >= dateOf(current)) latestByEmployee.set(c.employee.id, c);
-  }
-  const selected = [...latestByEmployee.values()];
-  const deduped = candidates.length - selected.length;
+  // Import EVERY parsed row — do not drop duplicates/skip data. Rows are
+  // upserted per (employee, date); a later row for the same employee/date
+  // overwrites the earlier one, but every distinct row in the file is shown.
+  const selected = candidates;
+  const deduped = 0;
 
   for (const c of selected) {
     const punch = await prisma.attendancePunch.upsert({

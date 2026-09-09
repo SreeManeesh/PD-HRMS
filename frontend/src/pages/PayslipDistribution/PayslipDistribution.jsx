@@ -20,6 +20,7 @@ import {
   retryDistribution, downloadDistributionReport,
 } from "../../services/payrollService.js";
 import { listPayslipTemplates } from "../../services/payslipDesignerService.js";
+import { useToast } from "../../context/ToastContext.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("en-IN").format(n || 0);
 
@@ -79,6 +80,7 @@ function StatCard({ icon: Icon, label, value, color }) {
 const CHANNEL_ICONS = { email: Mail, portal: Globe, sms: MessageSquare };
 
 export function PayslipDistributionPanel() {
+  const toast = useToast();
   const [runs, setRuns] = useState([]);
   const [runId, setRunId] = useState("");
   const [candidates, setCandidates] = useState([]);   // { employeeId, employeeName } from run payslips
@@ -175,6 +177,7 @@ export function PayslipDistributionPanel() {
     try {
       await startDistribution(runId, { channels, employeeIds: [...selected], templateId });
       setMsg({ ok: true, text: `Distribution started for ${selected.size} employee${selected.size === 1 ? "" : "s"} using ${templateId ? "the selected template" : "the active template"}.` });
+      toast(`Payslips scheduled for ${selected.size} employee${selected.size === 1 ? "" : "s"}`);
       await refreshStatus();
     } catch (e) {
       setMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not start distribution" });
@@ -190,6 +193,7 @@ export function PayslipDistributionPanel() {
     try {
       const res = await retryDistribution(runId, status?.failed_list?.map((r) => r.employeeId) || []);
       setMsg({ ok: true, text: `Retried ${res.data?.retried ?? 0} failed deliveries.` });
+      toast(`Retried ${res.data?.retried ?? 0} failed delivery${res.data?.retried === 1 ? "" : "ies"}`);
       await refreshStatus();
     } catch (e) {
       setMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not retry deliveries" });

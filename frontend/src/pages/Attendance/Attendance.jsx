@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Clock, UserCheck, UserX, Coffee, Home, Upload } from "lucide-react";
+import { Clock, UserCheck, UserX, Coffee, Home, Upload, RotateCcw } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -52,6 +52,7 @@ export default function Attendance() {
   const [uploadedRecords, setUploadedRecords] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [page, setPage] = useState(1);
   const fileInputRef = useRef(null);
 
   // Backend emits "Leave" for approved leave punches; map it onto the display
@@ -115,6 +116,7 @@ export default function Attendance() {
       const result = await uploadAttendanceFile(file);
       const rows = Array.isArray(result?.data) ? result.data : [];
       setUploadedRecords((prev) => [...rows, ...prev.filter((r) => !rows.some((u) => u.employeeId === r.employeeId && u.date === r.date))]);
+      setPage(1);
       const imported = result?.imported ?? rows.length;
       const skipped = result?.skipped ?? 0;
       const errors = Array.isArray(result?.errors) ? result.errors : [];
@@ -136,6 +138,12 @@ export default function Attendance() {
   ];
 
   const countStatus = (s) => displayRecords.filter((r) => r.status === s).length;
+
+  // Pagination — 100 rows per page.
+  const PAGE_SIZE = 100;
+  const pageCount = Math.max(1, Math.ceil(displayRecords.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const pagedRecords = displayRecords.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <MainLayout>
@@ -162,6 +170,24 @@ export default function Attendance() {
               <Upload size={16} />
               {uploading ? "Importing…" : "Upload"}
             </button>
+            {uploadedRecords.length > 0 && (
+              <button
+                id="clear-upload-btn"
+                onClick={() => { setUploadedRecords([]); setPage(1); setUploadMsg(null); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: "7px",
+                  padding: "10px 20px",
+                  background: "var(--card)",
+                  color: "var(--red)",
+                  border: "1px solid var(--red)",
+                  borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px",
+                  cursor: "pointer",
+                }}
+              >
+                <RotateCcw size={16} />
+                Clear Upload
+              </button>
+            )}
             <button
               id={checkedIn ? "check-out-btn" : "check-in-btn"}
               onClick={checkedIn ? handleCheckOut : handleCheckIn}
@@ -209,11 +235,11 @@ export default function Attendance() {
 
         {/* Month / year picker + status summary chips */}
         <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "16px", flexWrap: "wrap" }}>
-          <select value={month} onChange={(e) => setMonth(Number(e.target.value))}
+          <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setPage(1); }}
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
             {MONTHS.map((m, i) => <option key={m} value={i+1}>{m}</option>)}
           </select>
-          <select value={year} onChange={(e) => setYear(Number(e.target.value))}
+          <select value={year} onChange={(e) => { setYear(Number(e.target.value)); setPage(1); }}
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
             {[2024,2025,2026].map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
@@ -249,10 +275,10 @@ export default function Attendance() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRecords.map((r, i) => {
+                  {pagedRecords.map((r, i) => {
                     const meta = attendanceStatusMeta[STATUS_META_ALIAS[r.status] || r.status] || attendanceStatusMeta["Present"];
                     return (
-                      <tr key={r.__uploaded ? `up-${r.employeeId}-${r.date}` : r.id} style={{ borderBottom: i < displayRecords.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <tr key={r.__uploaded ? `up-${r.employeeId}-${r.date}` : r.id} style={{ borderBottom: i < pagedRecords.length - 1 ? "1px solid var(--border)" : "none" }}>
                         <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontWeight: 600, whiteSpace: "nowrap" }}>
                           {r.employeeName || "—"}
                         </td>
@@ -284,6 +310,28 @@ export default function Attendance() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {displayRecords.length > PAGE_SIZE && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, padding: "12px 18px", borderTop: "1px solid var(--border)" }}>
+              <span style={{ fontSize: 12, color: "var(--subtext)" }}>
+                Showing {Math.min(displayRecords.length, (safePage - 1) * PAGE_SIZE + 1)}–{Math.min(displayRecords.length, safePage * PAGE_SIZE)} of {displayRecords.length}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                style={{ padding: "6px 14px", background: "var(--card)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12, fontWeight: 600, cursor: safePage === 1 ? "not-allowed" : "pointer", opacity: safePage === 1 ? 0.5 : 1 }}
+              >
+                Prev
+              </button>
+              <span style={{ fontSize: 12, color: "var(--text)" }}>Page {safePage} / {pageCount}</span>
+              <button
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                disabled={safePage === pageCount}
+                style={{ padding: "6px 14px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 12, fontWeight: 600, cursor: safePage === pageCount ? "not-allowed" : "pointer", opacity: safePage === pageCount ? 0.5 : 1 }}
+              >
+                Next
+              </button>
             </div>
           )}
         </div>

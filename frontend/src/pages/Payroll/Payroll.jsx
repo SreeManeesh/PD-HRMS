@@ -216,7 +216,7 @@ export default function Payroll() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([getPayrollRuns(), getPayslips(user.id), getEmployees()])
+    Promise.all([getPayrollRuns(), getPayslips(user.id), getEmployees({ limit: 10000 })])
       .then(([runRes, slipRes, empRes]) => {
         setRuns(runRes.data);
         setPayslips(slipRes.data);
@@ -323,20 +323,38 @@ export default function Payroll() {
     // yet) are computed live from attendance.
     if (runStatus && runStatus !== "Draft") {
       getRunPayslips(`PR-${y}-${pad2(m)}`)
-        .then((res) => setYearRows((res.data || []).map((slip) => {
-          const att = slip.attendance || {};
-          return {
-            employeeId: slip.employeeId,
-            employeeName: slip.employeeName,
-            workingDays: att.workingDays ?? 0,
-            leaveDays: att.unpaidLeaveDays ?? 0,
-            presentDays: att.presentDays ?? 0,
-            gross: slip.earnings?.total ?? 0,
-            deductions: { total: slip.deductions?.total ?? 0 },
-            netPay: slip.netPay ?? 0,
-            status: runStatus,
-          };
-        })))
+        .then((res) => {
+          const slips = res.data || [];
+          const byEmp = {};
+          slips.forEach((slip) => {
+            const att = slip.attendance || {};
+            byEmp[slip.employeeId] = {
+              employeeId: slip.employeeId,
+              employeeName: slip.employeeName,
+              workingDays: att.workingDays ?? 0,
+              leaveDays: att.unpaidLeaveDays ?? 0,
+              presentDays: att.presentDays ?? 0,
+              gross: slip.earnings?.total ?? 0,
+              deductions: { total: slip.deductions?.total ?? 0 },
+              netPay: slip.netPay ?? 0,
+              status: runStatus,
+            };
+          });
+          // Include every active employee (complete total); anyone without a
+          // stored slip shows a zero/Not Processed row so none are hidden.
+          const rows = employees.map((emp) => byEmp[emp.id] || {
+            employeeId: emp.id,
+            employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+            workingDays: 0,
+            leaveDays: 0,
+            presentDays: 0,
+            gross: 0,
+            deductions: { total: 0 },
+            netPay: 0,
+            status: "Not Processed",
+          });
+          setYearRows(rows);
+        })
         .catch((err) => setYearError(err.message || "Could not load payroll run payslips"))
         .finally(() => setYearLoading(false));
       return;
