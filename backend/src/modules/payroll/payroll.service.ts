@@ -290,6 +290,7 @@ export async function getPayslipPdf(id: string) {
 }
 
 /** Load a stored company asset (logo/signature) as a data URI for PDF embedding.
+ *  Uses a presigned MinIO URL + HTTP fetch (fast, avoids stream backpressure).
  *  SVGs are returned null (pdfkit can't rasterize them); raster types embed. */
 async function fetchStoredImageDataUri(url: string | null | undefined): Promise<string | null> {
   if (!url) return null;
@@ -300,11 +301,11 @@ async function fetchStoredImageDataUri(url: string | null | undefined): Promise<
     const stat = await minioClient.statObject(MINIO_BUCKET, objectName);
     const contentType = stat.metaData?.["content-type"] ?? "";
     if (!contentType.startsWith("image/") || contentType.includes("svg")) return null;
-    const stream = await minioClient.getObject(MINIO_BUCKET, objectName);
-    const chunks: Buffer[] = [];
-    for await (const c of stream as AsyncIterable<Buffer>) chunks.push(c);
-    const base64 = Buffer.concat(chunks).toString("base64");
-    return `data:${contentType};base64,${base64}`;
+    const signedUrl = await minioClient.presignedGetObject(MINIO_BUCKET, objectName);
+    const resp = await fetch(signedUrl);
+    if (!resp.ok) return null;
+    const bytes = Buffer.from(await resp.arrayBuffer());
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
   } catch {
     return null;
   }
