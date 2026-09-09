@@ -74,12 +74,11 @@ export async function updateBranding(input: {
 
 async function storeImage(folder: "logo" | "signature", file: Express.Multer.File) {
   if (!file) throw AppError.badRequest("Image file is required");
-  await ensureMinioBucket();
   const extension = path.extname(file.originalname).toLowerCase();
   const name = `${randomUUID()}${extension}`;
-  const objectName = `company/${folder}/${name}`;
   try {
-    await minioClient.putObject(MINIO_BUCKET, objectName, file.buffer, file.size, {
+    await ensureMinioBucket();
+    await minioClient.putObject(MINIO_BUCKET, `company/${folder}/${name}`, file.buffer, file.size, {
       "Content-Type": file.mimetype,
     });
   } catch {
