@@ -117,6 +117,11 @@ export default function Attendance() {
       const rows = Array.isArray(result?.data) ? result.data : [];
       setUploadedRecords((prev) => [...rows, ...prev.filter((r) => !rows.some((u) => u.employeeId === r.employeeId && u.date === r.date))]);
       setPage(1);
+      // Jump the period dropdowns to the data's latest month/year so the
+      // uploaded rows are visible immediately (not just the "recent" month).
+      const dates = rows.map((r) => String(r.date || ""));
+      const latest = dates.filter(Boolean).sort().pop();
+      if (latest) { setYear(ymOf(latest).y || year); setMonth(ymOf(latest).m || month); }
       const imported = result?.imported ?? rows.length;
       const skipped = result?.skipped ?? 0;
       const errors = Array.isArray(result?.errors) ? result.errors : [];
@@ -132,8 +137,15 @@ export default function Attendance() {
     }
   };
 
+  const ymOf = (date) => {
+    const s = String(date || "");
+    return { y: Number(s.slice(0, 4)) || 0, m: Number(s.slice(5, 7)) || 0 };
+  };
+
   const displayRecords = [
-    ...uploadedRecords.map((r) => ({ ...r, __uploaded: true })),
+    // Uploaded rows are shown only for the period selected in the dropdowns,
+    // so previous-month data becomes visible by choosing that month.
+    ...uploadedRecords.filter((r) => { const { y, m } = ymOf(r.date); return y === year && m === month; }).map((r) => ({ ...r, __uploaded: true })),
     ...records.filter((r) => !uploadedRecords.some((u) => u.employeeId === r.employeeId && u.date === r.date)),
   ];
 
@@ -241,7 +253,7 @@ export default function Attendance() {
           </select>
           <select value={year} onChange={(e) => { setYear(Number(e.target.value)); setPage(1); }}
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
-            {[2024,2025,2026].map((y) => <option key={y} value={y}>{y}</option>)}
+            {[...new Set([2024,2025,2026, ...uploadedRecords.map((r) => ymOf(r.date).y).filter(Boolean)])].sort((a, b) => b - a).map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
           {["Present","Late","Absent","WFH","Leave"].map((s) => {
             const count = countStatus(s);

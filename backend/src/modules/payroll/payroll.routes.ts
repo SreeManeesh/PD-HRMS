@@ -32,6 +32,38 @@ router.get(
 // GET /api/payroll/runs/:id — payroll:read
 router.get("/runs/:id", authenticate, requirePermission("payroll:read"), payrollController.runDetail);
 
+// GET /api/payroll/runs/:id/payslips — payroll:read (stored payslips for a run)
+router.get("/runs/:id/payslips", authenticate, requirePermission("payroll:read"), payrollController.runPayslips);
+
+// ── Payslip Distribution ──────────────────────────────────────────────────
+// POST /api/payroll/runs/:id/distribute — payroll:write (dispatch payslips)
+const distributeBodySchema = z.object({
+  employeeIds: z.array(z.string()).optional(),
+  templateId: z.string().optional(),
+  channels: z
+    .object({
+      email: z.object({ enabled: z.boolean().optional(), template: z.string().optional() }).optional(),
+      whatsapp: z.object({ enabled: z.boolean().optional() }).optional(),
+      portal: z.object({ enabled: z.boolean().optional(), notify: z.boolean().optional() }).optional(),
+      sms: z.object({ enabled: z.boolean().optional(), fallback: z.boolean().optional() }).optional(),
+    })
+    .optional(),
+});
+router.post("/runs/:id/distribute", authenticate, requirePermission("payroll:write"), validate({ body: distributeBodySchema }), payrollController.distribute);
+
+// GET /api/payroll/runs/:id/distribution/status — payroll:read
+router.get("/runs/:id/distribution/status", authenticate, requirePermission("payroll:read"), payrollController.distributionStatus);
+
+// POST /api/payroll/runs/:id/distribution/retry — payroll:write (retry failed)
+const retryBodySchema = z.object({ employeeIds: z.array(z.string()).optional() });
+router.post("/runs/:id/distribution/retry", authenticate, requirePermission("payroll:write"), validate({ body: retryBodySchema }), payrollController.distributionRetry);
+
+// GET /api/payroll/runs/:id/distribution/report — payroll:read (CSV download)
+router.get("/runs/:id/distribution/report", authenticate, requirePermission("payroll:read"), payrollController.distributionReport);
+
+// POST /api/payroll/payslips/:id/view — payroll:read (track employee view)
+router.post("/payslips/:id/view", authenticate, requirePermission("payroll:read"), payrollController.payslipViewed);
+
 // POST /api/payroll/runs/:id/process — payroll:write (Admin only in frontend matrix)
 router.post("/runs/:id/process", authenticate, requirePermission("payroll:write"), payrollController.process);
 
@@ -50,5 +82,8 @@ router.get("/payslips/:id/pdf", authenticate, requirePermission("payroll:read"),
 // GET /api/payroll/payslips/:id/statement — payroll:read (structured payslip data
 // consumed by the reusable PayslipTemplate; employees scoped to their own).
 router.get("/payslips/:id/statement", authenticate, requirePermission("payroll:read"), payrollController.payslipStatement);
+
+// GET /api/payroll/distribution/history — payroll:read (past payslip transactions by month/year)
+router.get("/distribution/history", authenticate, requirePermission("payroll:read"), payrollController.distributionHistory);
 
 export default router;

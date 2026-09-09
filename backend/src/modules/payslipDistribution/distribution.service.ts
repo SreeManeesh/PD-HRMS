@@ -41,6 +41,14 @@ function payslipPublicId(run: { month: number; year: number }, code: string): st
   return `PS-${run.year}-${String(run.month).padStart(2, "0")}-${code}`;
 }
 
+/** Display label for a distribution channel (used by report + history). */
+export function channelLabel(channel: string | null | undefined): string {
+  if (channel === "email") return "Email / Web portal";
+  if (channel === "portal") return "Web portal";
+  if (channel === "sms") return "SMS";
+  return channel || "—";
+}
+
 function normalizeChannels(input: DistributionChannels): DistributionChannels {
   const def: Record<ChannelName, DistributionChannelSetting> = {
     email: { enabled: true, template: "standard" },
@@ -513,6 +521,34 @@ export async function markPayslipViewed(publicPayslipId: string, access?: { empl
   return { data: { updated: true } };
 }
 
+/** Distribution history for a month — every payslip delivery transaction
+ *  across that period's payroll runs (past payslip transactions). */
+export async function distributionHistory(month: number, year: number): Promise<{ data: Array<Record<string, unknown>> }> {
+  const rows = await prisma.payslipDistributionRecord.findMany({
+    where: { batch: { payrollRun: { month, year } } },
+    include: {
+      employee: { select: { employeeCode: true, firstName: true, lastName: true } },
+      batch: { select: { payrollRun: { select: { month: true, year: true } } } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 1000,
+  });
+  const transactions = rows.map((r) => ({
+    id: r.id,
+    period: `${MONTHS_SHORT[r.batch.payrollRun.month - 1]} ${r.batch.payrollRun.year}`,
+    employeeCode: r.employee?.employeeCode ?? "",
+    employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName}`.trim() : "",
+    channel: channelLabel(r.channel),
+    status: r.status,
+    attempts: r.attempts,
+    error: r.errorMessage ?? "",
+    deliveredAt: r.deliveredAt ? r.deliveredAt.toISOString() : null,
+    viewedAt: r.viewedAt ? r.viewedAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
+  }));
+  return { data: transactions };
+}
+
 /** CSV delivery report for a run. */
 export async function distributionReport(runId: string): Promise<string> {
   const parsed = parseRunPublicId(runId);
@@ -539,7 +575,7 @@ export async function distributionReport(runId: string): Promise<string> {
       `${MONTHS_SHORT[run.month - 1]} ${run.year}`,
       r.employee ? `${r.employee.firstName} ${r.employee.lastName}`.trim() : "",
       r.employee?.employeeCode ?? "",
-      r.channel || "—",
+      channelLabel(r.channel),
       r.status,
       r.attempts,
       r.errorMessage ?? "",

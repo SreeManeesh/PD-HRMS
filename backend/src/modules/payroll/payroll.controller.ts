@@ -3,6 +3,7 @@ import { asyncHandler } from "../../lib/utils";
 import { sendSuccess } from "../../lib/response";
 import * as payrollService from "./payroll.service";
 import * as payslipStatementService from "./payslipStatement";
+import * as distributionService from "../payslipDistribution/distribution.service";
 import { AppError } from "../../lib/errors";
 
 export const runs = asyncHandler(async (_req: Request, res: Response) => {
@@ -36,13 +37,18 @@ export const payslips = asyncHandler(async (req: Request, res: Response) => {
   sendSuccess(res, result.data);
 });
 
+export const runPayslips = asyncHandler(async (req: Request, res: Response) => {
+  const result = await payrollService.listRunPayslips(req.params.id);
+  sendSuccess(res, result.data);
+});
+
 export const payslipDetail = asyncHandler(async (req: Request, res: Response) => {
   const result = await payrollService.getPayslip(req.params.id);
   sendSuccess(res, result.data);
 });
 
 export const payslipPdf = asyncHandler(async (req: Request, res: Response) => {
-  const { buffer, filename } = await payrollService.getReferencePayslipPdf(req.params.id, {
+  const { buffer, filename } = await payrollService.getPayslipPdf(req.params.id, {
     role: req.auth?.role,
     employeeCode: req.auth?.employeeCode,
   });
@@ -66,6 +72,53 @@ export const payslipStatement = asyncHandler(async (req: Request, res: Response)
   const result = await payslipStatementService.buildPayslipStatement(req.params.id, {
     role: req.auth?.role,
     employeeCode: req.auth?.employeeCode,
+  });
+  sendSuccess(res, result.data);
+});
+
+// ── Payslip Distribution ──────────────────────────────────────────────────
+
+export const distribute = asyncHandler(async (req: Request, res: Response) => {
+  const result = await distributionService.startDistribution(
+    req.params.id,
+    (req.body?.channels ?? {}) as Parameters<typeof distributionService.startDistribution>[1],
+    {
+      employeeIds: req.body?.employeeIds,
+      templateId: req.body?.templateId,
+    },
+    req.auth?.employeeId
+  );
+  sendSuccess(res, result.data);
+});
+
+export const distributionStatus = asyncHandler(async (req: Request, res: Response) => {
+  const result = await distributionService.distributionStatus(req.params.id);
+  sendSuccess(res, result.data);
+});
+
+export const distributionRetry = asyncHandler(async (req: Request, res: Response) => {
+  const result = await distributionService.retryFailedDeliveries(req.params.id, req.body?.employeeIds);
+  sendSuccess(res, result.data);
+});
+
+export const distributionReport = asyncHandler(async (req: Request, res: Response) => {
+  const csv = await distributionService.distributionReport(req.params.id);
+  const runId = req.params.id;
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="delivery_report_${runId}.csv"`);
+  res.send(csv);
+});
+
+export const distributionHistory = asyncHandler(async (req: Request, res: Response) => {
+  const q = req.query as Record<string, string | undefined>;
+  const result = await distributionService.distributionHistory(Number(q.month), Number(q.year));
+  sendSuccess(res, result.data);
+});
+
+export const payslipViewed = asyncHandler(async (req: Request, res: Response) => {
+  const result = await distributionService.markPayslipViewed(req.params.id, {
+    employeeId: req.auth?.employeeId,
+    role: req.auth?.role,
   });
   sendSuccess(res, result.data);
 });

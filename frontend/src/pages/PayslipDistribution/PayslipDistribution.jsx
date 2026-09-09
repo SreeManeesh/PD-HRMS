@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { History } from "lucide-react";
 import {
   Mail, Globe, MessageSquare, Send, RotateCcw, Download,
   Users, CheckCircle2, XCircle, Clock, Wallet,
@@ -17,7 +18,7 @@ import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import {
   getPayrollRuns, getRunPayslips, startDistribution, getDistributionStatus,
-  retryDistribution, downloadDistributionReport,
+  retryDistribution, downloadDistributionReport, getDistributionHistory,
 } from "../../services/payrollService.js";
 import { listPayslipTemplates } from "../../services/payslipDesignerService.js";
 import { useToast } from "../../context/ToastContext.jsx";
@@ -98,6 +99,7 @@ export function PayslipDistributionPanel() {
   const [sending, setSending] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const setChannel = (name, patch) => setChannels((prev) => ({ ...prev, [name]: { ...prev[name], ...patch } }));
 
@@ -109,7 +111,9 @@ export function PayslipDistributionPanel() {
         const list = runRes.data || [];
         setRuns(list);
         setTemplates(tmplRes.data || []);
-        setRunId((cur) => cur || list[0]?.id || "");
+        // Flexible: keep the current selection when it still exists, otherwise
+        // default to the newest run (data-driven).
+        setRunId((cur) => (cur && list.some((r) => r.id === cur) ? cur : list[0]?.id || ""));
       })
       .catch(() => setMsg({ ok: false, text: "Could not load payroll runs or payslip templates" }))
       .finally(() => setLoadingRuns(false));
@@ -224,7 +228,8 @@ export function PayslipDistributionPanel() {
   const started = status?.started === true;
 
   return (
-    <div style={{ maxWidth: "1480px", margin: "0 auto", display: "flex", flexDirection: "column", gap: 22 }}>
+    <>
+      <div style={{ maxWidth: "1480px", margin: "0 auto", display: "flex", flexDirection: "column", gap: 22 }}>
         <PageHeader title="Payslip Distribution" subtitle="Generate → Prepare channels → Deliver → Track deliveries" />
 
         {msg && (
@@ -374,7 +379,15 @@ export function PayslipDistributionPanel() {
 
         {/* Delivery dashboard */}
         <section style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: 20 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 14px", color: "var(--text)" }}>Delivery Tracking</h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: "var(--text)" }}>Delivery Tracking</h2>
+            <button
+              onClick={() => setShowHistory(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "var(--card)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+            >
+              <History size={15} /> History
+            </button>
+          </div>
 
           {loadingStatus ? (
             <Spinner />
@@ -474,6 +487,73 @@ export function PayslipDistributionPanel() {
           )}
         </section>
       </div>
+      {showHistory && <DistributionHistoryModal onClose={() => setShowHistory(false)} />}
+    </>
+  );
+}
+
+/** History modal — previous payslip transactions filtered by month & year. */
+export function DistributionHistoryModal({ onClose }) {
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getDistributionHistory(month, year)
+      .then((res) => { if (active) { setRows(res.data || []); setLoading(false); } })
+      .catch((e) => { if (active) { setError(e.message || "Could not load history"); setRows([]); setLoading(false); } });
+    return () => { active = false; };
+  }, [month, year]);
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const statusColor = { Delivered: "#16a34a", Failed: "#dc2626", Pending: "#d97706", Sent: "#0284c7" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "#fff", borderRadius: 16, maxWidth: 860, width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+          <History size={18} style={{ color: "var(--primary)" }} />
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, flex: 1 }}>Payslip Distribution History</h3>
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13 }}>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13 }}>{[2024, 2025, 2026].map((y) => <option key={y} value={y}>{y}</option>)}</select>
+          <button onClick={onClose} style={{ padding: "8px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Close</button>
+        </div>
+        <div style={{ overflowY: "auto", padding: 16 }}>
+          {error ? <p style={{ color: "var(--red)", fontSize: 13 }}>{error}</p>
+            : loading ? <Spinner />
+            : rows.length === 0 ? <p style={{ color: "var(--subtext)", fontSize: 13 }}>No payslip transactions for {MONTHS[month - 1]} {year}.</p>
+            : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                    {["Period","Employee","Employee ID","Channel","Status","Attempts","Error","Delivered At"].map((h) => (
+                      <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.id} style={{ borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{r.period}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }}>{r.employeeName || "—"}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5, fontFamily: "monospace", color: "var(--subtext)" }}>{r.employeeCode || "—"}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{r.channel}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5, fontWeight: 700, color: statusColor[r.status] || "var(--text)" }}>{r.status}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{r.attempts ?? 0}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5, color: "var(--red)" }}>{r.error || "—"}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{r.deliveredAt ? new Date(r.deliveredAt).toLocaleString() : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+        </div>
+      </div>
+    </div>
   );
 }
 
