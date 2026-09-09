@@ -2,7 +2,6 @@ import { prisma } from "../../lib/prisma";
 import { Prisma, type SalaryStructure } from "@prisma/client";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
-import minioClient, { MINIO_BUCKET } from "../../config/minio";
 import {
   serializePayrollRunList,
   serializePayslipList,
@@ -16,7 +15,7 @@ import { computePayroll } from "../payslip/payslip.service";
 import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
 import { buildPayslipStatement, loadPayslipStatementAssets } from "./payslipStatement";
-import { PNG } from "pngjs";
+import { fetchStoredCompanyAssetDataUri } from "../payslip/lib/brandingAssets";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
@@ -57,6 +56,21 @@ export async function listPayslips(employeeId?: string) {
     where,
     include: SLIP_INCLUDE,
     orderBy: { createdAt: "desc" },
+  });
+  return { data: serializePayslipList(slips) };
+}
+
+/** Payslips that belong to a specific payroll run (stored, authoritative). */
+export async function listRunPayslips(id: string) {
+  const parsed = parseRunPublicId(id);
+  const run = await prisma.payrollRun.findUnique({
+    where: { month_year: { month: parsed.month, year: parsed.year } },
+  });
+  if (!run) throw AppError.notFound("Payroll run not found");
+  const slips = await prisma.payslip.findMany({
+    where: { payrollRunId: run.id },
+    include: SLIP_INCLUDE,
+    orderBy: { createdAt: "asc" },
   });
   return { data: serializePayslipList(slips) };
 }
@@ -290,48 +304,9 @@ export async function getPayslipPdf(id: string) {
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
 }
 
-/** Re-encode a PNG buffer through pngjs so pdfkit embeds a clean, valid PNG.
- *  pdfkit's bundled decoder silently ignores chunk CRC errors and can spend
- *  ~50s+ on malformed files; decoding + re-encoding normalizes the image.
- *  Returns null when the file isn't a decodable/reasonable PNG. */
-function sanitizePng(buffer: Buffer): Buffer | null {
-  try {
-    const img = PNG.sync.read(buffer);
-    if (!img.width || !img.height || img.width * img.height > 4_000_000) return null;
-    return PNG.sync.write(img) as Buffer;
-  } catch {
-    return null;
-  }
-}
-
 /** Load a stored company asset (logo/signature) as a data URI for PDF embedding.
- *  Uses a presigned MinIO URL + HTTP fetch (fast, avoids stream backpressure).
- *  SVGs are returned null (pdfkit can't rasterize them); raster types embed. */
-async function fetchStoredImageDataUri(url: string | null | undefined): Promise<string | null> {
-  if (!url) return null;
-  const match = /^\/uploads\/company\/(logo|signature)\/([^/]+)$/.exec(url);
-  if (!match) return null;
-  const objectName = `company/${match[1]}/${match[2]}`;
-  try {
-    const stat = await minioClient.statObject(MINIO_BUCKET, objectName);
-    const contentType = stat.metaData?.["content-type"] ?? "";
-    if (!contentType.startsWith("image/") || contentType.includes("svg")) return null;
-    const signedUrl = await minioClient.presignedGetObject(MINIO_BUCKET, objectName);
-    const resp = await fetch(signedUrl);
-    if (!resp.ok) return null;
-    let bytes: Buffer<ArrayBufferLike> = Buffer.from(await resp.arrayBuffer());
-    let embedType = contentType;
-    if (contentType.includes("png")) {
-      const clean = sanitizePng(bytes);
-      if (!clean) return null;
-      bytes = clean;
-      embedType = "image/png";
-    }
-    return `data:${embedType};base64,${bytes.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
+ *  Delegates to the shared branding-assets loader (presigned URL + PNG sanitize). */
+const fetchStoredImageDataUri = fetchStoredCompanyAssetDataUri;
 
 function defaultReferenceBlueprint(): Blueprint {
   return {

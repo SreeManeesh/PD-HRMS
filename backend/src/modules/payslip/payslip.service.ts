@@ -14,7 +14,9 @@ import { buildAutoComponents } from "./lib/countryState";
 import { DEFAULT_NESTS } from "./lib/nesting";
 import { validateBlueprint, autoArrangeLayout, type ValidationReport } from "./lib/validator";
 import { calculateTax, compareRegimes, INDIA_TAX_URL_BASELINE, type TaxInput } from "./lib/tax";
-import { generatePayslipPdf, resolveComponentValues, buildSections, type ComponentRow } from "./lib/payslip.pdf";
+import { generatePayslipPdf, resolveComponentValues } from "./lib/payslip.pdf";
+import { rupeesInWords } from "../../lib/numberToWords";
+import { fetchStoredCompanyAssetDataUri } from "./lib/brandingAssets";
 import { evaluateFormula } from "./lib/expression";
 import { COMPONENT_CATALOG } from "./lib/countryState";
 
@@ -399,9 +401,16 @@ export async function previewPayslip(templateId: string, input: PreviewInput) {
     employeeId: employee?.employeeCode ?? "EMP000",
     department: employee?.department?.name ?? "—",
     designation: employee?.designation?.title ?? "—",
+    location: employee?.location?.name
+      ? [employee.location.name, employee.location.address].filter(Boolean).join(", ")
+      : "—",
+    taxRegime: regime,
+    pan: "—",
+    dateOfJoining: employee?.dateOfJoining
+      ? employee.dateOfJoining.toISOString().slice(0, 10)
+      : "—",
     period: `${(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])[input.month - 1]} ${input.year}`,
     companyName: blueprint.settings?.companyName ?? "Proteccio HRMS",
-    taxRegime: regime,
     financialYear: blueprint.financialYear,
   };
 
@@ -425,26 +434,38 @@ export async function generatePdf(templateId: string, input: PreviewInput) {
   const { blueprint, results, earningsTotal, net, tax, employee } = preview.data;
 
   const rows = resolveComponentValues(blueprint as Blueprint, results as unknown as Record<string, { final: number }>);
-  // Blueprint-driven sections so the export reflects the Nesting manager and
-  // any component added on the designer canvas.
-  const compRows: ComponentRow[] = (blueprint as Blueprint).components
-    .filter((c) => c.visible !== false)
-    .map((c) => ({
-      label: c.label,
-      amount: (results as Record<string, { final: number }>)[c.id.toLowerCase()]?.final ?? 0,
-      kind: c.kind,
-      nestId: c.nestId ?? null,
-      priority: c.logic.calculationPriority ?? 999,
-    }));
-  const sections = buildSections(blueprint as Blueprint, compRows);
-  const pdf = await generatePayslipPdf(blueprint as Blueprint, {
+
+  // Company branding (logo/signature/signatory) so the exported PDF uses the
+  // same corporate reference template as real payslips.
+  const company = await prisma.company.findFirst({ where: { isActive: true } });
+  const [logoData, sigData] = await Promise.all([
+    fetchStoredCompanyAssetDataUri(company?.logoUrl),
+    fetchStoredCompanyAssetDataUri(company?.signatureUrl),
+  ]);
+
+  const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const bp = blueprint as Blueprint;
+  const pdf = await generatePayslipPdf(bp, {
     employee,
     payroll: { gross: Math.round(earningsTotal), net: Math.round(net) },
     earnings: rows.earnings,
     deductions: rows.deductions,
     employer: rows.employer,
-    sections,
     tax: { regime: tax.regime, annualTax: Math.round(tax.annualTax), monthlyTax: Math.round(tax.monthlyTax) },
+    company: {
+      name: company?.name ?? employee.companyName ?? "HRMS",
+      tagline: company?.tagline ?? undefined,
+      website: company?.website ?? undefined,
+      address: company?.address ?? undefined,
+      logoDataUri: logoData ?? undefined,
+      signatoryName: company?.signatoryName ?? undefined,
+      signatoryDesignation: company?.signatoryDesignation ?? undefined,
+      signatureDataUri: sigData ?? undefined,
+    },
+    generatedOn: new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }),
+    netInWords: rupeesInWords(net),
+    payPeriodLabel: `${MONTHS_FULL[input.month - 1].toUpperCase()} ${input.year}`,
+    countryLabel: bp.country,
   });
   return { buffer: pdf, filename: `payslip_${String(employee.employeeId).toLowerCase()}_${input.year}-${String(input.month).padStart(2, "0")}.pdf` };
 }
