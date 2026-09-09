@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { CheckCircle2 } from "lucide-react";
 import { Play, FileText, Download, Users, Wallet, CalendarRange, Search, ChevronDown, ChevronRight, LayoutTemplate } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -18,7 +19,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
-import { getPayrollRuns, getPayslips, runPayroll, getEmployeePayrollSummary, downloadPayslipPdf } from "../../services/payrollService.js";
+import { getPayrollRuns, getPayslips, runPayroll, approvePayrollRun, getEmployeePayrollSummary, downloadPayslipPdf } from "../../services/payrollService.js";
 import { getTaxSelection, setTaxSelection } from "../../services/payslipDesignerService.js";
 import { getMyAttendance } from "../../services/attendanceService.js";
 import { getEmployees } from "../../services/employeeService.js";
@@ -167,10 +168,11 @@ function EmployeeSearchBox({ employees, value, onChange, onSelect }) {
 }
 
 export default function Payroll() {
-  const { user } = useAuth();
+  const { user, permissions } = useAuth();
   const navigate = useNavigate();
   const now = new Date();
   const isStaff = user.role !== "EMPLOYEE";
+  const canApprove = Array.isArray(permissions) && permissions.includes("payroll:approve");
   const [runs, setRuns]         = useState([]);
   const [payslips, setPayslips] = useState([]);
   const [taxYear, setTaxYear] = useState(new Date().getFullYear());
@@ -182,6 +184,8 @@ export default function Payroll() {
   const [activeRun, setActiveRun] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [running, setRunning] = useState(false);
+  const [approveRun, setApproveRun] = useState(null); // run awaiting four-eyes approve
+  const [approving, setApproving] = useState(false);
   const [activeTab, setActiveTab] = useState("annual");
   const [month, setMonth]       = useState(now.getMonth() + 1);
   const [year, setYear]         = useState(now.getFullYear());
@@ -277,6 +281,20 @@ export default function Payroll() {
       setRunning(false);
       setShowConfirm(false);
       setActiveRun(null);
+    }
+  };
+
+  const handleApprovePayroll = async () => {
+    if (!approveRun) return;
+    setApproving(true);
+    try {
+      await approvePayrollRun(approveRun.id);
+      setRuns((prev) => prev.map((r) => (r.id === approveRun.id ? { ...r, status: "Paid" } : r)));
+      setApproveRun(null);
+    } catch (e) {
+      setRegimeMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not approve payroll run" });
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -468,6 +486,8 @@ export default function Payroll() {
                         <FragmentRow key={run.id} run={run} i={i} length={filteredRuns.length} meta={meta} isExpanded={isExpanded}
                           onToggle={() => { toggleRun(run); setMonth(run.month); setYear(run.year); }}
                           onRun={() => { setActiveRun(run); setShowConfirm(true); }}
+                          onApprove={() => setApproveRun(run)}
+                          canApprove={canApprove}
                           onPayslips={() => setActiveTab("payslips")} />
                       );
                     })}
@@ -775,11 +795,22 @@ export default function Payroll() {
         onConfirm={handleRunPayroll}
         onCancel={() => { setShowConfirm(false); setActiveRun(null); }}
       />
+
+      <ConfirmDialog
+        isOpen={!!approveRun}
+        title="Approve Payroll"
+        message={approveRun
+          ? `Approve ${approveRun.totalEmployees ?? 0} payslips for ${approveRun.period} (${approveRun.netPayroll ? fmt(approveRun.netPayroll) : ""})? This marks the run as Paid and commits it to disbursement — the final four-eyes sign-off.`
+          : ""}
+        confirmLabel={approving ? "Approving…" : "Yes, Approve & Pay"}
+        onConfirm={handleApprovePayroll}
+        onCancel={() => { setApproveRun(null); }}
+      />
     </MainLayout>
   );
 }
 
-function FragmentRow({ run, i, length, meta, isExpanded, onToggle, onRun, onPayslips }) {
+function FragmentRow({ run, i, length, meta, isExpanded, onToggle, onRun, onApprove, canApprove, onPayslips }) {
   return (
     <tr onClick={onToggle}
         style={{
@@ -812,6 +843,15 @@ function FragmentRow({ run, i, length, meta, isExpanded, onToggle, onRun, onPays
               style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 14px", background: "var(--green-light)", color: "var(--green)", border: "1px solid var(--green)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
               <Download size={13} /> Download
             </button>
+          )}
+          {run.status === "Processing" && canApprove && (
+            <button id={`approve-${run.id}`} onClick={onApprove}
+              style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 14px", background: "var(--amber-light)", color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+              <CheckCircle2 size={13} /> Approve
+            </button>
+          )}
+          {run.status === "Processing" && !canApprove && (
+            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>Awaiting approval</span>
           )}
         </td>
       </tr>

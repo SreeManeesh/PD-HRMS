@@ -10,8 +10,7 @@ import {
   periodLabel,
 } from "../../serializers/payroll.serializer";
 import { countWeekdays, round2, toNumber } from "../../serializers/helpers";
-import { generatePayslipPdf, resolveComponentValues } from "../payslip/lib/payslip.pdf";
-import { computePayroll } from "../payslip/payslip.service";
+import { generatePayslipPdf } from "../payslip/lib/payslip.pdf";
 import type { Blueprint } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
 
@@ -140,34 +139,10 @@ export async function getPayslipPdf(id: string) {
     };
   }
 
-  // Build a base context from the employee's active salary structure so the
-  // blueprint's components (fixed-from-base, percentage, formula) compute
-  // dynamically — exactly like the designer. Stored payslip amounts act as an
-  // authoritative override for any component pre-dating the template.
-  const structure = await prisma.salaryStructure.findFirst({
-    where: { employeeId: employee.id, isActive: true },
-    orderBy: { effectiveFrom: "desc" },
-  });
-
-  const base: Record<string, number> = {};
-  if (structure) {
-    base.basic = toNumber(structure.basicSalary);
-    base.hra = toNumber(structure.hra);
-    base.conveyance = toNumber(structure.conveyanceAllowance);
-    base.medical = toNumber(structure.medicalAllowance);
-    base.performance_bonus = toNumber(structure.performanceBonus);
-    base.other = toNumber(structure.otherAllowances);
-    base.provident_fund = toNumber(structure.providentFund);
-    base.professional_tax = toNumber(structure.professionalTax);
-    base.income_tax = toNumber(structure.incomeTax);
-    base.health_insurance = toNumber(structure.healthInsurance);
-  }
-
-  // Overlay the actually-paid amounts so the PDF always reflects the approved
-  // payslip, even if the salary structure changed since processing. Map each
-  // stored key onto the blueprint component ids it corresponds to, so no
-  // component (e.g. `tds` for income tax, `epf_employee` for provident fund)
-  // is left out.
+  // Build the PDF rows from the STORED (approved) payslip amounts — they are
+  // authoritative and reflect exactly what was paid after LOP/OT proration.
+  // The blueprint contributes labels + display order + theme so the export
+  // stays dynamic per project while never drifting from the paid slip.
   const synonyms: Record<string, string[]> = {
     basicSalary: ["basic", "basic_salary"],
     hra: ["hra"],
@@ -181,67 +156,64 @@ export async function getPayslipPdf(id: string) {
     incomeTax: ["income_tax", "tds"],
     healthInsurance: ["health_insurance", "esi_employee"],
   };
-  // stored key -> normalized base key (used when no blueprint component matches)
-  const baseKey: Record<string, string> = {
-    basicSalary: "basic",
-    hra: "hra",
-    conveyanceAllowance: "conveyance",
-    medicalAllowance: "medical",
-    performanceBonus: "performance_bonus",
-    otherAllowances: "other",
-    overtime: "overtime",
-    providentFund: "provident_fund",
-    professionalTax: "professional_tax",
-    incomeTax: "income_tax",
-    healthInsurance: "health_insurance",
+  const FALLBACK_LABELS: Record<string, string> = {
+    basicSalary: "Basic Salary",
+    hra: "HRA",
+    conveyanceAllowance: "Conveyance Allowance",
+    medicalAllowance: "Medical Allowance",
+    performanceBonus: "Performance Bonus",
+    otherAllowances: "Other Allowances",
+    overtime: "Overtime",
+    providentFund: "Provident Fund",
+    professionalTax: "Professional Tax",
+    incomeTax: "Income Tax",
+    healthInsurance: "Health Insurance",
   };
-  const overlay = (rec: Record<string, number>) => {
-    for (const [k, v] of Object.entries(rec)) {
-      if (k === "total") continue;
-      const value = Number(v);
-      // Seed any blueprint component whose id matches a synonym for this key.
-      const ids = synonyms[k];
-      if (ids) {
-        for (const c of blueprint.components) {
-          if (ids.includes(c.id.toLowerCase())) base[c.id.toLowerCase()] = value;
-        }
-      }
-      // Also keep the normalized base key for formulas/percentages referencing it.
-      base[baseKey[k] ?? k] = value;
-      base[k] = value;
-    }
-  };
-  overlay(earnings);
-  overlay(deductions);
+  const humanize = (key: string) =>
+    key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim();
+  const blueprintCompFor = (key: string) =>
+    blueprint.components.find((c) => {
+      const cid = c.id.toLowerCase();
+      return cid === key.toLowerCase() || (synonyms[key] ?? []).includes(cid);
+    });
+  const componentRows = (rec: Record<string, number>) =>
+    Object.entries(rec)
+      .filter(([k, v]) => k !== "total" && Number(v) > 0)
+      .map(([k, v]) => ({
+        label: blueprintCompFor(k)?.label ?? FALLBACK_LABELS[k] ?? humanize(k),
+        amount: Number(v),
+        priority: blueprintCompFor(k)?.logic.calculationPriority ?? 999,
+      }))
+      .sort((a, b) => a.priority - b.priority)
+      .map(({ label, amount }) => ({ label, amount }));
 
-  // Compute through the engine so blueprint components (with business logic,
-  // thresholds, balancing) resolve dynamically from the base above.
-  const computed = blueprint.components.length ? computePayroll(blueprint, base, {}) : null;
-  const rows = resolveComponentValues(blueprint as Blueprint, (computed?.results ?? {}) as Record<string, { final: number }>);
+  const earningsRows = componentRows(earnings);
 
-  const earningsRows = [...rows.earnings];
-  const deductionsRows = [...rows.deductions];
+  // Stored totals are authoritative (they embed the net-protection cap: when
+  // the computed deductions exceed earnings, the withheld total is floored to
+  // the earned amount). When the itemized lines no longer reconcile with the
+  // stored total (capped), collapse them to a single total line so the PDF
+  // never over-states what was actually withheld.
+  const storedDedTotal = Number(deductions.total ?? 0);
+  let deductionsRows = componentRows(deductions);
+  const lineSum = deductionsRows.reduce((s, d) => s + d.amount, 0);
+  if (storedDedTotal <= 0) {
+    // Full net-protection cap — nothing was withheld (e.g. a zero-pay month).
+    deductionsRows = [];
+  } else if (Math.abs(lineSum - storedDedTotal) > 0.5) {
+    // Partial cap — per-line allocation no longer reconciles; show total only.
+    deductionsRows = [{ label: "Total Deductions", amount: storedDedTotal }];
+  }
 
-  // Employer-side costs: prefer the persisted contribution amounts (authoritative,
-  // always reflects what was processed), falling back to the designer engine's
-  // employer components when the slip predates contribution tracking.
+  // Employer-side costs: persisted contribution amounts (authoritative).
   const storedEmployer = (slip.employerContributions ?? {}) as Record<string, number>;
-  const employerEntries = Object.entries(storedEmployer).filter(([, v]) => Number(v) > 0);
-  const employerRows =
-    employerEntries.length > 0
-      ? employerEntries.map(([k, v]) => ({
-          label: employerLabel(blueprint, k),
-          amount: Number(v),
-        }))
-      : [...rows.employer];
+  const employerRows = Object.entries(storedEmployer)
+    .filter(([, v]) => Number(v) > 0)
+    .map(([k, v]) => ({ label: employerLabel(blueprint, k), amount: Number(v) }));
 
-  const grossTotal = computed
-    ? Math.round(computed.earningsTotal)
-    : Math.round(earningsRows.reduce((s, e) => s + e.amount, 0));
-  const deductionsTotal = computed
-    ? Math.round(computed.deductionsTotal)
-    : Math.round(deductionsRows.reduce((s, d) => s + d.amount, 0));
-  const net = computed ? Math.round(computed.net) : Math.round(netPay);
+  const grossTotal = Math.round(Number(earnings.total ?? 0) || earningsRows.reduce((s, e) => s + e.amount, 0));
+  const deductionsTotal = Math.round(storedDedTotal || deductionsRows.reduce((s, d) => s + d.amount, 0));
+  const net = Math.round(Number(slip.netPay) || Math.max(grossTotal - deductionsTotal, 0));
 
   // Attendance summary from the reconciliation stored on the slip (Step 2/4).
   const att = (slip.attendanceSummary ?? {}) as Record<string, unknown>;

@@ -51,3 +51,11 @@ export const runPayroll = async (payrollRunId) => {
   const res = await api.post(`/payroll/runs/${payrollRunId}/process`);
   return res.data;
 };
+
+/**
+ * Approve a processed payroll run (four-eyes — requires payroll:approve).
+ */
+export const approvePayrollRun = async (payrollRunId) => {
+  const res = await api.post(`/payroll/runs/${payrollRunId}/approve`);
+  return res.data;
+};
