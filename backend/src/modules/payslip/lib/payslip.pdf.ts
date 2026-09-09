@@ -1,24 +1,22 @@
 import PDFDocument from "pdfkit";
 
 import type { Blueprint, BlueprintComponent } from "./types";
-import type { ComponentResults } from "./calc";
 
 export interface RenderData {
   employee: Record<string, string | number>;
   payroll: {
-    earnings: Record<string, number>;
-    deductions: Record<string, number>;
-    employer: Record<string, number>;
     gross: number;
     net: number;
   };
+  earnings: { label: string; amount: number }[];
+  deductions: { label: string; amount: number }[];
+  employer?: { label: string; amount: number }[];
   tax?: Record<string, string | number>;
-  results: ComponentResults;
 }
 
-const inr = (n: number) => "₹" + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.round(n));
+const inr = (n: number) =>
+  "₹" + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.round(n));
 
-/** Decode a data-URL logo (image/png|jpeg|webp) into a pdfkit-ready buffer. */
 function decodeLogo(logo?: string): { buffer: Buffer; kind: string } | null {
   if (!logo || typeof logo !== "string" || !logo.startsWith("data:image/")) return null;
   const comma = logo.indexOf(",");
@@ -29,15 +27,38 @@ function decodeLogo(logo?: string): { buffer: Buffer; kind: string } | null {
   return { buffer: Buffer.from(b64, "base64"), kind };
 }
 
-function componentValue(comp: BlueprintComponent, results: ComponentResults): number | null {
-  const r = results[comp.id.toLowerCase()];
-  return r ? r.final : null;
+/**
+ * Resolve per-component values from a blueprint + results map into
+ * labelled { label, amount } tuples, grouped by the component's kind.
+ * Used by both the designer (from calc engine) and regular payslip
+ * (from stored earnings/deductions mapped to component IDs).
+ */
+export function resolveComponentValues(
+  blueprint: Blueprint,
+  results: Record<string, { final: number }>,
+): { earnings: { label: string; amount: number }[]; deductions: { label: string; amount: number }[]; employer: { label: string; amount: number }[] } {
+  const earnings: { label: string; amount: number }[] = [];
+  const deductions: { label: string; amount: number }[] = [];
+  const employer: { label: string; amount: number }[] = [];
+
+  for (const c of blueprint.components) {
+    if (c.visible === false) continue;
+    const r = results[c.id.toLowerCase()];
+    if (!r || r.final <= 0) continue;
+    const entry = { label: c.label, amount: r.final };
+    if (c.kind === "earning" || c.kind === "reimbursement") earnings.push(entry);
+    else if (c.kind === "deduction") deductions.push(entry);
+    else if (c.kind === "employer") employer.push(entry);
+  }
+
+  return { earnings, deductions, employer };
 }
 
 /**
- * Render a payslip PDF from a JSON blueprint + calculated results.
- * Reuses pdfkit (already used project-wide). Layout is derived from the
- * blueprint's theme, nests and components — not hardcoded.
+ * Render a payslip PDF from a JSON blueprint.
+ * Layout is derived from the blueprint's theme, nests and component labels —
+ * everything is dynamic. Both the designer endpoint and the regular payslip
+ * endpoint use this same renderer, so the output always matches the design.
  */
 export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buffer> {
   const theme = bp.theme;
@@ -53,25 +74,27 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
     const width = doc.page.width;
     const m = theme.margins || { top: 40, right: 40, bottom: 40, left: 40 };
 
-    // Header band
+    // ── Header band (theme-colored) ──
     doc.rect(0, 0, width, 70).fill(theme.primaryColor || "#0f766e");
     const logo = decodeLogo(theme.logo);
     if (logo) {
       try {
         doc.image(logo.buffer, m.left, 14, { width: 60, height: 42, fit: [60, 42] });
-      } catch {
-        // invalid uploaded image — fall through to text-only header
-      }
-      doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold").text(String(data.employee.companyName ?? "Proteccio HRMS"), m.left + 68, 24, { width: width - m.left - m.right - 68 });
-      doc.fontSize(11).font("Helvetica").text(`Salary Payslip · ${bp.financialYear} · ${bp.country}${bp.state ? `, ${bp.state}` : ""}`, m.left + 68, 48);
+      } catch { /* invalid image — skip */ }
+      doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold")
+        .text(String(data.employee.companyName ?? "Proteccio HRMS"), m.left + 68, 24, { width: width - m.left - m.right - 68 });
+      doc.fontSize(11).font("Helvetica")
+        .text(`Salary Payslip · ${bp.financialYear} · ${bp.country}${bp.state ? `, ${bp.state}` : ""}`, m.left + 68, 48);
     } else {
-      doc.fillColor("#ffffff").fontSize(20).font("Helvetica-Bold").text(String(data.employee.companyName ?? "Proteccio HRMS"), m.left, 22, { width: width - m.left - m.right });
-      doc.fontSize(11).font("Helvetica").text(`Salary Payslip · ${bp.financialYear} · ${bp.country}${bp.state ? `, ${bp.state}` : ""}`, m.left, 46);
+      doc.fillColor("#ffffff").fontSize(20).font("Helvetica-Bold")
+        .text(String(data.employee.companyName ?? "Proteccio HRMS"), m.left, 22, { width: width - m.left - m.right });
+      doc.fontSize(11).font("Helvetica")
+        .text(`Salary Payslip · ${bp.financialYear} · ${bp.country}${bp.state ? `, ${bp.state}` : ""}`, m.left, 46);
     }
 
     let y = 88;
 
-    // Employee info block
+    // ── Employee info block ──
     doc.fontSize(10).fillColor("#0e1e2c").font("Helvetica-Bold").text("Employee", m.left, y);
     doc.font("Helvetica").fontSize(9.5);
     const empLines = [
@@ -84,46 +107,79 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
     doc.text(empLines.join("\n"), m.left, y + 14, { width: width - m.left - m.right, lineGap: 4 });
     y += 14 + empLines.length * 13 + 10;
 
-    // Grouped sections by nest (visual order from blueprint)
-    const nestOrder = [...new Set(bp.components.filter((c) => c.nestId).map((c) => c.nestId!))];
-    for (const nestId of nestOrder) {
-      const nest = bp.nests?.find((n) => n.id === nestId);
-      const comps = bp.components.filter((c) => c.nestId === nestId && c.visible !== false);
-      if (!comps.length) continue;
-
-      doc.moveDown(0.4);
-      doc.fontSize(11).fillColor(theme.primaryColor || "#0f766e").font("Helvetica-Bold").text(nest?.name ?? nestId);
-      doc.moveDown(0.2);
-      doc.font("Helvetica");
-      for (const c of comps) {
-        const val = componentValue(c, data.results);
-        const amount = val != null ? inr(val) : "—";
-        doc.fontSize(9.5).fillColor("#0e1e2c");
-        doc.text(`${c.label}`, m.left + 8, undefined, { continued: true });
-        doc.text(`${amount}`, { align: "right", width: width - m.left - m.right + 8 });
+    // ── Earnings section ──
+    if (data.earnings.length) {
+      doc.fontSize(11).fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
+        .text("Earnings", m.left, y);
+      y += 16;
+      doc.font("Helvetica").fontSize(9.5);
+      for (const e of data.earnings) {
+        doc.fillColor("#0e1e2c").text(e.label, m.left + 8, y, { continued: true });
+        doc.fillColor("#0e1e2c").text(inr(e.amount), { align: "right", width: width - m.left - m.right + 8 });
+        y += 14;
       }
+      doc.fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
+        .text(`Total Earnings    ${inr(data.payroll.gross)}`, m.left + 8, y);
+      y += 20;
     }
 
-    // Totals
-    doc.moveDown(0.6);
-    doc.rect(m.left, doc.y - 6, width - m.left - m.right, 1).fillColor(theme.secondaryColor || "#94a3b8").fill();
-    doc.moveDown(0.5);
-    const totals = [
-      `Gross Earnings      ${inr(data.payroll.gross)}`,
-      `Total Deductions    ${inr(Object.values(data.payroll.deductions).reduce((a, b) => a + b, 0))}`,
-      `Net Pay             ${inr(data.payroll.net)}`,
-    ];
-    doc.font("Helvetica-Bold").fontSize(11);
-    for (const t of totals) doc.text(t, m.left, undefined, { align: "right", width: width - m.left - m.right });
+    // ── Deductions section ──
+    if (data.deductions.length) {
+      doc.fillColor("#dc2626").fontSize(11).font("Helvetica-Bold")
+        .text("Deductions", m.left, y);
+      y += 16;
+      doc.font("Helvetica").fontSize(9.5);
+      for (const d of data.deductions) {
+        doc.fillColor("#0e1e2c").text(d.label, m.left + 8, y, { continued: true });
+        doc.fillColor("#0e1e2c").text(inr(d.amount), { align: "right", width: width - m.left - m.right + 8 });
+        y += 14;
+      }
+      doc.fillColor("#dc2626").font("Helvetica-Bold")
+        .text(`Total Deductions    ${inr(data.deductions.reduce((s, d) => s + d.amount, 0))}`, m.left + 8, y);
+      y += 20;
+    }
 
+    // ── Employer contributions (smaller, informational) ──
+    if (data.employer?.length) {
+      doc.fillColor("#64748b").fontSize(10).font("Helvetica-Bold")
+        .text("Employer Contributions", m.left, y);
+      y += 14;
+      doc.font("Helvetica").fontSize(9);
+      for (const ec of data.employer) {
+        doc.fillColor("#64748b").text(`${ec.label}: ${inr(ec.amount)}`, m.left + 8, y);
+        y += 12;
+      }
+      y += 6;
+    }
+
+    // ── Totals divider ──
+    doc.rect(m.left, y, width - m.left - m.right, 1).fillColor(theme.secondaryColor || "#94a3b8").fill();
+    y += 10;
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#0e1e2c");
+    doc.text(`Gross Earnings      ${inr(data.payroll.gross)}`, m.left, y, { align: "right", width: width - m.left - m.right });
+    y += 18;
+    doc.fillColor("#dc2626").text(`Total Deductions    ${inr(data.deductions.reduce((s, d) => s + d.amount, 0))}`, m.left, y, { align: "right", width: width - m.left - m.right });
+    y += 18;
+    doc.fillColor(theme.primaryColor || "#0f766e").fontSize(13)
+      .text(`Net Pay             ${inr(data.payroll.net)}`, m.left, y, { align: "right", width: width - m.left - m.right });
+    y += 24;
+
+    // ── Tax info ──
     if (data.tax) {
-      doc.moveDown(0.4);
-      doc.fontSize(9).fillColor("#64748b").font("Helvetica");
-      doc.text(`Tax regime: ${String(data.tax.regime ?? "—")} · Annual tax ${inr(Number(data.tax.annualTax) || 0)} · Monthly ${inr(Number(data.tax.monthlyTax) || 0)}`, m.left, undefined, { width: width - m.left - m.right });
+      doc.fontSize(9).fillColor("#64748b").font("Helvetica")
+        .text(
+          `Tax regime: ${String(data.tax.regime ?? "—")} · Annual tax ${inr(Number(data.tax.annualTax) || 0)} · Monthly ${inr(Number(data.tax.monthlyTax) || 0)}`,
+          m.left, y, { width: width - m.left - m.right }
+        );
     }
 
-    // Footer
-    doc.fontSize(9).fillColor("#94a3b8").text("Generated by Proteccio Smart Payslip Designer", m.left, doc.page.height - 30);
+    // ── Footer ──
+    doc.fontSize(8).fillColor("#94a3b8").font("Helvetica")
+      .text(
+        "This is a computer-generated payslip. Amounts are shown in Indian Rupees (₹).",
+        m.left, doc.page.height - 34, { width: width - m.left - m.right }
+      );
 
     doc.end();
   });

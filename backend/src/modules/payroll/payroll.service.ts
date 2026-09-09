@@ -9,7 +9,9 @@ import {
   periodLabel,
 } from "../../serializers/payroll.serializer";
 import { countWeekdays, toNumber } from "../../serializers/helpers";
-import { generatePayslipPdf } from "./payslip.pdf";
+import { generatePayslipPdf, resolveComponentValues } from "../payslip/lib/payslip.pdf";
+import { computePayroll } from "../payslip/payslip.service";
+import type { Blueprint } from "../payslip/lib/types";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
@@ -92,25 +94,170 @@ export async function getPayslipPdf(id: string) {
 
   const earnings = slip.earnings as Record<string, number>;
   const deductions = slip.deductions as Record<string, number>;
-  const gross = Number(earnings?.total ?? 0);
   const netPay = Number(slip.netPay ?? 0);
 
-  const buffer = await generatePayslipPdf({
-    companyName: "Proteccio HRMS",
-    employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
-    employeeId: employee.employeeCode,
-    department: employee.department?.name,
-    designation: employee.designation?.title,
-    period: `${periodLabel({ month, year })}`,
-    paidOn: slip.paidOn ? slip.paidOn.toISOString().slice(0, 10) : null,
-    paymentMode: slip.paymentMode,
-    earnings,
-    deductions,
-    netPay,
-    gross,
+  // Use the active Smart Payslip Designer template so the PDF layout, theme,
+  // labels and logo always match what the admin configured. Fall back to a
+  // minimal built-in blueprint if no template is published yet.
+  let template = await prisma.payslipTemplate.findFirst({
+    where: { isActive: true, status: "Published" },
+    orderBy: { updatedAt: "desc" },
+    include: { versions: { where: { isActive: true }, orderBy: { version: "desc" }, take: 1 } },
+  });
+  let blueprint: Blueprint;
+  if (template) {
+    blueprint = template.versions[0]?.blueprint as unknown as Blueprint;
+  } else {
+    blueprint = {
+      name: "Default",
+      country: "India",
+      state: null,
+      financialYear: year,
+      theme: {
+        primaryColor: "#0f766e",
+        secondaryColor: "#0d1b2a",
+        accentColor: "#0891b2",
+        font: "Helvetica",
+        pageSize: "A4",
+        orientation: "portrait",
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+      },
+      nests: [],
+      components: fallbackComponents(),
+      taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+      settings: { companyName: "Proteccio HRMS" },
+    };
+  }
+
+  // Build a base context from the employee's active salary structure so the
+  // blueprint's components (fixed-from-base, percentage, formula) compute
+  // dynamically — exactly like the designer. Stored payslip amounts act as an
+  // authoritative override for any component pre-dating the template.
+  const structure = await prisma.salaryStructure.findFirst({
+    where: { employeeId: employee.id, isActive: true },
+    orderBy: { effectiveFrom: "desc" },
+  });
+
+  const base: Record<string, number> = {};
+  if (structure) {
+    base.basic = toNumber(structure.basicSalary);
+    base.hra = toNumber(structure.hra);
+    base.conveyance = toNumber(structure.conveyanceAllowance);
+    base.medical = toNumber(structure.medicalAllowance);
+    base.performance_bonus = toNumber(structure.performanceBonus);
+    base.other = toNumber(structure.otherAllowances);
+    base.provident_fund = toNumber(structure.providentFund);
+    base.professional_tax = toNumber(structure.professionalTax);
+    base.income_tax = toNumber(structure.incomeTax);
+    base.health_insurance = toNumber(structure.healthInsurance);
+  }
+
+  // Overlay the actually-paid amounts so the PDF always reflects the approved
+  // payslip, even if the salary structure changed since processing. Map each
+  // stored key onto the blueprint component ids it corresponds to, so no
+  // component (e.g. `tds` for income tax, `epf_employee` for provident fund)
+  // is left out.
+  const synonyms: Record<string, string[]> = {
+    basicSalary: ["basic", "basic_salary"],
+    hra: ["hra"],
+    conveyanceAllowance: ["conveyance", "conveyance_allowance"],
+    medicalAllowance: ["medical", "medical_allowance", "medical_allowances"],
+    performanceBonus: ["performance_bonus"],
+    otherAllowances: ["other", "other_allowances", "special_allowance"],
+    providentFund: ["provident_fund", "epf_employee", "pf"],
+    professionalTax: ["professional_tax", "pt"],
+    incomeTax: ["income_tax", "tds"],
+    healthInsurance: ["health_insurance", "esi_employee"],
+  };
+  // stored key -> normalized base key (used when no blueprint component matches)
+  const baseKey: Record<string, string> = {
+    basicSalary: "basic",
+    hra: "hra",
+    conveyanceAllowance: "conveyance",
+    medicalAllowance: "medical",
+    performanceBonus: "performance_bonus",
+    otherAllowances: "other",
+    providentFund: "provident_fund",
+    professionalTax: "professional_tax",
+    incomeTax: "income_tax",
+    healthInsurance: "health_insurance",
+  };
+  const overlay = (rec: Record<string, number>) => {
+    for (const [k, v] of Object.entries(rec)) {
+      if (k === "total") continue;
+      const value = Number(v);
+      // Seed any blueprint component whose id matches a synonym for this key.
+      const ids = synonyms[k];
+      if (ids) {
+        for (const c of blueprint.components) {
+          if (ids.includes(c.id.toLowerCase())) base[c.id.toLowerCase()] = value;
+        }
+      }
+      // Also keep the normalized base key for formulas/percentages referencing it.
+      base[baseKey[k] ?? k] = value;
+      base[k] = value;
+    }
+  };
+  overlay(earnings);
+  overlay(deductions);
+
+  // Compute through the engine so blueprint components (with business logic,
+  // thresholds, balancing) resolve dynamically from the base above.
+  const computed = blueprint.components.length ? computePayroll(blueprint, base, {}) : null;
+  const rows = resolveComponentValues(blueprint as Blueprint, (computed?.results ?? {}) as Record<string, { final: number }>);
+
+  const earningsRows = [...rows.earnings];
+  const deductionsRows = [...rows.deductions];
+  const employerRows = [...rows.employer];
+
+  const grossTotal = computed
+    ? Math.round(computed.earningsTotal)
+    : Math.round(earningsRows.reduce((s, e) => s + e.amount, 0));
+  const deductionsTotal = computed
+    ? Math.round(computed.deductionsTotal)
+    : Math.round(deductionsRows.reduce((s, d) => s + d.amount, 0));
+  const net = computed ? Math.round(computed.net) : Math.round(netPay);
+
+  const buffer = await generatePayslipPdf(blueprint, {
+    employee: {
+      name: `${employee.firstName} ${employee.lastName}`.trim(),
+      employeeId: employee.employeeCode,
+      department: employee.department?.name ?? "—",
+      designation: employee.designation?.title ?? "—",
+      period: periodLabel({ month, year }),
+      companyName: blueprint.settings?.companyName ?? "Proteccio HRMS",
+    },
+    payroll: { gross: grossTotal, net },
+    earnings: earningsRows,
+    deductions: deductionsRows,
+    employer: employerRows,
   });
 
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
+}
+
+const FALLBACK_UI = { x: 0, y: 0, w: 60, h: 24 };
+
+function fallbackComponents() {
+  const defs: [string, string, "earning" | "deduction", number][] = [
+    ["basic", "Basic Salary", "earning", 1],
+    ["hra", "HRA", "earning", 2],
+    ["conveyance", "Conveyance", "earning", 3],
+    ["medical", "Medical Allowance", "earning", 4],
+    ["performance_bonus", "Performance Bonus", "earning", 5],
+    ["other_allowances", "Other Allowances", "earning", 6],
+    ["provident_fund", "Provident Fund", "deduction", 40],
+    ["professional_tax", "Professional Tax", "deduction", 41],
+    ["income_tax", "Income Tax", "deduction", 42],
+    ["health_insurance", "Health Insurance", "deduction", 43],
+  ];
+  return defs.map(([id, label, kind, calculationPriority]) => ({
+    id,
+    label,
+    kind,
+    logic: { type: "fixed" as const, value: 0, calculationPriority },
+    ui: { ...FALLBACK_UI },
+  }));
 }
 
 /**

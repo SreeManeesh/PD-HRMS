@@ -223,7 +223,12 @@ export function calculatePayroll(input: CalcInput): CalcResult {
     const logic = comp.logic;
 
     let computed = 0;
-    if (logic.type === "fixed") computed = logic.value ?? 0;
+    if (logic.type === "fixed") {
+      // Explicit value wins; otherwise pull from the base/context by id so
+      // components like "basic" (auto-configured as fixed with no literal)
+      // pick up the employee's actual salary from the base context.
+      computed = logic.value !== undefined ? logic.value : (ctx()[id] ?? 0);
+    }
     else if (logic.type === "percentage") {
       const b = logic.sourceField ? ctx()[logic.sourceField.toLowerCase()] ?? 0 : 0;
       computed = b * ((logic.pct ?? 0) / 100);

@@ -14,7 +14,7 @@ import { buildAutoComponents } from "./lib/countryState";
 import { DEFAULT_NESTS } from "./lib/nesting";
 import { validateBlueprint, type ValidationReport } from "./lib/validator";
 import { calculateTax, compareRegimes, INDIA_TAX_URL_BASELINE, type TaxInput } from "./lib/tax";
-import { generatePayslipPdf } from "./lib/payslip.pdf";
+import { generatePayslipPdf, resolveComponentValues } from "./lib/payslip.pdf";
 import { evaluateFormula } from "./lib/expression";
 import { COMPONENT_CATALOG } from "./lib/countryState";
 
@@ -410,11 +410,15 @@ export async function previewPayslip(templateId: string, input: PreviewInput) {
 export async function generatePdf(templateId: string, input: PreviewInput) {
   const preview = await previewPayslip(templateId, input);
   const { blueprint, results, earningsTotal, net, tax, employee } = preview.data;
+
+  const rows = resolveComponentValues(blueprint as Blueprint, results as unknown as Record<string, { final: number }>);
   const pdf = await generatePayslipPdf(blueprint as Blueprint, {
     employee,
-    payroll: { earnings: {}, deductions: {}, employer: {}, gross: earningsTotal, net },
+    payroll: { gross: Math.round(earningsTotal), net: Math.round(net) },
+    earnings: rows.earnings,
+    deductions: rows.deductions,
+    employer: rows.employer,
     tax: { regime: tax.regime, annualTax: Math.round(tax.annualTax), monthlyTax: Math.round(tax.monthlyTax) },
-    results,
   });
   return { buffer: pdf, filename: `payslip_${String(employee.employeeId).toLowerCase()}_${input.year}-${String(input.month).padStart(2, "0")}.pdf` };
 }
