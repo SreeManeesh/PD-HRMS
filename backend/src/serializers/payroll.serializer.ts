@@ -71,6 +71,8 @@ export function serializePayslip(slip: SlipWithRelations) {
       healthInsurance: toNumber(deductions.healthInsurance),
       total: toNumber(deductions.total),
     },
+    attendance: (slip.attendanceSummary ?? {}) as Record<string, unknown>,
+    employerContributions: (slip.employerContributions ?? {}) as Record<string, number>,
     netPay: toNumber(slip.netPay),
     status: slip.status,
     paidOn: formatDate(slip.paidOn),

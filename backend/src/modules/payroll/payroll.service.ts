@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import { Prisma } from "@prisma/client";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import {
@@ -8,10 +9,11 @@ import {
   buildPayslipAmounts,
   periodLabel,
 } from "../../serializers/payroll.serializer";
-import { countWeekdays, toNumber } from "../../serializers/helpers";
+import { countWeekdays, round2, toNumber } from "../../serializers/helpers";
 import { generatePayslipPdf, resolveComponentValues } from "../payslip/lib/payslip.pdf";
 import { computePayroll } from "../payslip/payslip.service";
 import type { Blueprint } from "../payslip/lib/types";
+import { reconcileEmployee } from "./reconciliation.service";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
 const SLIP_INCLUDE = {
@@ -293,23 +295,69 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
   let deductions = 0;
   let net = 0;
 
-  const slipData = employees.map((emp) => {
+  const slipData: Array<{
+    employeeId: string;
+    salaryStructureId: string;
+    earnings: Record<string, number>;
+    deductions: Record<string, number>;
+    employerContributions: Record<string, number>;
+    netPay: number;
+    attendanceSummary: Record<string, unknown>;
+  }> = [];
+  for (const emp of employees) {
     const structure = structureByEmployee.get(emp.id);
-    if (!structure) return null;
+    if (!structure) continue;
     const amounts = buildPayslipAmounts(structure);
-    gross += amounts.earnings.total;
-    deductions += amounts.deductions.total;
-    net += amounts.netPay;
-    return {
+    const { summary } = await reconcileEmployee(emp.id, parsed.year, parsed.month);
+
+    // Prorate against calendar working days: LOP / unpaid days reduce pay.
+    const workingDays = Math.max(summary.workingDays, 1);
+    const payableDays = Math.max(workingDays - summary.unpaidLeaveDays, 0);
+    const ratio = payableDays / workingDays;
+
+    const earnings: Record<string, number> = {
+      basicSalary: round2(amounts.earnings.basicSalary * ratio),
+      hra: round2(amounts.earnings.hra * ratio),
+      conveyanceAllowance: round2(amounts.earnings.conveyanceAllowance * ratio),
+      medicalAllowance: round2(amounts.earnings.medicalAllowance * ratio),
+      performanceBonus: round2(amounts.earnings.performanceBonus * ratio),
+      otherAllowances: round2(amounts.earnings.otherAllowances * ratio),
+      total: 0,
+    };
+    earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
+
+    // PF scales with prorated earnings; statutory flat items stay monthly-fixed.
+    const withholding: Record<string, number> = {
+      providentFund: round2(amounts.deductions.providentFund * ratio),
+      professionalTax: amounts.deductions.professionalTax,
+      incomeTax: amounts.deductions.incomeTax,
+      healthInsurance: amounts.deductions.healthInsurance,
+      total: 0,
+    };
+    withholding.total = Math.round(
+      withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance
+    );
+    // Never deduct more than the earnings actually earned (net stays >= 0),
+    // e.g. full-month absence yields gross 0 -> take-home 0.
+    withholding.total = Math.min(withholding.total, Math.max(earnings.total, 0));
+
+    const slipNet = earnings.total - withholding.total;
+    gross += earnings.total;
+    deductions += withholding.total;
+    net += slipNet;
+
+    slipData.push({
       employeeId: emp.id,
       salaryStructureId: structure.id,
-      earnings: amounts.earnings,
-      deductions: amounts.deductions,
-      netPay: amounts.netPay,
-    };
-  });
+      earnings,
+      deductions: withholding,
+      employerContributions: {},
+      netPay: slipNet,
+      attendanceSummary: { ...summary, ratio: Math.round(ratio * 100) / 100 },
+    });
+  }
 
-  const valid = slipData.filter((s): s is NonNullable<typeof s> => s !== null);
+  const valid = slipData;
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.payslip.deleteMany({ where: { payrollRunId: run.id } });
@@ -320,8 +368,10 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
           period: `${run.period}`,
           employeeId: slip.employeeId,
           salaryStructureId: slip.salaryStructureId,
-          earnings: slip.earnings,
-          deductions: slip.deductions,
+          earnings: slip.earnings as unknown as Prisma.InputJsonValue,
+          deductions: slip.deductions as unknown as Prisma.InputJsonValue,
+          employerContributions: slip.employerContributions as unknown as Prisma.InputJsonValue,
+          attendanceSummary: slip.attendanceSummary as Prisma.InputJsonValue,
           netPay: slip.netPay,
         },
       });
@@ -339,7 +389,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     });
   });
 
-  writeAuditLog({
+  await writeAuditLog({
     action: "UPDATE",
     entityType: "PayrollRun",
     entityId: run.id,
@@ -357,7 +407,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
  * Approve a processed run (four-eyes / second-person approval). Requires
  * payroll:approve permission — enforced at route level.
  */
-export async function approvePayrollRun(id: string, approverEmployeeId: string) {
+export async function approvePayrollRun(id: string, approverEmployeeId: string, actorUserId?: string) {
   const parsed = parseRunPublicId(id);
   const run = await prisma.payrollRun.findUnique({
     where: { month_year: { month: parsed.month, year: parsed.year } },
@@ -382,11 +432,11 @@ export async function approvePayrollRun(id: string, approverEmployeeId: string) 
     data: { status: "Paid", paidOn: new Date(), paymentMode: "Bank Transfer" },
   });
 
-  writeAuditLog({
+  await writeAuditLog({
     action: "APPROVE",
     entityType: "PayrollRun",
     entityId: run.id,
-    actorUserId: approverEmployeeId ?? undefined,
+    actorUserId: actorUserId ?? approverEmployeeId ?? undefined,
     oldValue: { status: "Processing" },
     newValue: { status: "Paid" },
   });

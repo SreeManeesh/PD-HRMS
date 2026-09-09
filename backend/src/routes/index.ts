@@ -22,6 +22,7 @@ import complianceRoutes from "../modules/compliance/compliance.routes";
 import reportsRoutes from "../modules/reports/reports.routes";
 import dashboardRoutes from "../modules/dashboard/dashboard.routes";
 import notificationRoutes from "../modules/notifications/notifications.routes";
+import calendarRoutes from "../modules/calendar/calendar.routes";
 
 
 const router = Router();
@@ -57,5 +58,6 @@ if (!serviceName || serviceName === "compliance") router.use("/compliance", comp
 if (!serviceName || serviceName === "reports") router.use("/reports", reportsRoutes);
 if (!serviceName || serviceName === "dashboard") router.use("/dashboard", dashboardRoutes);
 if (!serviceName || serviceName === "notifications") router.use("/notifications", notificationRoutes);
+if (!serviceName || serviceName === "attendance") router.use("/calendar", calendarRoutes);
 
 export default router;

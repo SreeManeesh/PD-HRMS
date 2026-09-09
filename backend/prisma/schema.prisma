@@ -21,6 +21,9 @@ model Company {
   registrationNumber String?  @map("registration_number") @db.VarChar(50)
   country            String   @default("India") @db.VarChar(50)
   currency           String   @default("INR") @db.VarChar(10)
+  // Weekly off days = array of weekday numbers (0 = Sunday .. 6 = Saturday),
+  // e.g. [0] for a single-Sunday company, [0,6] for a 5-day week.
+  weeklyOffDays      Json     @default("[]") @map("weekly_off_days")
   isActive           Boolean  @default(true) @map("is_active")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(6)
 
@@ -484,6 +487,23 @@ model LeaveRequest {
 
 // ── Attendance Tracking ────────────────────────────────────────────────────
 
+// Holiday calendar used by the reconciliation engine: named public/company
+// holidays per country/state. Weekly offs live on Company.weeklyOffDays.
+model Holiday {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @db.VarChar(120)
+  date      DateTime @db.Date
+  country   String   @default("India") @db.VarChar(60)
+  state     String?  @db.VarChar(60)
+  type      String   @default("Public") @db.VarChar(30)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@unique([country, state, date])
+  @@index([date])
+  @@map("holidays")
+}
+
 model AttendanceShift {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String   @db.VarChar(50)
@@ -568,6 +588,11 @@ model Payslip {
   period            String    @db.VarChar(20)
   earnings          Json      @db.JsonB
   deductions        Json      @db.JsonB
+  // Attendance + leave reconciliation for the period (working/present/paid
+  // leave/LOP/OT days). Used by the payslip PDF and payroll reports.
+  attendanceSummary  Json    @default("{}") @map("attendance_summary") @db.JsonB
+  // Employer-side contributions (EPF employer, ESI employer, EDLI, gratuity).
+  employerContributions Json @default("{}") @map("employer_contributions") @db.JsonB
   netPay            Decimal   @map("net_pay") @db.Decimal(12, 2)
   status            String    @default("Paid") @db.VarChar(20)
   paidOn            DateTime? @map("paid_on") @db.Date

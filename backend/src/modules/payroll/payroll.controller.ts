@@ -48,12 +48,12 @@ export const payslipPdf = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const process = asyncHandler(async (req: Request, res: Response) => {
-  const result = await payrollService.processPayrollRun(req.params.id, req.auth?.employeeId);
+  const result = await payrollService.processPayrollRun(req.params.id, req.auth?.sub);
   sendSuccess(res, result.data);
 });
 
 export const approve = asyncHandler(async (req: Request, res: Response) => {
   if (!req.auth?.employeeId) throw AppError.forbidden("Approver must be linked to an employee record");
-  const result = await payrollService.approvePayrollRun(req.params.id, req.auth.employeeId);
+  const result = await payrollService.approvePayrollRun(req.params.id, req.auth.employeeId, req.auth.sub);
   sendSuccess(res, result.data);
 });

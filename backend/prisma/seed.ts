@@ -291,6 +291,7 @@ async function main() {
   await prisma.leaveRequest.deleteMany();
   await prisma.leaveBalance.deleteMany();
   await prisma.leaveType.deleteMany();
+  await prisma.holiday.deleteMany();
   await prisma.employee.deleteMany();
   await prisma.user.deleteMany();
   await prisma.rolePermission.deleteMany();
@@ -305,7 +306,13 @@ async function main() {
 
   // Company
   const company = await prisma.company.create({
-    data: { name: "Proteccio Technologies Pvt. Ltd.", registrationNumber: "U72900TG2023PTC123456", country: "India", currency: "INR" },
+    data: {
+      name: "Proteccio Technologies Pvt. Ltd.",
+      registrationNumber: "U72900TG2023PTC123456",
+      country: "India",
+      currency: "INR",
+      weeklyOffDays: [0, 6], // Sunday + Saturday -> Mon-Fri working week
+    },
   });
 
   // Business Unit
@@ -361,6 +368,35 @@ async function main() {
       data: { name: lt.name, code: lt.code, defaultAnnualDays: lt.maxDays, carryForward: lt.carryForward },
     });
     leaveTypeByCode.set(lt.code, t.id);
+  }
+
+  // Holiday calendar (public + company holidays for FY 2026)
+  const HOLIDAYS_2026: Array<{ name: string; date: string; country?: string; state?: string; type?: string }> = [
+    { name: "Makar Sankranti", date: "2026-01-14", country: "India", type: "National" },
+    { name: "Republic Day", date: "2026-01-26", country: "India", type: "National" },
+    { name: "Holi", date: "2026-03-04", country: "India", type: "National" },
+    { name: "Good Friday", date: "2026-04-03", country: "India", type: "Public" },
+    { name: "Eid al-Fitr", date: "2026-03-21", country: "India", type: "Public" },
+    { name: "Dr. Ambedkar Jayanti", date: "2026-04-14", country: "India", type: "National" },
+    { name: "May Day", date: "2026-05-01", country: "India", type: "National" },
+    { name: "Independence Day", date: "2026-08-15", country: "India", type: "National" },
+    { name: "Gandhi Jayanti", date: "2026-10-02", country: "India", type: "National" },
+    { name: "Dussehra", date: "2026-10-20", country: "India", type: "National" },
+    { name: "Diwali", date: "2026-11-08", country: "India", type: "National" },
+    { name: "Christmas", date: "2026-12-25", country: "India", type: "National" },
+    { name: "Karaga Jayanthi", date: "2026-04-26", country: "India", state: "Karnataka", type: "State" },
+  ];
+  for (const h of HOLIDAYS_2026) {
+    await prisma.holiday.create({
+      data: {
+        name: h.name,
+        date: new Date(`${h.date}T00:00:00.000Z`),
+        country: h.country ?? "India",
+        state: h.state ?? null,
+        type: h.type ?? "Public",
+        isActive: true,
+      },
+    });
   }
 
   // Attendance shift
