@@ -3,9 +3,50 @@
  * Returns actionable error strings grouped by area.
  */
 
-import type { Blueprint } from "./types";
+import type { Blueprint, BlueprintComponent } from "./types";
 import { findCircularDependency, fullDeps, calculationOrder } from "./calc";
 import { findNestingCycle } from "./nesting";
+
+/** True if any two component bounding boxes collide on the canvas. */
+export function hasLayoutOverlap(components: BlueprintComponent[]): boolean {
+  for (let i = 0; i < components.length; i++) {
+    const a = components[i].ui;
+    if (!a) continue;
+    for (let j = i + 1; j < components.length; j++) {
+      const b = components[j].ui;
+      if (!b) continue;
+      if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Re-space all components into a clean, non-overlapping grid (order preserved
+ * by calculation priority). The canvas does not drive the PDF output (the
+ * renderer is flow-based), so auto-arranging keeps the diagram readable while
+ * never blocking publish.
+ */
+export function autoArrangeLayout(components: BlueprintComponent[]): BlueprintComponent[] {
+  const W = 60;
+  const H = 24;
+  const STEP_X = 72;
+  const STEP_Y = 30;
+  const ROWS_PER_COL = 10;
+  const X0 = 20;
+  const Y0 = 10;
+  const ordered = [...components].sort((a, b) =>
+    (a.logic.calculationPriority ?? 999) - (b.logic.calculationPriority ?? 999)
+  );
+  const idx = new Map(ordered.map((c, i) => [c.id.toLowerCase(), i]));
+  return components.map((c) => {
+    const i = idx.get(c.id.toLowerCase());
+    if (i === undefined) return c;
+    const col = Math.floor(i / ROWS_PER_COL);
+    const row = i % ROWS_PER_COL;
+    return { ...c, ui: { x: X0 + col * STEP_X, y: Y0 + row * STEP_Y, w: W, h: H } };
+  });
+}
 
 export interface ValidationReport {
   ok: boolean;

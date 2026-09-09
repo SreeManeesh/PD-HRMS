@@ -12,9 +12,9 @@ import type { Blueprint } from "./lib/types";
 import { calculatePayroll, type CalcResult, type ComponentResults } from "./lib/calc";
 import { buildAutoComponents } from "./lib/countryState";
 import { DEFAULT_NESTS } from "./lib/nesting";
-import { validateBlueprint, type ValidationReport } from "./lib/validator";
+import { validateBlueprint, autoArrangeLayout, type ValidationReport } from "./lib/validator";
 import { calculateTax, compareRegimes, INDIA_TAX_URL_BASELINE, type TaxInput } from "./lib/tax";
-import { generatePayslipPdf, resolveComponentValues } from "./lib/payslip.pdf";
+import { generatePayslipPdf, resolveComponentValues, buildSections, type ComponentRow } from "./lib/payslip.pdf";
 import { evaluateFormula } from "./lib/expression";
 import { COMPONENT_CATALOG } from "./lib/countryState";
 
@@ -252,7 +252,20 @@ export async function publishVersion(templateId: string, versionNo?: number) {
   });
   if (!version) throw AppError.notFound("Template version not found");
 
-  const report = validateBlueprint(version.blueprint as unknown as Blueprint);
+  const report0 = validateBlueprint(version.blueprint as unknown as Blueprint);
+  let blueprintOut = version.blueprint as unknown as Blueprint;
+  // Overlapping canvas boxes don't affect the flow-based PDF output, so
+  // auto-arrange the layout before publishing instead of hard-blocking the
+  // user (auto-configured components used to stack at overlapping offsets).
+  if (report0.layout.length > 0) {
+    blueprintOut = { ...blueprintOut, components: autoArrangeLayout(blueprintOut.components) };
+    await prisma.payslipTemplateVersion.update({
+      where: { id: version.id },
+      data: { blueprint: asJson(blueprintOut) },
+    });
+  }
+
+  const report = validateBlueprint(blueprintOut);
   if (!report.ok) {
     throw AppError.conflict(
       `Cannot publish: ${[...report.layout, ...report.calculation, ...report.tax, ...report.countryState, ...report.nesting].join(" ")}`
@@ -412,12 +425,25 @@ export async function generatePdf(templateId: string, input: PreviewInput) {
   const { blueprint, results, earningsTotal, net, tax, employee } = preview.data;
 
   const rows = resolveComponentValues(blueprint as Blueprint, results as unknown as Record<string, { final: number }>);
+  // Blueprint-driven sections so the export reflects the Nesting manager and
+  // any component added on the designer canvas.
+  const compRows: ComponentRow[] = (blueprint as Blueprint).components
+    .filter((c) => c.visible !== false)
+    .map((c) => ({
+      label: c.label,
+      amount: (results as Record<string, { final: number }>)[c.id.toLowerCase()]?.final ?? 0,
+      kind: c.kind,
+      nestId: c.nestId ?? null,
+      priority: c.logic.calculationPriority ?? 999,
+    }));
+  const sections = buildSections(blueprint as Blueprint, compRows);
   const pdf = await generatePayslipPdf(blueprint as Blueprint, {
     employee,
     payroll: { gross: Math.round(earningsTotal), net: Math.round(net) },
     earnings: rows.earnings,
     deductions: rows.deductions,
     employer: rows.employer,
+    sections,
     tax: { regime: tax.regime, annualTax: Math.round(tax.annualTax), monthlyTax: Math.round(tax.monthlyTax) },
   });
   return { buffer: pdf, filename: `payslip_${String(employee.employeeId).toLowerCase()}_${input.year}-${String(input.month).padStart(2, "0")}.pdf` };

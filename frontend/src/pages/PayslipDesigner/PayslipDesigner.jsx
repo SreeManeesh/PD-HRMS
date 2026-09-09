@@ -13,7 +13,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus, Trash2, Copy, MousePointer2, Save, Rocket, Download, Undo2, Layers,
   SlidersHorizontal, Palette, Calculator, FileText, FolderTree, CheckCircle2,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, LayoutGrid,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -235,7 +235,7 @@ export default function PayslipDesigner() {
       if (!src) return;
       const copy = JSON.parse(JSON.stringify(src));
       copy.id = uid();
-      copy.ui.y += 8;
+      copy.ui.y += 30;
       next.components = [...next.components, copy];
     });
   };
@@ -426,7 +426,7 @@ export default function PayslipDesigner() {
           next.components = [...next.components, {
             ...a,
             id: a.id,
-            ui: { x: 20, y: 10 + order * 12, w: 60, h: 24 },
+            ui: { x: 20, y: 10 + order * 30, w: 60, h: 24 },
             nestId: a.nestId || null,
             autoAssigned: true,
             autoReason: a.autoReason || "Auto",
@@ -441,6 +441,25 @@ export default function PayslipDesigner() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const autoArrange = () => {
+    if (!blueprint) return;
+    mutateBlueprint((next) => {
+      const W = 60, H = 24, STEP_X = 72, STEP_Y = 30, ROWS_PER_COL = 10, X0 = 20, Y0 = 10;
+      const ordered = [...next.components].sort((a, b) =>
+        (a.logic.calculationPriority ?? 999) - (b.logic.calculationPriority ?? 999)
+      );
+      const idx = new Map(ordered.map((c, i) => [c.id.toLowerCase(), i]));
+      next.components = next.components.map((c) => {
+        const i = idx.get(c.id.toLowerCase());
+        if (i === undefined) return c;
+        const col = Math.floor(i / ROWS_PER_COL);
+        const row = i % ROWS_PER_COL;
+        return { ...c, ui: { ...c.ui, x: X0 + col * STEP_X, y: Y0 + row * STEP_Y, w: W, h: H } };
+      });
+    });
+    setNotice("Layout auto-arranged into a clean, non-overlapping grid");
   };
 
   const liveHtml = useMemo(() => {
@@ -526,6 +545,7 @@ export default function PayslipDesigner() {
           <button className="pd-btn" onClick={undo} disabled={redoCursor === 0}><Undo2 size={15} /> Undo</button>
           <button className="pd-btn" onClick={redo} disabled={redoCursor >= history.length - 1}>Redo</button>
           <button className="pd-btn" onClick={handleAutoConfig} disabled={busy}><Layers size={15} /> Auto-Configure</button>
+          <button className="pd-btn" onClick={autoArrange} disabled={busy}><LayoutGrid size={15} /> Auto-arrange</button>
           <button className="pd-btn" onClick={runValidation}><CheckCircle2 size={15} /> Validate</button>
           <button className="pd-btn" onClick={handleSave} disabled={saving || !canWrite}>{saving ? "Saving…" : (<><Save size={15} /> Save Draft</>)}</button>
           <button className="pd-btn primary" onClick={() => setShowConfirmPublish(true)} disabled={!canWrite || busy}><Rocket size={15} /> Publish</button>
@@ -729,7 +749,7 @@ export default function PayslipDesigner() {
                     label: cat.label,
                     kind: cat.kind,
                     logic: JSON.parse(JSON.stringify(cat.logic)),
-                    ui: { x: 20, y: 10 + order * 12, w: 60, h: 24 },
+                    ui: { x: 20, y: 10 + order * 30, w: 60, h: 24 },
                     nestId: nid,
                     displayOrder: order,
                     visible: true,

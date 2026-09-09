@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
 
 import type { Blueprint, BlueprintComponent } from "./types";
+import { buildNestTree, type NestTree } from "./nesting";
 
 export interface RenderData {
   employee: Record<string, string | number>;
@@ -13,6 +14,65 @@ export interface RenderData {
   employer?: { label: string; amount: number }[];
   attendance?: { label: string; value: string }[];
   tax?: Record<string, string | number>;
+  /** Optional nesting/blueprint-driven layout. When present the renderer draws
+   *  these sections (in order) instead of the flat earnings/deductions blocks —
+   *  making the export reflect the Nesting manager and designer additions. */
+  sections?: RenderSection[];
+}
+
+export interface ComponentRow {
+  label: string;
+  amount: number;
+  kind: string;
+  nestId?: string | null;
+  priority: number;
+}
+
+export interface RenderSection {
+  title: string;
+  kind: "earning" | "deduction" | "employer" | "mixed";
+  rows: { label: string; amount: number }[];
+}
+
+/** Group blueprint component rows into printable sections following the
+ *  nesting tree (depth-first), falling back to kind-based sections for
+ *  components without a nest. */
+export function buildSections(blueprint: Blueprint, rows: ComponentRow[]): RenderSection[] {
+  const nests = blueprint.nests || [];
+  const nestById = new Map(nests.map((n) => [n.id, n]));
+  const tree = buildNestTree(nests);
+  const sections: RenderSection[] = [];
+  const emit = (title: string, comps: ComponentRow[]) => {
+    if (!comps.length) return;
+    const kinds = new Set(comps.map((c) => (c.kind === "reimbursement" ? "earning" : c.kind)));
+    const kind = kinds.size > 1
+      ? "mixed"
+      : kinds.has("deduction") ? "deduction"
+      : kinds.has("employer") ? "employer"
+      : "earning";
+    const sorted = [...comps].sort((a, b) => a.priority - b.priority);
+    sections.push({ title, kind, rows: sorted.map(({ label, amount }) => ({ label, amount })) });
+  };
+  const walk = (n: NestTree) => {
+    emit(n.name, rows.filter((r) => r.nestId === n.id));
+    (n.children || []).forEach(walk);
+  };
+  tree.forEach(walk);
+  const orphan = rows.filter((r) => !r.nestId || !nestById.has(r.nestId));
+  if (orphan.length) {
+    const byKind: [string, string][] = [
+      ["earning", "Earnings"],
+      ["deduction", "Deductions"],
+      ["employer", "Employer Contributions"],
+    ];
+    for (const [kind, title] of byKind) {
+      const comps = orphan.filter((r) =>
+        kind === "earning" ? r.kind === "earning" || r.kind === "reimbursement" : r.kind === kind
+      );
+      emit(title, comps);
+    }
+  }
+  return sections;
 }
 
 const inr = (n: number) =>
@@ -108,49 +168,76 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
     doc.text(empLines.join("\n"), m.left, y + 14, { width: width - m.left - m.right, lineGap: 4 });
     y += 14 + empLines.length * 13 + 10;
 
-    // ── Earnings section ──
-    if (data.earnings.length) {
-      doc.fontSize(11).fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
-        .text("Earnings", m.left, y);
-      y += 16;
-      doc.font("Helvetica").fontSize(9.5);
-      for (const e of data.earnings) {
-        doc.fillColor("#0e1e2c").text(e.label, m.left + 8, y, { continued: true });
-        doc.fillColor("#0e1e2c").text(inr(e.amount), { align: "right", width: width - m.left - m.right + 8 });
-        y += 14;
+    const ensureSpace = (h: number) => {
+      if (y + h > doc.page.height - 60) {
+        doc.addPage();
+        y = m.top || 40;
       }
-      doc.fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
-        .text(`Total Earnings    ${inr(data.payroll.gross)}`, m.left + 8, y);
-      y += 20;
-    }
+    };
 
-    // ── Deductions section ──
-    if (data.deductions.length) {
-      doc.fillColor("#dc2626").fontSize(11).font("Helvetica-Bold")
-        .text("Deductions", m.left, y);
-      y += 16;
-      doc.font("Helvetica").fontSize(9.5);
-      for (const d of data.deductions) {
-        doc.fillColor("#0e1e2c").text(d.label, m.left + 8, y, { continued: true });
-        doc.fillColor("#0e1e2c").text(inr(d.amount), { align: "right", width: width - m.left - m.right + 8 });
-        y += 14;
+    // ── Blueprint/nesting-driven sections (dynamic) ──
+    if (data.sections?.length) {
+      for (const sec of data.sections) {
+        ensureSpace(34);
+        const color = sec.kind === "deduction" ? "#dc2626" : sec.kind === "employer" ? "#64748b" : (theme.primaryColor || "#16a34a");
+        doc.fontSize(11).fillColor(color).font("Helvetica-Bold").text(sec.title, m.left, y);
+        y += 16;
+        doc.font("Helvetica").fontSize(9.5);
+        for (const rw of sec.rows) {
+          ensureSpace(14);
+          doc.fillColor("#0e1e2c").text(rw.label, m.left + 8, y, { continued: true });
+          doc.fillColor("#0e1e2c").text(inr(rw.amount), { align: "right", width: width - m.left - m.right + 8 });
+          y += 14;
+        }
+        y += 8;
       }
-      doc.fillColor("#dc2626").font("Helvetica-Bold")
-        .text(`Total Deductions    ${inr(data.deductions.reduce((s, d) => s + d.amount, 0))}`, m.left + 8, y);
-      y += 20;
-    }
+    } else {
+      // ── Earnings section (fallback when no sections provided) ──
+      if (data.earnings.length) {
+        doc.fontSize(11).fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
+          .text("Earnings", m.left, y);
+        y += 16;
+        doc.font("Helvetica").fontSize(9.5);
+        for (const e of data.earnings) {
+          ensureSpace(14);
+          doc.fillColor("#0e1e2c").text(e.label, m.left + 8, y, { continued: true });
+          doc.fillColor("#0e1e2c").text(inr(e.amount), { align: "right", width: width - m.left - m.right + 8 });
+          y += 14;
+        }
+        doc.fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
+          .text(`Total Earnings    ${inr(data.payroll.gross)}`, m.left + 8, y);
+        y += 20;
+      }
 
-    // ── Employer contributions (smaller, informational) ──
-    if (data.employer?.length) {
-      doc.fillColor("#64748b").fontSize(10).font("Helvetica-Bold")
-        .text("Employer Contributions", m.left, y);
-      y += 14;
-      doc.font("Helvetica").fontSize(9);
-      for (const ec of data.employer) {
-        doc.fillColor("#64748b").text(`${ec.label}: ${inr(ec.amount)}`, m.left + 8, y);
-        y += 12;
+      // ── Deductions section ──
+      if (data.deductions.length) {
+        doc.fillColor("#dc2626").fontSize(11).font("Helvetica-Bold")
+          .text("Deductions", m.left, y);
+        y += 16;
+        doc.font("Helvetica").fontSize(9.5);
+        for (const d of data.deductions) {
+          ensureSpace(14);
+          doc.fillColor("#0e1e2c").text(d.label, m.left + 8, y, { continued: true });
+          doc.fillColor("#0e1e2c").text(inr(d.amount), { align: "right", width: width - m.left - m.right + 8 });
+          y += 14;
+        }
+        doc.fillColor("#dc2626").font("Helvetica-Bold")
+          .text(`Total Deductions    ${inr(data.deductions.reduce((s, d) => s + d.amount, 0))}`, m.left + 8, y);
+        y += 20;
       }
-      y += 6;
+
+      // ── Employer contributions (smaller, informational) ──
+      if (data.employer?.length) {
+        doc.fillColor("#64748b").fontSize(10).font("Helvetica-Bold")
+          .text("Employer Contributions", m.left, y);
+        y += 14;
+        doc.font("Helvetica").fontSize(9);
+        for (const ec of data.employer) {
+          doc.fillColor("#64748b").text(`${ec.label}: ${inr(ec.amount)}`, m.left + 8, y);
+          y += 12;
+        }
+        y += 6;
+      }
     }
 
     // ── Attendance summary (informational) ──

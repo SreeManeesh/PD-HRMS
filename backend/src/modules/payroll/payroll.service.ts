@@ -10,8 +10,9 @@ import {
   periodLabel,
 } from "../../serializers/payroll.serializer";
 import { round2, toNumber } from "../../serializers/helpers";
-import { generatePayslipPdf } from "../payslip/lib/payslip.pdf";
-import type { Blueprint } from "../payslip/lib/types";
+import { generatePayslipPdf, buildSections, type ComponentRow } from "../payslip/lib/payslip.pdf";
+import { computePayroll } from "../payslip/payslip.service";
+import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
 import { reconcileEmployee } from "./reconciliation.service";
 
 const RUN_INCLUDE = { approvedByEmployee: { select: { employeeCode: true } } };
@@ -156,38 +157,76 @@ export async function getPayslipPdf(id: string) {
     incomeTax: ["income_tax", "tds"],
     healthInsurance: ["health_insurance", "esi_employee"],
   };
-  const FALLBACK_LABELS: Record<string, string> = {
-    basicSalary: "Basic Salary",
-    hra: "HRA",
-    conveyanceAllowance: "Conveyance Allowance",
-    medicalAllowance: "Medical Allowance",
-    performanceBonus: "Performance Bonus",
-    otherAllowances: "Other Allowances",
-    overtime: "Overtime",
-    providentFund: "Provident Fund",
-    professionalTax: "Professional Tax",
-    incomeTax: "Income Tax",
-    healthInsurance: "Health Insurance",
-  };
-  const humanize = (key: string) =>
-    key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim();
-  const blueprintCompFor = (key: string) =>
-    blueprint.components.find((c) => {
-      const cid = c.id.toLowerCase();
-      return cid === key.toLowerCase() || (synonyms[key] ?? []).includes(cid);
-    });
-  const componentRows = (rec: Record<string, number>) =>
-    Object.entries(rec)
-      .filter(([k, v]) => k !== "total" && Number(v) > 0)
-      .map(([k, v]) => ({
-        label: blueprintCompFor(k)?.label ?? FALLBACK_LABELS[k] ?? humanize(k),
-        amount: Number(v),
-        priority: blueprintCompFor(k)?.logic.calculationPriority ?? 999,
-      }))
-      .sort((a, b) => a.priority - b.priority)
-      .map(({ label, amount }) => ({ label, amount }));
 
-  const earningsRows = componentRows(earnings);
+  // ── Authoritative amount per blueprint component ──
+  // Stored (approved) slip values win for every component they map to; any
+  // designer-added component not present on the slip resolves through the
+  // calculation engine over the stored base, so the export always reflects
+  // what was actually paid while still showing the designer's full component
+  // set, labels and nesting groups.
+  const mergedStored = { ...(earnings as Record<string, number>), ...(deductions as Record<string, number>) };
+  const valueById: Record<string, number> = {};
+  for (const [storedKey, ids] of Object.entries(synonyms)) {
+    const v = Number(mergedStored[storedKey]);
+    if (!isFinite(v)) continue;
+    for (const id of ids) valueById[id.toLowerCase()] = v;
+  }
+  const employerStore = (slip.employerContributions ?? {}) as Record<string, number>;
+  const employerIds: Record<string, string> = { epf_employer: "providentFund", esi_employer: "esi", gratuity: "gratuity" };
+  for (const [id, key] of Object.entries(employerIds)) {
+    const v = Number(employerStore[key]);
+    if (isFinite(v) && v > 0) valueById[id.toLowerCase()] = v;
+  }
+  for (const c of blueprint.components) {
+    const id = c.id.toLowerCase();
+    if (valueById[id] === undefined) {
+      const direct = Number(mergedStored[id]);
+      if (isFinite(direct)) valueById[id] = direct;
+    }
+  }
+
+  const engineBase: Record<string, number> = {};
+  for (const c of blueprint.components) {
+    const v = valueById[c.id.toLowerCase()];
+    if (v !== undefined) engineBase[c.id.toLowerCase()] = v;
+  }
+  // Strip literals on fixed components that have a stored override so the
+  // stored amount always wins over the blueprint's frozen value.
+  const calcComponents = blueprint.components.map((c) => {
+    if (c.logic?.type === "fixed" && valueById[c.id.toLowerCase()] !== undefined) {
+      return { ...c, logic: { ...c.logic, value: undefined } };
+    }
+    return c;
+  });
+  const computed = calcComponents.length
+    ? computePayroll({ ...blueprint, components: calcComponents }, engineBase, {})
+    : null;
+  const amountFor = (c: BlueprintComponent): number => {
+    const v = valueById[c.id.toLowerCase()];
+    if (v !== undefined) return v;
+    return computed?.results?.[c.id.toLowerCase()]?.final ?? 0;
+  };
+
+  const compRows: ComponentRow[] = blueprint.components
+    .filter((c) => c.visible !== false)
+    .map((c) => ({
+      label: c.label,
+      amount: amountFor(c),
+      kind: c.kind,
+      nestId: c.nestId ?? null,
+      priority: c.logic.calculationPriority ?? 999,
+    }));
+  const sections = buildSections(blueprint, compRows);
+
+  // ── Summary rows (stored-driven so totals match the approved slip) ──
+  const earningsRows = compRows
+    .filter((r) => (r.kind === "earning" || r.kind === "reimbursement") && r.amount > 0)
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ label, amount }) => ({ label, amount }));
+  let deductionsRows = compRows
+    .filter((r) => r.kind === "deduction" && r.amount > 0)
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ label, amount }) => ({ label, amount }));
 
   // Stored totals are authoritative (they embed the net-protection cap: when
   // the computed deductions exceed earnings, the withheld total is floored to
@@ -195,7 +234,6 @@ export async function getPayslipPdf(id: string) {
   // stored total (capped), collapse them to a single total line so the PDF
   // never over-states what was actually withheld.
   const storedDedTotal = Number(deductions.total ?? 0);
-  let deductionsRows = componentRows(deductions);
   const lineSum = deductionsRows.reduce((s, d) => s + d.amount, 0);
   if (storedDedTotal <= 0) {
     // Full net-protection cap — nothing was withheld (e.g. a zero-pay month).
@@ -206,8 +244,7 @@ export async function getPayslipPdf(id: string) {
   }
 
   // Employer-side costs: persisted contribution amounts (authoritative).
-  const storedEmployer = (slip.employerContributions ?? {}) as Record<string, number>;
-  const employerRows = Object.entries(storedEmployer)
+  const employerRows = Object.entries(employerStore)
     .filter(([, v]) => Number(v) > 0)
     .map(([k, v]) => ({ label: employerLabel(blueprint, k), amount: Number(v) }));
 
@@ -244,6 +281,7 @@ export async function getPayslipPdf(id: string) {
     deductions: deductionsRows,
     employer: employerRows,
     attendance: attendanceRows,
+    sections,
   });
 
   return { buffer, filename: `payslip_${employeeCode.toLowerCase()}_${year}-${String(month).padStart(2, "0")}.pdf` };
