@@ -16,6 +16,7 @@ import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
 import { getEmployees, createEmployee, updateEmployee } from "../../services/employeeService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import { useToast } from "../../context/ToastContext.jsx";
 import { departments, statuses } from "../../mock/employees.js";
 
 const EMPLOYEE_STATUS_META = {
@@ -27,6 +28,7 @@ const EMPLOYEE_STATUS_META = {
 
 // ─── Add Employee Form (minimal; expands in a later sprint) ─────────────────
 function AddEmployeeModal({ isOpen, onClose, onCreated }) {
+  const toast = useToast();
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", designation: "", department: "",
     state: "", country: "", annualSalary: "",
@@ -65,8 +67,10 @@ function AddEmployeeModal({ isOpen, onClose, onCreated }) {
       onCreated();
       onClose();
       setForm({ firstName: "", lastName: "", email: "", designation: "", department: "", state: "", country: "", annualSalary: "" });
+      toast("Employee created");
     } catch (err) {
       setError(err.message || "Could not create employee");
+      toast(err.message || "Could not create employee", "error");
     } finally {
       setSaving(false);
     }
@@ -151,6 +155,7 @@ function AddEmployeeModal({ isOpen, onClose, onCreated }) {
 
 // ─── Edit Employee Form ───────────────────────────────────────────────────────
 function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
+  const toast = useToast();
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", designation: "", department: "",
     state: "", country: "", annualSalary: "",
@@ -199,8 +204,10 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
       });
       onUpdated();
       onClose();
+      toast("Employee updated");
     } catch (err) {
       setError(err.message || "Could not update employee");
+      toast(err.message || "Could not update employee", "error");
     } finally {
       setSaving(false);
     }

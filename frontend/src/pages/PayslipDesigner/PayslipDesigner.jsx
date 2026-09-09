@@ -27,6 +27,7 @@ import {
   validateBlueprint, downloadDesignerPayslipPdf,
 } from "../../services/payslipDesignerService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import { useToast } from "../../context/ToastContext.jsx";
 import { FIELD_TREE, inr } from "./format.js";
 import "./PayslipDesigner.css";
 
@@ -58,7 +59,7 @@ function cloneBlueprint(bp) {
   return JSON.parse(JSON.stringify(bp));
 }
 
-export default function PayslipDesigner() {
+export function PayslipDesignerPanel() {
   const { permissions } = useAuth();
   const canWrite = permissions.includes("payroll:write");
 
@@ -81,10 +82,11 @@ export default function PayslipDesigner() {
   const [ncType, setNcType] = useState("fixed");
   const [ncValue, setNcValue] = useState("0");
   const [ncPct, setNcPct] = useState("0");
-  const [ncSource, setNcSource] = useState("basic");
+  const [ncSource, setNcSource] = useState("ctc");
   const [ncFormula, setNcFormula] = useState("0");
   const [ncPriority, setNcPriority] = useState("20");
   const [ncNest, setNcNest] = useState("");
+  const toast = useToast();
   const [calcResult, setCalcResult] = useState(null);
   const [taxCompare, setTaxCompare] = useState(null);
   const [validation, setValidation] = useState(null);
@@ -235,10 +237,12 @@ export default function PayslipDesigner() {
   };
 
   const removeComp = (id) => {
+    const existed = blueprint?.components.some((c) => c.id === id);
     mutateBlueprint((next) => {
       next.components = next.components.filter((c) => c.id !== id);
     });
     if (selectedId === id) setSelectedId(null);
+    if (existed) toast("Component removed");
   };
 
   const duplicateComp = (id) => {
@@ -250,6 +254,7 @@ export default function PayslipDesigner() {
       copy.ui.y += 30;
       next.components = [...next.components, copy];
     });
+    toast("Component duplicated");
   };
 
   const selectedComp = blueprint?.components.find((c) => c.id === selectedId) || null;
@@ -376,6 +381,7 @@ export default function PayslipDesigner() {
     try {
       const res = await savePayslipDraft(templateId, blueprint, "Draft saved from designer");
       setNotice(`Saved as v${res.data.version}`);
+      toast("Draft saved");
       load(templateId);
     } catch (e) {
       setError(e.message || "Save failed");
@@ -390,6 +396,7 @@ export default function PayslipDesigner() {
     try {
       const res = await publishPayslipTemplate(templateId);
       setNotice(`Published as active v${res.data.version}`);
+      toast("Template published");
       load(templateId);
     } catch (e) {
       setError(e.message || "Publish failed");
@@ -503,6 +510,7 @@ export default function PayslipDesigner() {
     setNcValue("0");
     setNcPriority("20");
     setNcNest("");
+    toast("Component added");
   };
 
   const liveHtml = useMemo(() => {
@@ -557,10 +565,10 @@ export default function PayslipDesigner() {
     }));
   }, [calcResult]);
 
-  if (loadingTemplates) return <MainLayout><Spinner /></MainLayout>;
+  if (loadingTemplates) return <Spinner />;
 
   return (
-    <MainLayout>
+    <>
       <div className="pd-shell">
         <PageHeader title="Payslip Designer" subtitle="Design payslips visually — everything is JSON-driven and configurable">
           <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
@@ -877,7 +885,7 @@ export default function PayslipDesigner() {
             )}
             <button className="pd-btn" onClick={() => {
               const n = prompt("Nest name");
-              if (n) mutateBlueprint((next) => { next.nests = [...next.nests, { id: uid(), name: n, displayOrder: (next.nests.length + 1) * 10 }]; });
+              if (n) { mutateBlueprint((next) => { next.nests = [...next.nests, { id: uid(), name: n, displayOrder: (next.nests.length + 1) * 10 }]; }); toast("Nest created"); }
             }}><Plus size={15} /> New Nest</button>
           </div>
         )}
@@ -1058,8 +1066,12 @@ export default function PayslipDesigner() {
         onConfirm={handlePublish}
         onCancel={() => setShowConfirmPublish(false)}
       />
-    </MainLayout>
+    </>
   );
+}
+
+export default function PayslipDesigner() {
+  return <MainLayout><PayslipDesignerPanel /></MainLayout>;
 }
 
 /* ── Sub-components ──────────────────────────────────────────── */
@@ -1326,8 +1338,16 @@ function PropertyEditor({ comp, nests, onChange, onLogic, onRemove, onDuplicate,
             <input type="number" value={comp.logic.pct ?? 0} onChange={(e) => onLogic({ pct: Number(e.target.value) })} />
           </div>
           <div className="pd-field">
-            <label>Source field (e.g. basic, gross)</label>
-            <input value={comp.logic.sourceField || ""} onChange={(e) => onLogic({ sourceField: e.target.value })} placeholder="basic" />
+            <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--label)", marginBottom: 4 }}>Source field (of)</label>
+            <select
+              value={comp.logic.sourceField || "basic"}
+              onChange={(e) => onLogic({ sourceField: e.target.value })}
+              style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
+            >
+              {["basic", "hra", "conveyance", "medical", "performance_bonus", "other", "ctc", "monthlyGross", "gross"].map((s) => (
+                <option key={s} value={s}>{s === "ctc" ? "ctc (monthly CTC)" : s === "monthlyGross" ? "monthlyGross (CTC)" : s}</option>
+              ))}
+            </select>
           </div>
         </>
       )}

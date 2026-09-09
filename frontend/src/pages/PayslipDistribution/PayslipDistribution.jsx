@@ -1,14 +1,14 @@
 /**
  * Payslip Distribution — complete distribution workflow dashboard.
  * Generate → Prepare channels → Delivery engine → Tracking & logs.
- * HR/admin selects a payroll run, configures channels (email / whatsapp /
+ * HR/admin selects a payroll run, configures channels (email / portal /
  * portal / sms-fallback), sends, then tracks delivery per employee and
  * retries failures or downloads the delivery report.
  */
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Mail, MessageCircle, Globe, MessageSquare, Send, RotateCcw, Download,
+  Mail, Globe, MessageSquare, Send, RotateCcw, Download,
   Users, CheckCircle2, XCircle, Clock, Wallet,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
@@ -76,7 +76,7 @@ function StatCard({ icon: Icon, label, value, color }) {
   );
 }
 
-const CHANNEL_ICONS = { email: Mail, whatsapp: MessageCircle, portal: Globe, sms: MessageSquare };
+const CHANNEL_ICONS = { email: Mail, portal: Globe, sms: MessageSquare };
 
 export function PayslipDistributionPanel() {
   const [runs, setRuns] = useState([]);
@@ -87,7 +87,6 @@ export function PayslipDistributionPanel() {
   const [templateId, setTemplateId] = useState("");
   const [channels, setChannels] = useState({
     email: { enabled: true, template: "standard" },
-    whatsapp: { enabled: false },
     portal: { enabled: true, notify: true },
     sms: { enabled: false, fallback: true },
   });
@@ -320,12 +319,6 @@ export function PayslipDistributionPanel() {
                   <option value="minimal">Minimal Template</option>
                 </select>
               )}
-            />
-            <ChannelRow
-              icon={MessageCircle} title="WhatsApp" subtitle="Send via WhatsApp Business API with a secure link"
-              enabled={channels.whatsapp.enabled}
-              onToggle={(v) => setChannel("whatsapp", { enabled: v })}
-              note="Simulated (API not configured)"
             />
             <ChannelRow
               icon={Globe} title="Employee Portal" subtitle="Publish to self-service portal and send in-app notification"

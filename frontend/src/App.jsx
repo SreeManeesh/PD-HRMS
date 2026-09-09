@@ -10,13 +10,16 @@
 
 import { AuthProvider } from "./context/AuthContext.jsx";
 import { SearchProvider } from "./context/SearchContext.jsx";
+import { ToastProvider } from "./context/ToastContext.jsx";
 import AppRouter from "./routes/AppRouter.jsx";
 
 export default function App() {
   return (
     <AuthProvider>
       <SearchProvider>
-        <AppRouter />
+        <ToastProvider>
+          <AppRouter />
+        </ToastProvider>
       </SearchProvider>
     </AuthProvider>
   );

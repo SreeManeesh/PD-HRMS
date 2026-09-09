@@ -383,6 +383,10 @@ export async function previewPayslip(templateId: string, input: PreviewInput) {
         other: Number(structure.otherAllowances ?? 0),
       }
     : { basic: 0, hra: 0, conveyance: 0, medical: 0, performance_bonus: 0, other: 0 };
+  // "ctc" = monthly cost-to-company (total monthly gross) so percentage
+  // components can be based on CTC instead of just basic.
+  structBase.ctc =
+    structBase.basic + structBase.hra + structBase.conveyance + structBase.medical + structBase.performance_bonus + structBase.other;
 
   const calc = computePayroll(blueprint, structBase, {});
   const annualSource = employee?.annualSalary ? Number(employee.annualSalary) : calc.gross * 12;

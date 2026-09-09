@@ -5,6 +5,7 @@
  */
 import { inr } from "../../utils/currency.js";
 import { rupeesInWords } from "../../utils/numberToWords.js";
+import { assetUrl } from "../../utils/assetUrl.js";
 import "./PayslipTemplate.css";
 
 const initials = (name) =>
@@ -76,7 +77,7 @@ export default function PayslipTemplate({ statement }) {
         <div className="ps-header">
           <div className="ps-brand">
             {company.logoUrl ? (
-              <img className="ps-logo" src={company.logoUrl} alt={d(company.name)} />
+              <img className="ps-logo" src={assetUrl(company.logoUrl)} alt={d(company.name)} />
             ) : (
               <div className="ps-logo-fallback">{String(name[0] || company.name?.[0] || "H")}</div>
             )}
@@ -194,7 +195,7 @@ Together</div>
           <div className="ps-sig">
             <div className="ps-sig-name">Authorized Signatory</div>
             {company.signatureUrl ? (
-              <img className="ps-sig-img" src={company.signatureUrl} alt="Signature" />
+              <img className="ps-sig-img" src={assetUrl(company.signatureUrl)} alt="Signature" />
             ) : (
               <div className="ps-sig-frame">Signature</div>
             )}

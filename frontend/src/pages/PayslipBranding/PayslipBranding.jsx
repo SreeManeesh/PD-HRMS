@@ -10,6 +10,8 @@ import {
   getCompanyBranding, saveCompanyBranding,
   uploadCompanyLogo, uploadCompanySignature, removeCompanyLogo, removeCompanySignature,
 } from "../../services/payslipBrandingService.js";
+import { assetUrl } from "../../utils/assetUrl.js";
+import { useToast } from "../../context/ToastContext.jsx";
 
 const inputStyle = {
   width: "100%", height: 40, padding: "0 12px", border: "1px solid var(--border)",
@@ -23,7 +25,7 @@ function BrandBlock({ title, url, onUpload, onRemove, disabled, uploading }) {
       <p style={{ fontSize: 11, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 12 }}>{title}</p>
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         {url ? (
-          <img src={url} alt={title} style={{ width: 96, height: 96, objectFit: "contain", border: "1px solid var(--border)", borderRadius: 10, background: "#fff" }} />
+          <img src={assetUrl(url)} alt={title} style={{ width: 96, height: 96, objectFit: "contain", border: "1px solid var(--border)", borderRadius: 10, background: "#fff" }} />
         ) : (
           <div style={{ width: 96, height: 96, border: "1px dashed var(--border)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--subtext)", fontSize: 12 }}>No image</div>
         )}
@@ -47,7 +49,7 @@ function BrandBlock({ title, url, onUpload, onRemove, disabled, uploading }) {
   );
 }
 
-export default function PayslipBranding() {
+export function PayslipBrandingPanel() {
   const [form, setForm] = useState(null);
   const [logoUrl, setLogoUrl] = useState("");
   const [signatureUrl, setSignatureUrl] = useState("");
@@ -55,6 +57,7 @@ export default function PayslipBranding() {
   const [upLogo, setUpLogo] = useState(false);
   const [upSig, setUpSig] = useState(false);
   const [msg, setMsg] = useState(null);
+  const toast = useToast();
 
   useEffect(() => {
     getCompanyBranding()
@@ -74,26 +77,26 @@ export default function PayslipBranding() {
 
   const handleLogoUpload = async (file) => {
     setUpLogo(true);
-    try { const b = await uploadCompanyLogo(file); setLogoUrl(b.logoUrl); flash(true, "Logo uploaded"); }
-    catch (e) { flash(false, e.message || "Upload failed"); }
+    try { const b = await uploadCompanyLogo(file); setLogoUrl(b.logoUrl); flash(true, "Logo uploaded"); toast("Logo uploaded"); }
+    catch (e) { flash(false, e.message || "Upload failed"); toast(e.message || "Upload failed", "error"); }
     finally { setUpLogo(false); }
   };
   const handleSigUpload = async (file) => {
     setUpSig(true);
-    try { const b = await uploadCompanySignature(file); setSignatureUrl(b.signatureUrl); flash(true, "Signature uploaded"); }
-    catch (e) { flash(false, e.message || "Upload failed"); }
+    try { const b = await uploadCompanySignature(file); setSignatureUrl(b.signatureUrl); flash(true, "Signature uploaded"); toast("Signature uploaded"); }
+    catch (e) { flash(false, e.message || "Upload failed"); toast(e.message || "Upload failed", "error"); }
     finally { setUpSig(false); }
   };
   const handleLogoRemove = async () => {
     setBusy(true);
-    try { await removeCompanyLogo(); setLogoUrl(""); flash(true, "Logo removed"); }
-    catch (e) { flash(false, e.message || "Remove failed"); }
+    try { await removeCompanyLogo(); setLogoUrl(""); flash(true, "Logo removed"); toast("Logo removed"); }
+    catch (e) { flash(false, e.message || "Remove failed"); toast(e.message || "Remove failed", "error"); }
     finally { setBusy(false); }
   };
   const handleSigRemove = async () => {
     setBusy(true);
-    try { await removeCompanySignature(); setSignatureUrl(""); flash(true, "Signature removed"); }
-    catch (e) { flash(false, e.message || "Remove failed"); }
+    try { await removeCompanySignature(); setSignatureUrl(""); flash(true, "Signature removed"); toast("Signature removed"); }
+    catch (e) { flash(false, e.message || "Remove failed"); toast(e.message || "Remove failed", "error"); }
     finally { setBusy(false); }
   };
 
@@ -102,18 +105,19 @@ export default function PayslipBranding() {
     try {
       await saveCompanyBranding(form);
       flash(true, "Branding saved");
+      toast("Payslip branding saved");
     } catch (e) {
       flash(false, e.message || "Save failed");
+      toast(e.message || "Save failed", "error");
     } finally {
       setBusy(false);
     }
   };
 
-  if (!form) return <MainLayout><Spinner /></MainLayout>;
+  if (!form) return <Spinner />;
 
   return (
-    <MainLayout>
-      <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
         <PageHeader title="Payslip Branding" subtitle="Company settings used on every generated payslip" />
 
         {msg && (
@@ -162,6 +166,9 @@ export default function PayslipBranding() {
           </button>
         </div>
       </div>
-    </MainLayout>
   );
+}
+
+export default function PayslipBranding() {
+  return <MainLayout><PayslipBrandingPanel /></MainLayout>;
 }

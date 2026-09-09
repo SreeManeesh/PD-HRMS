@@ -27,6 +27,7 @@ import { getTaxSelection, setTaxSelection } from "../../services/payslipDesigner
 import { getMyAttendance } from "../../services/attendanceService.js";
 import { getEmployees } from "../../services/employeeService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import { useToast } from "../../context/ToastContext.jsx";
 import { payrollStatusMeta } from "../../mock/payroll.js";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -172,6 +173,7 @@ function EmployeeSearchBox({ employees, value, onChange, onSelect }) {
 
 export default function Payroll() {
   const { user, permissions } = useAuth();
+  const toast = useToast();
   const now = new Date();
   const isStaff = user.role !== "EMPLOYEE";
   const canApprove = Array.isArray(permissions) && permissions.includes("payroll:approve");
@@ -281,6 +283,7 @@ export default function Payroll() {
       await runPayroll(activeRun.id);
       setRuns((prev) => prev.map((r) => (r.id === activeRun.id ? { ...r, status: "Processing" } : r)));
       setRegimeMsg({ ok: true, text: `Payroll run ${activeRun.period} processed for ${activeRun.totalEmployees || 0} employees.` });
+      toast(`Payroll processed for ${activeRun.period} — awaiting approval`);
     } catch (e) {
       setRegimeMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not process the payroll run" });
     } finally {
@@ -297,6 +300,7 @@ export default function Payroll() {
       await approvePayrollRun(approveRun.id);
       setRuns((prev) => prev.map((r) => (r.id === approveRun.id ? { ...r, status: "Paid" } : r)));
       setApproveRun(null);
+      toast(`Payroll run ${approveRun.period} approved & paid`);
     } catch (e) {
       setRegimeMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not approve payroll run" });
     } finally {
@@ -499,40 +503,56 @@ export default function Payroll() {
                 style={{ marginLeft: "auto", height: 38, padding: "0 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13.5, color: "var(--text)", background: "var(--card)", outline: "none", minWidth: 220 }} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(178px, 1fr))", gap: 12, marginBottom: 20 }}>
-              {MONTHS.map((m, i) => {
-                const mo = i + 1;
-                const run = runs.find((r) => r.year === year && r.month === mo);
-                const meta = run ? (payrollStatusMeta[run.status] || payrollStatusMeta.Draft) : null;
-                const isActive = expandedRun && expandedRun.year === year && expandedRun.month === mo;
-                return (
-                  <button
-                    key={m}
-                    onClick={() => setExpandedRun((cur) => (cur && cur.year === year && cur.month === mo ? null : { month: mo, year }))}
-                    style={{
-                      border: `1px solid ${isActive ? "var(--primary)" : "var(--border)"}`,
-                      background: isActive ? "var(--primary-light)" : "var(--card)",
-                      borderRadius: "var(--radius)", padding: "14px 16px", cursor: "pointer", textAlign: "left",
-                      transition: "border-color 0.12s, background 0.12s",
-                    }}
-                  >
-                    <div style={{ fontSize: "15px", fontWeight: 800, color: isActive ? "var(--primary)" : "var(--text)" }}>
-                      {m} <span style={{ fontSize: 11, fontWeight: 600, color: "var(--subtext)" }}>{year}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--subtext)", marginTop: 6 }}>
-                      {run ? `${run.totalEmployees ?? 0} employees` : "Demo view · click to compute"}
-                    </div>
-                    {run && meta && (
-                      <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-                        <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} />
-                        {run.status === "Draft" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>Run ▶</span>}
-                        {run.status === "Processing" && canApprove && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>Approve ✓</span>}
-                        {run.status === "Paid" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--green)" }}>Download ⤓</span>}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                    {["","#","Month","Year","Employees","Net Payroll","Status","Action"].map((h) => (
+                      <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {MONTHS.map((m, i) => {
+                    const mo = i + 1;
+                    const run = runs.find((r) => r.year === year && r.month === mo);
+                    const meta = run ? (payrollStatusMeta[run.status] || payrollStatusMeta.Draft) : null;
+                    const isActive = expandedRun && expandedRun.year === year && expandedRun.month === mo;
+                    return (
+                      <tr
+                        key={m}
+                        onClick={() => setExpandedRun((cur) => (cur && cur.year === year && cur.month === mo ? null : { month: mo, year }))}
+                        style={{
+                          borderBottom: i < MONTHS.length - 1 ? "1px solid var(--border)" : "none",
+                          cursor: "pointer",
+                          background: isActive ? "var(--primary-light)" : "transparent",
+                        }}
+                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--background)"; }}
+                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                      >
+                        <td style={{ padding: "13px 18px", width: 24 }}>
+                          {isActive ? <ChevronDown size={16} style={{ color: "var(--primary)", verticalAlign: "middle" }} /> : <ChevronRight size={16} style={{ color: "var(--subtext)", verticalAlign: "middle" }} />}
+                        </td>
+                        <td style={{ padding: "13px 18px", fontSize: "12.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{String(mo).padStart(2, "0")}</td>
+                        <td style={{ padding: "13px 18px", fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>{m}</td>
+                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{year}</td>
+                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{run ? run.totalEmployees : "—"}</td>
+                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontFamily: "monospace" }}>{run ? fmt(run.netPayroll) : "—"}</td>
+                        <td style={{ padding: "13px 18px" }}>
+                          {run && meta ? <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /> : <span style={{ fontSize: 12, color: "var(--subtext)" }}>No run</span>}
+                        </td>
+                        <td style={{ padding: "13px 18px" }}>
+                          {run?.status === "Draft" && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--primary)" }}>Run ▶</span>}
+                          {run?.status === "Processing" && canApprove && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--amber)" }}>Approve ✓</span>}
+                          {run?.status === "Processing" && !canApprove && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Awaiting approval</span>}
+                          {run?.status === "Paid" && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--green)" }}>Download ⤓</span>}
+                          {!run && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Demo view · click</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
 
             {expandedRun && (
