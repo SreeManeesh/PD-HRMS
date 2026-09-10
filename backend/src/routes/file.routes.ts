@@ -15,89 +15,58 @@ function contentTypeByExt(fileName: string): string {
     return "application/octet-stream";
 }
 
-/** Company payslip assets (/uploads/company/*) — MinIO first, local-disk fallback. */
-router.get(
-    "/company/*",
-    async (req: Request, res: Response) => {
+function streamFromMinio(bucket: string, objectName: string) {
+    return async (req: Request, res: Response) => {
         try {
-            const objectName = `company/${req.params[0]}`;
-            try {
-                const stat = await minioClient.statObject(MINIO_BUCKET, objectName);
-                const stream = await minioClient.getObject(MINIO_BUCKET, objectName);
-                const contentType = stat.metaData?.["content-type"];
-                if (contentType) res.setHeader("Content-Type", contentType);
-                res.setHeader("Content-Length", stat.size.toString());
-                res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-                return stream.pipe(res);
-            } catch (minioErr) {
-                // Fallback: file persisted on local disk (uploaded without MinIO).
-                const localFile = path.join(process.cwd(), "uploads", "company", req.params[0]);
-                if (!localFile.includes("..") && fs.existsSync(localFile)) {
-                    res.setHeader("Content-Type", contentTypeByExt(localFile));
-                    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-                    return fs.createReadStream(localFile).pipe(res);
-                }
-                return res.status(404).json({ success: false, message: "File not found" });
-            }
+            const stat = await minioClient.statObject(bucket, objectName);
+            const stream = await minioClient.getObject(bucket, objectName);
+            const contentType = stat.metaData?.["content-type"];
+            if (contentType) res.setHeader("Content-Type", contentType);
+            res.setHeader("Content-Length", stat.size.toString());
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+            return stream.pipe(res);
         } catch (error) {
-            console.error("MinIO company asset retrieval error:", error);
+            console.error("MinIO file retrieval error:", error);
             return res.status(404).json({ success: false, message: "File not found" });
         }
-    }
-);
+    };
+}
 
-router.get(
-    "/lms/*",
-    async (req: Request, res: Response) => {
+/** Stream a stored asset with a local-disk fallback (used for uploads that were
+ *  persisted when MinIO was unavailable, e.g. local dev). */
+function serveWithDiskFallback(bucket: string, folder: string) {
+    return async (req: Request, res: Response) => {
+        const objectName = `${folder}/${req.params[0]}`;
+        const isSafe = !req.params[0].includes("..") && !req.params[0].includes("/") && !req.params[0].includes("\\");
         try {
-            const objectName =
-                `lms/${req.params[0]}`;
-
-            const stat =
-                await minioClient.statObject(
-                    MINIO_BUCKET,
-                    objectName
-                );
-
-            const stream =
-                await minioClient.getObject(
-                    MINIO_BUCKET,
-                    objectName
-                );
-
-            const contentType =
-                stat.metaData?.["content-type"];
-
-            if (contentType) {
-                res.setHeader(
-                    "Content-Type",
-                    contentType
-                );
+            const stat = await minioClient.statObject(bucket, objectName);
+            const stream = await minioClient.getObject(bucket, objectName);
+            const contentType = stat.metaData?.["content-type"];
+            if (contentType) res.setHeader("Content-Type", contentType);
+            res.setHeader("Content-Length", stat.size.toString());
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+            return stream.pipe(res);
+        } catch (minioErr) {
+            const localFile = path.join(process.cwd(), "uploads", folder, req.params[0]);
+            if (isSafe && fs.existsSync(localFile)) {
+                res.setHeader("Content-Type", contentTypeByExt(localFile));
+                res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                return fs.createReadStream(localFile).pipe(res);
             }
-
-            res.setHeader(
-                "Content-Length",
-                stat.size.toString()
-            );
-
-            res.setHeader(
-                "Cross-Origin-Resource-Policy",
-                "cross-origin"
-            );
-
-            stream.pipe(res);
-        } catch (error) {
-            console.error(
-                "MinIO file retrieval error:",
-                error
-            );
-
-            return res.status(404).json({
-                success: false,
-                message: "File not found",
-            });
+            return res.status(404).json({ success: false, message: "File not found" });
         }
-    }
-);
+    };
+}
+
+// Company payslip assets (/uploads/company/*) — MinIO first, local-disk fallback.
+router.get("/company/*", serveWithDiskFallback(MINIO_BUCKET, "company"));
+
+// Employee profile photos (/uploads/employee/*) — MinIO first, local-disk fallback.
+router.get("/employee/*", serveWithDiskFallback(MINIO_BUCKET, "employee"));
+
+// LMS content (/uploads/lms/*) — MinIO only (as before).
+router.get("/lms/*", async (req: Request, res: Response) => {
+    await streamFromMinio(MINIO_BUCKET, `lms/${req.params[0]}`)(req, res);
+});
 
 export default router;

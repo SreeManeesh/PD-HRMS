@@ -23,7 +23,11 @@ const envSchema = z.object({
   SMTP_USER: z.string().trim().default(""),
   SMTP_PASS: z.string().default(""),
   SMTP_FROM_NAME: z.string().trim().default("Proteccio HRMS"),
-  SMTP_FROM_EMAIL: z.string().trim().default(""),
+  SMTP_FROM_EMAIL: z.string().default(""),
+  // Employee-registration wizard (employee-management-fullstack) bridge.
+  WIZARD_API_URL: z.string().url().default("http://localhost:4100"),
+  WIZARD_URL: z.string().url().default("http://localhost:5174"),
+  WIZARD_SERVICE_SECRET: z.string().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);

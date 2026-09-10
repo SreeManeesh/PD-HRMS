@@ -31,3 +31,24 @@ export const deleteEmployee = async (id) => {
   const res = await api.delete(`/employees/${id}`);
   return res.data;
 };
+
+export const uploadEmployeePhoto = async (id, formData) => {
+  const res = await api.post(`/employees/${id}/photo`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 30000,
+  });
+  return res.data;
+};
+
+export const bulkUploadEmployees = async (formData) => {
+  const res = await api.post("/employees/bulk", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 300000,
+  });
+  return res.data;
+};
+
+export const getWizardSession = async () => {
+  const res = await api.get("/wizard/session");
+  return res.data?.data ?? {};
+};

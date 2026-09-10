@@ -3,6 +3,7 @@ import { asyncHandler } from "../../lib/utils";
 import { sendSuccess } from "../../lib/response";
 import { AppError } from "../../lib/errors";
 import * as employeeService from "./employee.service";
+import { parseEmployeeFile } from "./employeeImport";
 import { prisma } from "../../lib/prisma";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,5 +51,22 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   const pk = await resolveEmployeeId(req.params.id);
   const result = await employeeService.deleteEmployee(pk);
+  sendSuccess(res, result.data);
+});
+
+/** POST /api/employees/bulk — spreadsheet import. Rows with missing
+ *  mandatory fields are skipped and reported in the response. */
+export const bulk = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw AppError.badRequest("A spreadsheet file is required (.xlsx, .csv, .tsv, …)");
+  const rows = parseEmployeeFile(req.file);
+  const result = await employeeService.createEmployeesBulk(rows);
+  sendSuccess(res, result);
+});
+
+/** POST /api/employees/:id/photo — upload an employee profile photo. */
+export const uploadPhoto = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw AppError.badRequest("A photo file is required");
+  const pk = await resolveEmployeeId(req.params.id);
+  const result = await employeeService.uploadEmployeePhoto(pk, req.file);
   sendSuccess(res, result.data);
 });

@@ -38,7 +38,8 @@ export function serializeEmployee(emp: EmployeeWithRelations) {
 
   return {
     id: emp.employeeCode,
-    avatar: `https://randomuser.me/api/portraits/${genderPath}/${avatarId}.jpg`,
+    avatar: emp.photoUrl || `https://randomuser.me/api/portraits/${genderPath}/${avatarId}.jpg`,
+    photoUrl: emp.photoUrl || null,
     firstName: emp.firstName,
     lastName: emp.lastName,
     email: emp.user?.email ?? emp.personalEmail ?? "",

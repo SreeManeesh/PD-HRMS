@@ -3,6 +3,8 @@ import { z } from "zod";
 import { validate } from "../../middlewares/validate";
 import { authenticate } from "../../middlewares/auth";
 import { requirePermission } from "../../middlewares/rbac";
+import { attendanceUpload } from "../../middlewares/attendanceUpload";
+import { companyBrandingUpload } from "../companyBranding/companyBranding.middleware";
 import * as employeeController from "./employee.controller";
 
 const router = Router();
@@ -55,6 +57,12 @@ router.get("/:id", authenticate, requirePermission("employees:read|dashboard:rea
 
 // POST /api/employees — employees:write
 router.post("/", authenticate, requirePermission("employees:write"), validate({ body: createBodySchema }), employeeController.create);
+
+// POST /api/employees/bulk — employees:write (spreadsheet import, skips invalid rows)
+router.post("/bulk", authenticate, requirePermission("employees:write"), attendanceUpload.single("file"), employeeController.bulk);
+
+// POST /api/employees/:id/photo — employees:write (profile photo upload)
+router.post("/:id/photo", authenticate, requirePermission("employees:write"), companyBrandingUpload.single("photo"), employeeController.uploadPhoto);
 
 // PUT /api/employees/:id — employees:write
 router.put("/:id", authenticate, requirePermission("employees:write"), validate({ body: updateBodySchema }), employeeController.update);

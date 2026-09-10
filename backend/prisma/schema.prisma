@@ -229,6 +229,7 @@ model Employee {
   employmentType     String    @default("Full-Time") @map("employment_type") @db.VarChar(30)
   status             String    @default("Active") @db.VarChar(20)
   isDepartmentHead   Boolean   @default(false) @map("is_department_head")
+  photoUrl           String?   @map("photo_url") @db.VarChar(255)
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
 
   user             User?        @relation(fields: [userId], references: [id], onDelete: SetNull)

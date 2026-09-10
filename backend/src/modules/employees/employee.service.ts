@@ -1,3 +1,6 @@
+import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
@@ -6,6 +9,7 @@ import { hashPassword } from "../../lib/password";
 import { writeAuditLog } from "../../services/audit.service";
 import { serializeEmployeeList } from "../../serializers/employee.serializer";
 import { parsePagination } from "../../lib/utils";
+import minioClient, { MINIO_BUCKET, ensureMinioBucket } from "../../config/minio";
 
 const EMPLOYEE_INCLUDE = {
   department: true,
@@ -100,6 +104,27 @@ export interface CreateEmployeeInput {
   state?: string;
   country?: string;
   annualSalary?: number;
+  photoUrl?: string;
+}
+
+export interface CreateEmployeeOptions {
+  /** When true, unknown designation/department/location names are created (instead of failing). */
+  autoCreateRefs?: boolean;
+}
+
+export interface BulkEmployeeRow {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  designation?: string;
+  department?: string;
+  location?: string;
+  state?: string;
+  country?: string;
+  annualSalary?: number;
+  employmentType?: string;
+  dateOfJoining?: string;
 }
 
 function toOptionalDate(value?: string): Date | null {
@@ -109,53 +134,111 @@ function toOptionalDate(value?: string): Date | null {
 }
 
 /** Resolve an org reference (designation/department/location) by name for
- *  frontend payloads that send human-readable names instead of UUIDs. */
+ *  frontend payloads that send human-readable names instead of UUIDs. When
+ *  `autoCreate` is set, missing names are created on the fly (bulk imports and
+ *  the external registration wizard), otherwise they fail loudly. */
+type RefCreator = (name: string) => Promise<{ id: string }>;
+
 async function resolveNameToId(
   findFirst: (name: string) => Promise<{ id: string } | null>,
   name: string,
-  label: string
+  label: string,
+  autoCreate: boolean,
+  creator?: RefCreator
 ): Promise<string> {
   const row = await findFirst(name);
-  if (!row) throw AppError.badRequest(`${label} "${name}" not found. Add it in Organization first.`);
-  return row.id;
+  if (row) return row.id;
+  if (!autoCreate || !creator) {
+    throw AppError.badRequest(`${label} "${name}" not found. Add it in Organization first.`);
+  }
+  const created = await creator(name);
+  return created.id;
 }
 
-async function resolveOrgRefs(input: Partial<CreateEmployeeInput>) {
+/** Find the active company + a business unit for auto-creating org lookups. */
+async function defaultOrgContext() {
+  const company = await prisma.company.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } });
+  if (!company) return null;
+  let businessUnit = await prisma.businessUnit.findFirst({ where: { companyId: company.id }, orderBy: { createdAt: "asc" } });
+  if (!businessUnit) {
+    businessUnit = await prisma.businessUnit.create({ data: { companyId: company.id, name: "General" } });
+  }
+  return { companyId: company.id, businessUnitId: businessUnit.id };
+}
+
+async function resolveOrgRefs(input: Partial<CreateEmployeeInput>, autoCreate = false, cache: Record<string, string> = {}) {
+  const orgContext = autoCreate ? await defaultOrgContext() : null;
+  const desgCacheKey = input.designation?.toLowerCase() ?? "";
+  const deptCacheKey = input.department?.toLowerCase() ?? "";
+  const locCacheKey = input.location?.toLowerCase() ?? "";
+
   const [designationId, departmentId, locationId] = await Promise.all([
     input.designationId ? Promise.resolve(input.designationId)
-      : input.designation ? resolveNameToId(
-          (n) => {
-            const where: Prisma.DesignationWhereInput = { title: { equals: n, mode: "insensitive" } };
-            return prisma.designation.findFirst({ where });
-          },
-          input.designation,
-          "Designation"
-        ) : Promise.resolve(null),
+      : input.designation ? (cache[desgCacheKey]
+          ? Promise.resolve(cache[desgCacheKey])
+          : resolveNameToId(
+              (n) => {
+                const where: Prisma.DesignationWhereInput = { title: { equals: n, mode: "insensitive" } };
+                return prisma.designation.findFirst({ where });
+              },
+              input.designation,
+              "Designation",
+              autoCreate,
+              async (n) => {
+                const row = await prisma.designation.create({ data: { title: n } });
+                cache[desgCacheKey] = row.id;
+                return row;
+              }
+            ))
+      : Promise.resolve(null),
     input.departmentId ? Promise.resolve(input.departmentId)
-      : input.department ? resolveNameToId(
-          (n) => {
-            const where: Prisma.DepartmentWhereInput = { name: { equals: n, mode: "insensitive" } };
-            return prisma.department.findFirst({ where });
-          },
-          input.department,
-          "Department"
-        ) : Promise.resolve(null),
+      : input.department ? (cache[deptCacheKey]
+          ? Promise.resolve(cache[deptCacheKey])
+          : resolveNameToId(
+              (n) => {
+                const where: Prisma.DepartmentWhereInput = { name: { equals: n, mode: "insensitive" } };
+                return prisma.department.findFirst({ where });
+              },
+              input.department,
+              "Department",
+              autoCreate,
+              async (n) => {
+                if (!orgContext) throw AppError.badRequest(`Department "${n}" cannot be auto-created: no active company configured.`);
+                const row = await prisma.department.create({
+                  data: { companyId: orgContext.companyId, businessUnitId: orgContext.businessUnitId, name: n },
+                });
+                cache[deptCacheKey] = row.id;
+                return row;
+              }
+            ))
+      : Promise.resolve(null),
     input.locationId ? Promise.resolve(input.locationId)
-      : input.location ? resolveNameToId(
-          (n) => {
-            const where: Prisma.LocationWhereInput = { name: { equals: n, mode: "insensitive" } };
-            return prisma.location.findFirst({ where });
-          },
-          input.location,
-          "Location"
-        ) : Promise.resolve(null),
+      : input.location ? (cache[locCacheKey]
+          ? Promise.resolve(cache[locCacheKey])
+          : resolveNameToId(
+              (n) => {
+                const where: Prisma.LocationWhereInput = { name: { equals: n, mode: "insensitive" } };
+                return prisma.location.findFirst({ where });
+              },
+              input.location,
+              "Location",
+              autoCreate,
+              async (n) => {
+                if (!orgContext) throw AppError.badRequest(`Location "${n}" cannot be auto-created: no active company configured.`);
+                const row = await prisma.location.create({ data: { companyId: orgContext.companyId, name: n } });
+                cache[locCacheKey] = row.id;
+                return row;
+              }
+            ))
+      : Promise.resolve(null),
   ]);
   return { designationId, departmentId, locationId };
 }
 
-export async function createEmployee(input: CreateEmployeeInput) {
+export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmployeeOptions = {}) {
   const nextCode = await generateEmployeeCode();
-  const { designationId, departmentId, locationId } = await resolveOrgRefs(input);
+  const cache: Record<string, string> = {};
+  const { designationId, departmentId, locationId } = await resolveOrgRefs(input, opts.autoCreateRefs, cache);
 
   // Employee creation requires an auth user (email is required for login).
   const email = (input.email ?? "").toLowerCase();
@@ -190,6 +273,7 @@ export async function createEmployee(input: CreateEmployeeInput) {
       state: input.state ?? null,
       country: input.country ?? null,
       annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : null,
+      photoUrl: input.photoUrl ?? null,
     },
     include: EMPLOYEE_INCLUDE,
   });
@@ -206,6 +290,122 @@ export async function createEmployee(input: CreateEmployeeInput) {
   await ensureActiveSalaryStructure(emp.id, input.annualSalary);
 
   return { data: serializeEmployeeList([emp])[0] };
+}
+
+/**
+ * Create many employees from parsed spreadsheet rows. Rows that miss their
+ * mandatory fields (first name, last name, designation, department) or fail
+ * validation are skipped and reported instead of aborting the import.
+ */
+export async function createEmployeesBulk(rows: BulkEmployeeRow[]) {
+  const created: Array<{ id: string; name: string }> = [];
+  const skipped: Array<{ row: number; reason: string }> = [];
+  const seenEmails = new Set<string>();
+
+  for (const [index, row] of rows.entries()) {
+    const rowNo = index + 2; // 1-based, +1 for the header row
+    try {
+      const firstName = (row.firstName ?? "").trim();
+      const lastName = (row.lastName ?? "").trim();
+      const designation = (row.designation ?? "").trim();
+      const department = (row.department ?? "").trim();
+
+      if (!firstName || !lastName || !designation || !department) {
+        skipped.push({ row: rowNo, reason: "Missing mandatory fields (first name, last name, designation, department)" });
+        continue;
+      }
+
+      const email = (row.email ?? "").trim().toLowerCase();
+      if (email) {
+        if (seenEmails.has(email)) {
+          skipped.push({ row: rowNo, reason: `Duplicate email "${email}" within the file` });
+          continue;
+        }
+        // A valid-email check: reject obviously broken emails instead of failing later.
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          skipped.push({ row: rowNo, reason: `Invalid email "${email}"` });
+          continue;
+        }
+        seenEmails.add(email);
+      }
+
+      const annualSalaryRaw = row.annualSalary;
+      const annualSalary =
+        typeof annualSalaryRaw === "number"
+          ? annualSalaryRaw > 0 ? annualSalaryRaw : undefined
+          : annualSalaryRaw != null && String(annualSalaryRaw).trim() !== ""
+            ? Number(String(annualSalaryRaw).replace(/[,\s]/g, ""))
+            : undefined;
+
+      const result = await createEmployee(
+        {
+          firstName,
+          lastName,
+          email: email || undefined,
+          phone: row.phone ? String(row.phone).trim() : undefined,
+          designation,
+          department,
+          location: row.location ? String(row.location).trim() : undefined,
+          state: row.state ? String(row.state).trim() : undefined,
+          country: row.country ? String(row.country).trim() : undefined,
+          annualSalary,
+          employmentType: row.employmentType ? String(row.employmentType).trim() : undefined,
+          dateOfJoining: row.dateOfJoining ? String(row.dateOfJoining).trim() : undefined,
+        },
+        { autoCreateRefs: true }
+      );
+
+      created.push({ id: result.data.id, name: `${result.data.firstName} ${result.data.lastName}` });
+    } catch (err: unknown) {
+      const message = (err as { message?: string })?.message ?? "Failed to create employee";
+      skipped.push({ row: rowNo, reason: message.replace(/^Error:\s*/i, "") });
+    }
+  }
+
+  return {
+    createdCount: created.length,
+    skippedCount: skipped.length,
+    skipped: skipped.slice(0, 200),
+    created: created.slice(0, 50),
+  };
+}
+
+/** Persist an employee profile photo (MinIO first, local-disk fallback). */
+export async function uploadEmployeePhoto(id: string, file: Express.Multer.File) {
+  const employee = await prisma.employee.findUnique({ where: { id } });
+  if (!employee) throw AppError.notFound("Employee not found");
+  if (!file) throw AppError.badRequest("Photo file is required");
+
+  const extension = path.extname(file.originalname).toLowerCase() || ".jpg";
+  const name = `${randomUUID()}${extension}`;
+  try {
+    await ensureMinioBucket();
+    await minioClient.putObject(MINIO_BUCKET, `employee/${name}`, file.buffer, file.size, {
+      "Content-Type": file.mimetype,
+    });
+  } catch {
+    // MinIO unavailable (e.g. local dev without the object store) — persist on
+    // local disk instead so uploads still work and survive a refresh.
+    const dir = path.join(process.cwd(), "uploads", "employee");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), file.buffer);
+  }
+
+  const photoUrl = `/uploads/employee/${name}`;
+  const updated = await prisma.employee.update({
+    where: { id },
+    data: { photoUrl },
+    include: EMPLOYEE_INCLUDE,
+  });
+
+  writeAuditLog({
+    action: "UPDATE",
+    entityType: "Employee",
+    entityId: updated.id,
+    newValue: { photoUpdated: true, employeeCode: updated.employeeCode },
+  });
+
+  return { data: serializeEmployeeList([updated])[0] };
 }
 
 async function generateEmployeeCode(): Promise<string> {
