@@ -179,6 +179,7 @@ app.get('/api/employees/:id/consents', auth, async(req,res)=>{
 async function consentMutation(req:any,res:any,newStatus:'GRANTED'|'DENIED'|'WITHDRAWN'|'EXPIRED',action:'GRANTED'|'DENIED'|'WITHDRAWN'|'EXPIRED'|'RENEWED'|'ACKNOWLEDGED') {
   const parsed=consentActionSchema.safeParse(req.body||{}); if(!parsed.success) return res.status(400).json({message:'Invalid consent payload'});
   const a=res.locals.auth; const employeeId=req.params.id; const consentId=req.params.consentId;
+  const actorId = (a.userId && a.userId !== 'service') ? a.userId : null;
   try {
     const result=await withTx(async client=>{
       const row=await client.query(`SELECT ec.*,cp.*,e.organization_id FROM employee_consents ec JOIN consent_policies cp ON cp.id=ec.consent_policy_id JOIN employees e ON e.id=ec.employee_id WHERE ec.id=$1 AND ec.employee_id=$2 AND e.organization_id=$3 FOR UPDATE`,[consentId,employeeId,a.organizationId]);
@@ -186,20 +187,20 @@ async function consentMutation(req:any,res:any,newStatus:'GRANTED'|'DENIED'|'WIT
       const ec=row.rows[0];
       if(newStatus==='WITHDRAWN' && !ec.withdrawable) throw Object.assign(new Error('This processing activity is not withdrawable'),{status:409});
       const expiresOn=(newStatus==='GRANTED' && ec.validity_period_days) ? new Date(Date.now()+ec.validity_period_days*86400000) : null;
-      await client.query(`UPDATE employee_consents SET status=$1::consent_status,granted_on=CASE WHEN $1='GRANTED' THEN now() ELSE granted_on END,granted_by_type=CASE WHEN $1='GRANTED' THEN 'USER' ELSE granted_by_type END,granted_by_user_id=CASE WHEN $1='GRANTED' THEN $2 ELSE granted_by_user_id END,consent_method=COALESCE($3::consent_type,consent_method),guardian_id=COALESCE($4,guardian_id),withdrawn_on=CASE WHEN $1='WITHDRAWN' THEN now() ELSE withdrawn_on END,withdrawal_reason=CASE WHEN $1='WITHDRAWN' THEN $5 ELSE withdrawal_reason END,expires_on=COALESCE($6,expires_on),updated_at=now() WHERE id=$7`,[newStatus,a.userId,parsed.data.method,parsed.data.guardianId,parsed.data.reason,expiresOn,consentId]);
-      await appendConsentAudit(client,consentId,action,{status:newStatus,reason:parsed.data.reason || null,method:parsed.data.method || null},a.userId,{ip:req.ip,deviceInfo:parsed.data.deviceInfo});
-      if(action==='WITHDRAWN') await client.query(`INSERT INTO employee_audit_log(organization_id,employee_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$2,$3,'CONSENT_WITHDRAWN','CONSENT',$4,$5)`,[a.organizationId,employeeId,a.userId,consentId,{downstreamActions:ec.downstream_actions}]);
+      await client.query(`UPDATE employee_consents SET status=$1::consent_status,granted_on=CASE WHEN $1='GRANTED' THEN now() ELSE granted_on END,granted_by_type=CASE WHEN $1='GRANTED' THEN 'USER' ELSE granted_by_type END,granted_by_user_id=CASE WHEN $1='GRANTED' THEN $2 ELSE granted_by_user_id END,consent_method=COALESCE($3::consent_type,consent_method),guardian_id=COALESCE($4,guardian_id),withdrawn_on=CASE WHEN $1='WITHDRAWN' THEN now() ELSE withdrawn_on END,withdrawal_reason=CASE WHEN $1='WITHDRAWN' THEN $5 ELSE withdrawal_reason END,expires_on=COALESCE($6,expires_on),updated_at=now() WHERE id=$7`,[newStatus,actorId,parsed.data.method,parsed.data.guardianId,parsed.data.reason,expiresOn,consentId]);
+      await appendConsentAudit(client,consentId,action,{status:newStatus,reason:parsed.data.reason || null,method:parsed.data.method || null},actorId,{ip:req.ip,deviceInfo:parsed.data.deviceInfo});
+      if(action==='WITHDRAWN') await client.query(`INSERT INTO employee_audit_log(organization_id,employee_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$2,$3,'CONSENT_WITHDRAWN','CONSENT',$4,$5)`,[a.organizationId,employeeId,actorId,consentId,{downstreamActions:ec.downstream_actions}]);
       return (await client.query('SELECT * FROM employee_consents WHERE id=$1',[consentId])).rows[0];
     });
     res.json(result);
   } catch(error:any) { res.status(error.status || 500).json({message:error.message || 'Consent update failed'}); }
 }
 
-app.post('/api/employees/:id/consents/:consentId/grant',(req,res)=>consentMutation(req,res,'GRANTED','GRANTED'));
-app.post('/api/employees/:id/consents/:consentId/acknowledge',(req,res)=>consentMutation(req,res,'GRANTED','ACKNOWLEDGED'));
-app.post('/api/employees/:id/consents/:consentId/deny',(req,res)=>consentMutation(req,res,'DENIED','DENIED'));
-app.post('/api/employees/:id/consents/:consentId/withdraw',(req,res)=>consentMutation(req,res,'WITHDRAWN','WITHDRAWN'));
-app.post('/api/employees/:id/consents/:consentId/renew',(req,res)=>consentMutation(req,res,'GRANTED','RENEWED'));
+app.post('/api/employees/:id/consents/:consentId/grant',auth,(req,res)=>consentMutation(req,res,'GRANTED','GRANTED'));
+app.post('/api/employees/:id/consents/:consentId/acknowledge',auth,(req,res)=>consentMutation(req,res,'GRANTED','ACKNOWLEDGED'));
+app.post('/api/employees/:id/consents/:consentId/deny',auth,(req,res)=>consentMutation(req,res,'DENIED','DENIED'));
+app.post('/api/employees/:id/consents/:consentId/withdraw',auth,(req,res)=>consentMutation(req,res,'WITHDRAWN','WITHDRAWN'));
+app.post('/api/employees/:id/consents/:consentId/renew',auth,(req,res)=>consentMutation(req,res,'GRANTED','RENEWED'));
 
 app.get('/api/employees/:id/readiness', auth, async(req,res)=>{
   const employeeId=req.params.id;

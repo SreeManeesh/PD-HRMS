@@ -383,20 +383,22 @@ button.danger { background: var(--red-light); color: var(--red); }
 button.danger:hover { background: var(--red); color: #fff; }
 button:disabled { opacity: 0.55; cursor: not-allowed; transform: none !important; }
 
-/* ─── Consent drawer + modal ──────────────────────────────────────────── */
+/* ─── Consent cockpit popup + modal ───────────────────────────────────── */
+.consent-cockpit-backdrop { position: fixed; inset: 0; background: rgba(13,27,42,0.55); backdrop-filter: blur(3px); z-index: 300; display: grid; place-items: center; animation: fadeIn 0.2s ease; padding: 20px; }
 .consent-panel {
-  position: fixed; top: 0; right: 0; bottom: 0;
-  width: 420px; max-width: 92vw;
+  position: relative;
+  width: 640px; max-width: 100%; max-height: 84vh;
   background: var(--card);
-  border-left: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
-  z-index: 120;
   overflow-y: auto;
   animation: slideUp 0.25s ease;
 }
 .panel-head { padding: 20px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .panel-head h2 { font-size: 17px; font-weight: 700; margin: 3px 0 2px; }
 .panel-head p { font-size: 12.5px; color: var(--subtext); }
+.head-actions { display: flex; align-items: center; gap: 6px; color: var(--primary); }
 .filter-row { display: flex; gap: 6px; padding: 14px 22px; }
 .filter {
   padding: 5px 12px; border-radius: 99px;
@@ -428,6 +430,10 @@ button:disabled { opacity: 0.55; cursor: not-allowed; transform: none !important
 .status.granted { color: var(--green); background: var(--green-light); }
 .status.withdrawn, .status.denied { color: var(--subtext); background: #eef2f6; }
 .status.noticed { color: var(--blue); background: var(--blue-light); }
+.consent-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; padding: 48px 24px; color: var(--subtext); }
+.consent-empty svg { color: var(--primary); opacity: 0.6; }
+.consent-empty strong { color: var(--text); font-size: 14px; }
+.consent-empty p { font-size: 12.5px; max-width: 340px; line-height: 1.5; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(13,27,42,0.5); z-index: 200; display: grid; place-items: center; animation: fadeIn 0.2s ease; padding: 20px; }
 .consent-modal {
