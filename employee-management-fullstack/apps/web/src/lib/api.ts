@@ -18,14 +18,38 @@ const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4100';
   }
 })();
 
-export async function api<T>(path:string, options:RequestInit={}) : Promise<T> {
-  const token=localStorage.getItem('hrms_token');
-  const headers=new Headers(options.headers);
-  if(options.body && !(options.body instanceof FormData)) headers.set('Content-Type','application/json');
-  if(token) headers.set('Authorization',`Bearer ${token}`);
-  const res=await fetch(`${BASE}${path}`,{...options,headers});
-  const data=await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.message || 'Request failed');
+let bootstrapPromise: Promise<string | null> | null = null;
+
+// Lazily acquire a token. When the wizard is embedded by HRMS a ?token= is
+// already stored; running standalone, fall back to the dev/demo anonymous
+// session endpoint (guarded server-side by ALLOW_ANONYMOUS_WIZARD).
+async function ensureToken(): Promise<string | null> {
+  const existing = localStorage.getItem('hrms_token');
+  if (existing) return existing;
+  if (!bootstrapPromise) {
+    bootstrapPromise = (async () => {
+      try {
+        const res = await fetch(`${BASE}/api/auth/wizard-session`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.token) localStorage.setItem('hrms_token', data.token);
+      } catch {
+        /* offline / endpoint disabled — requests will fail with 401 */
+      }
+      return localStorage.getItem('hrms_token');
+    })();
+    bootstrapPromise.finally(() => { bootstrapPromise = null; });
+  }
+  return bootstrapPromise;
+}
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = await ensureToken();
+  const headers = new Headers(options.headers);
+  if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Request failed');
   return data;
 }
 

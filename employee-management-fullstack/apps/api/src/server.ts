@@ -75,6 +75,22 @@ app.post('/api/auth/service', async (req,res)=>{
   res.json({ token });
 });
 
+/**
+ * Anonymous wizard session mint. Lets the standalone wizard app operate
+ * without a pre-shared token (dev/demo convenience). Guarded by
+ * ALLOW_ANONYMOUS_WIZARD=true; when disabled (default) the wizard must be
+ * embedded via the hosting HRMS, which supplies a real token via ?token=.
+ */
+app.post('/api/auth/wizard-session', async (_req,res)=>{
+  if (process.env.ALLOW_ANONYMOUS_WIZARD !== 'true') {
+    return res.status(403).json({ message: 'Anonymous wizard access is disabled' });
+  }
+  const org = (await pool.query('SELECT id FROM organizations ORDER BY created_at LIMIT 1')).rows[0];
+  if (!org) return res.status(500).json({ message: 'No organization configured' });
+  const token = issueToken({ userId: 'service', organizationId: org.id, roles: ['HR_ADMIN'] });
+  res.json({ token });
+});
+
 app.get('/api/lookups', auth, async (req,res)=>{
   const organizationId = res.locals.auth.organizationId;
   const [departments,designations,locations,grades,costCenters,shifts] = await Promise.all([
@@ -203,9 +219,10 @@ app.get('/api/employees/:id/audit', auth, async(req,res)=>{
 app.post('/api/employees/:id/documents', auth, upload.single('file'), async(req,res)=>{
   if(!req.file) return res.status(400).json({message:'file is required'});
   const a=res.locals.auth;
+  const uploadedBy = a.userId === 'service' ? null : a.userId;
   const { documentType, documentNumber, issueDate, expiryDate }=req.body;
   const objectKey=path.relative('.',req.file.path).replace(/\\/g,'/');
-  const result=await pool.query(`INSERT INTO employee_documents(employee_id,document_type,file_name,object_key,document_number_ciphertext,issue_date,expiry_date,uploaded_by) SELECT $1,$2::document_type,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM employees WHERE id=$1 AND organization_id=$9) RETURNING *`,[req.params.id,documentType,req.file.originalname,objectKey,documentNumber,issueDate||null,expiryDate||null,a.userId,a.organizationId]);
+  const result=await pool.query(`INSERT INTO employee_documents(employee_id,document_type,file_name,object_key,document_number_ciphertext,issue_date,expiry_date,uploaded_by) SELECT $1,$2::document_type,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM employees WHERE id=$1 AND organization_id=$9) RETURNING *`,[req.params.id,documentType,req.file.originalname,objectKey,documentNumber,issueDate||null,expiryDate||null,uploadedBy,a.organizationId]);
   if(!result.rowCount) return res.status(404).json({message:'Employee not found'});
   res.status(201).json(result.rows[0]);
 });
