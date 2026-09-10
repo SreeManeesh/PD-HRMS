@@ -12,4 +12,6 @@ router.get(
   wizardController.session
 );
 
+router.post("/mirror", wizardController.mirror);
+
 export default router;

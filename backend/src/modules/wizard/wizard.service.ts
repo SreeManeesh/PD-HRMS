@@ -1,5 +1,49 @@
 import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
+import { createEmployee, type CreateEmployeeInput } from "../employees/employee.service";
+
+/** Minimal registration payload the wizard mirrors into HRMS after a creation. */
+export interface WizardMirrorPayload {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  designation?: string;
+  department?: string;
+  employmentType?: string;
+  dateOfJoining?: string;
+  state?: string;
+  country?: string;
+}
+
+/**
+ * Persist a wizard-registered employee into the main HRMS database so it shows
+ * up in the Employees list. Called server-to-server by the wizard API.
+ *
+ * Uses find-or-create for the login user (same email may already exist) and
+ * auto-creates unknown designation/department names, mirroring the bulk-import
+ * behaviour instead of the stricter normal-form create.
+ */
+export async function mirrorWizardRegistration(payload: WizardMirrorPayload) {
+  const firstName = (payload.firstName ?? "").trim();
+  const lastName = (payload.lastName ?? "").trim() || firstName;
+  const email = (payload.email ?? "").trim();
+  if (!firstName || !email) {
+    throw AppError.badRequest("Mirror requires firstName and email");
+  }
+
+  const input: CreateEmployeeInput = {
+    firstName,
+    lastName,
+    email,
+    designation: payload.designation,
+    department: payload.department,
+    employmentType: payload.employmentType || "Full-Time",
+    dateOfJoining: payload.dateOfJoining || undefined,
+    state: payload.state,
+    country: payload.country,
+  };
+  return createEmployee(input, { autoCreateRefs: true });
+}
 
 /**
  * Employee-registration wizard bridge.

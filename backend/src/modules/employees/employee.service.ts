@@ -241,16 +241,21 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
   const { designationId, departmentId, locationId } = await resolveOrgRefs(input, opts.autoCreateRefs, cache);
 
   // Employee creation requires an auth user (email is required for login).
+  // Reuse an existing account for the same email instead of failing with a
+  // unique-constraint error (wizard mirror / bulk import reprocess-safe).
   const email = (input.email ?? "").toLowerCase();
   let userId: string | null = null;
   if (email) {
-    const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash: await hashPassword(input.password ?? "Welcome@123"),
-        role: { connect: { name: "EMPLOYEE" } },
-      },
-    });
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email,
+          passwordHash: await hashPassword(input.password ?? "Welcome@123"),
+          role: { connect: { name: "EMPLOYEE" } },
+        },
+      });
+    }
     userId = user.id;
   }
 

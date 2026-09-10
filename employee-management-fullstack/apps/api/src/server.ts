@@ -115,6 +115,51 @@ app.get('/api/consents/catalog', auth, async (_req,res)=>{
   res.json(result.rows);
 });
 
+/**
+ * Best-effort server-to-server mirror into the main HRMS backend so a
+ * wizard-registered employee appears in the HRMS Employees list. Non-fatal:
+ * a mirror failure must never surface as a wizard error.
+ */
+async function mirrorToHrms(d: any, organizationId: string) {
+  const hrmsBase = (process.env.HRMS_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const secret = process.env.AUTH_SERVICE_SECRET || '';
+  const [desgRow, deptRow] = await Promise.all([
+    d.job?.designationId
+      ? pool.query('SELECT name FROM designations WHERE id=$1 AND organization_id=$2', [d.job.designationId, organizationId])
+      : Promise.resolve({ rows: [] }),
+    d.job?.departmentId
+      ? pool.query('SELECT name FROM departments WHERE id=$1 AND organization_id=$2', [d.job.departmentId, organizationId])
+      : Promise.resolve({ rows: [] }),
+  ]);
+  const desg = desgRow.rows[0]?.name;
+  const dept = deptRow.rows[0]?.name;
+  if (!desg || !dept) {
+    console.warn('[hrms-mirror] skipping: missing designation/department lookup', { desg, dept });
+    return;
+  }
+  const payload = {
+    firstName: d.firstName ?? '',
+    lastName: d.lastName ?? '',
+    email: d.officialEmail || d.personalEmail || '',
+    designation: desg,
+    department: dept,
+    employmentType: d.job?.employmentType ?? 'Full-Time',
+    dateOfJoining: d.job?.dateOfJoining || '',
+    state: d.currentAddress?.stateCode || '',
+    country: d.currentAddress?.countryCode || '',
+  };
+  const response = await fetch(`${hrmsBase}/api/wizard/mirror`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-wizard-secret': secret },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HRMS mirror ${response.status}: ${text.slice(0, 500)}`);
+  }
+}
+
 app.post('/api/employees', auth, async (req,res)=>{
   const parsed = employeeSchema.safeParse(cleanEmployeePayload(req.body));
   if (!parsed.success) return res.status(400).json({message:`Validation failed: ${validationMessage(parsed.error)}`,issues:parsed.error.flatten()});
@@ -161,6 +206,7 @@ app.post('/api/employees', auth, async (req,res)=>{
       return emp.rows[0];
     });
     res.status(201).json({employee});
+    mirrorToHrms(parsed.data, a.organizationId).catch((err) => console.warn('[hrms-mirror] failed:', err?.message || err));
   } catch (error: any) {
     console.error(error?.message || error);
     if (error?.status === 409) return res.status(409).json({message:error.message,issues:error.issues});

@@ -1,15 +1,15 @@
 /**
  * Registration Wizard Modal
  * Full-screen modal that embeds the employee-management-fullstack registration
- * wizard in an iframe. On successful wizard submission the wizard posts a
- * message back so this component can mirror a core employee record into the
- * HRMS Employees list.
+ * wizard in an iframe. On successful wizard submission the wizard mirrors the
+ * record server-to-server into the HRMS Employees list; this component only
+ * reacts to the wizard's registered message to update the UI.
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Loader2, RefreshCcw } from "lucide-react";
-import { getWizardSession, createEmployee } from "../../services/employeeService.js";
+import { getWizardSession } from "../../services/employeeService.js";
 import { useToast } from "../../context/ToastContext.jsx";
 
 export default function RegistrationWizardModal({ isOpen, onClose, onRegistered }) {
@@ -48,7 +48,8 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
     }
   }, [isOpen, open]);
 
-  // Mirror a created employee into the HRMS list when the wizard reports success.
+  // The wizard mirrors the created record into HRMS server-to-server. This
+  // listener only reacts to the success message and refreshes the UI.
   useEffect(() => {
     if (!isOpen) return;
     const handler = async (e) => {
@@ -61,25 +62,9 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
         return;
       }
       if (e.data?.type !== "EMPLOYEE_REGISTERED") return;
-      const p = e.data.payload || {};
-      try {
-        await createEmployee({
-          firstName: p.firstName || "",
-          lastName: p.lastName || "",
-          email: p.email || undefined,
-          designation: p.designation || undefined,
-          department: p.department || undefined,
-          employmentType: p.employmentType || undefined,
-          dateOfJoining: p.dateOfJoining || undefined,
-          state: p.state || undefined,
-          country: p.country || undefined,
-        });
-        setRegistered(true);
-        toast("Employee registered in HRMS");
-        onRegistered?.();
-      } catch (err) {
-        toast(err?.message || "Employee was created in the wizard but could not be mirrored to HRMS", "error");
-      }
+      setRegistered(true);
+      toast("Employee registered in HRMS");
+      onRegistered?.();
     };
     window.addEventListener("message", handler);
     listenerRef.current = handler;
