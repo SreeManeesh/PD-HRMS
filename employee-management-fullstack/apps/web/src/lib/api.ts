@@ -49,7 +49,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || 'Request failed');
+  if (!res.ok) {
+    const error = new Error(data.message || 'Request failed') as Error & { status?: number; issues?: unknown };
+    error.status = res.status;
+    error.issues = data.issues;
+    throw error;
+  }
   return data;
 }
 
