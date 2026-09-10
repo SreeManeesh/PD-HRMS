@@ -123,6 +123,23 @@ app.post('/api/employees', auth, async (req,res)=>{
   try {
     const employee = await withTx(async client=>{
       const d = parsed.data;
+      const dup=await client.query(`
+        SELECT
+          (employee_code = $1) AS clashes_code,
+          (LOWER(personal_email)=LOWER($2)) AS clashes_personal,
+          (official_email IS NOT NULL AND LOWER(official_email)=LOWER($3)) AS clashes_official
+        FROM employees
+        WHERE organization_id=$4 AND is_deleted=false
+          AND (employee_code=$1 OR LOWER(personal_email)=LOWER($2) OR (official_email IS NOT NULL AND LOWER(official_email)=LOWER($3)))
+        LIMIT 1
+      `,[d.employeeCode,d.personalEmail,d.officialEmail,a.organizationId]);
+      if(dup.rowCount){
+        const fieldErrors:Record<string,string[]>={};
+        if(dup.rows[0].clashes_code) fieldErrors.employeeCode=['This employee code is already in use'];
+        if(dup.rows[0].clashes_personal) fieldErrors.personalEmail=['This email is already in use by another employee'];
+        if(dup.rows[0].clashes_official) fieldErrors.officialEmail=['This email is already in use by another employee'];
+        throw Object.assign(new Error('A value already exists in the system'),{status:409,issues:{formErrors:[],fieldErrors}});
+      }
       const emp = await client.query(`INSERT INTO employees(organization_id,employee_code,first_name,middle_name,last_name,display_name,date_of_birth,gender,marital_status,blood_group,nationality,aadhaar_ciphertext,aadhaar_last4,pan_ciphertext,pan_masked,passport_number_ciphertext,passport_expiry,photograph_url,disability_flag,disability_type,religion,government_category,blood_donor,organ_donor,personal_mobile,personal_email,official_email,official_mobile,emergency_contact_name,emergency_contact_number,emergency_contact_relation,created_by,modified_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8::gender_code,$9::marital_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33) RETURNING id,*`,[
         a.organizationId,d.employeeCode,d.firstName,d.middleName,d.lastName,d.displayName || `${d.firstName} ${d.lastName}`,d.dateOfBirth,d.gender,d.maritalStatus,d.bloodGroup,d.nationality,encrypt(d.aadhaar),d.aadhaar?.slice(-4),encrypt(d.pan),d.pan ? `*****${d.pan.slice(-4)}`:null,encrypt(d.passportNumber),d.passportExpiry,d.photographUrl,d.disabilityFlag,d.disabilityType,d.religion,d.governmentCategory,d.bloodDonor,d.organDonor,d.personalMobile,d.personalEmail,d.officialEmail,d.officialMobile,d.emergencyContactName,d.emergencyContactNumber,d.emergencyContactRelation,actorId,actorId
       ]);
@@ -146,7 +163,9 @@ app.post('/api/employees', auth, async (req,res)=>{
     res.status(201).json({employee});
   } catch (error: any) {
     console.error(error?.message || error);
-    res.status(500).json({message:error?.code === '23505' ? 'Employee code/email already exists' : 'Employee creation failed'});
+    if (error?.status === 409) return res.status(409).json({message:error.message,issues:error.issues});
+    if (error?.code === '23505') return res.status(409).json({message:'This employee code is already in use',issues:{formErrors:[],fieldErrors:{employeeCode:['This employee code is already in use']}}});
+    res.status(500).json({message:'Employee creation failed'});
   }
 });
 
