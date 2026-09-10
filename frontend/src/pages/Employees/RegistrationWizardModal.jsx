@@ -7,12 +7,14 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { X, Loader2, RefreshCcw } from "lucide-react";
 import { getWizardSession, createEmployee } from "../../services/employeeService.js";
 import { useToast } from "../../context/ToastContext.jsx";
 
 export default function RegistrationWizardModal({ isOpen, onClose, onRegistered }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [src, setSrc] = useState("");
   const [wizardOrigin, setWizardOrigin] = useState("");
@@ -50,8 +52,15 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
   useEffect(() => {
     if (!isOpen) return;
     const handler = async (e) => {
-      if (e.data?.source !== "employee-wizard" || e.data?.type !== "EMPLOYEE_REGISTERED") return;
+      if (e.data?.source !== "employee-wizard") return;
       if (wizardOrigin && e.origin !== wizardOrigin) return;
+      // Sidebar navigation from inside the wizard → close modal and route.
+      if (e.data?.type === "NAVIGATE" && e.data?.href) {
+        onClose();
+        navigate(e.data.href);
+        return;
+      }
+      if (e.data?.type !== "EMPLOYEE_REGISTERED") return;
       const p = e.data.payload || {};
       try {
         await createEmployee({
@@ -75,7 +84,7 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
     window.addEventListener("message", handler);
     listenerRef.current = handler;
     return () => window.removeEventListener("message", handler);
-  }, [isOpen, wizardOrigin, toast, onRegistered]);
+  }, [isOpen, wizardOrigin, toast, onRegistered, onClose, navigate]);
 
   if (!isOpen) return null;
 
