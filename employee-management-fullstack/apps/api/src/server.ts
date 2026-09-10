@@ -116,9 +116,10 @@ app.get('/api/consents/catalog', auth, async (_req,res)=>{
 });
 
 /**
- * Best-effort server-to-server mirror into the main HRMS backend so a
- * wizard-registered employee appears in the HRMS Employees list. Non-fatal:
- * a mirror failure must never surface as a wizard error.
+ * Server-to-server mirror into the main HRMS backend so a wizard-registered
+ * employee appears in the HRMS Employees list. Awaited before the create
+ * response so a 201 already guarantees the record exists in HRMS. Non-fatal:
+ * mirrors never fail the wizard create itself.
  */
 async function mirrorToHrms(d: any, organizationId: string) {
   const hrmsBase = (process.env.HRMS_API_URL || 'http://localhost:4000').replace(/\/$/, '');
@@ -131,18 +132,12 @@ async function mirrorToHrms(d: any, organizationId: string) {
       ? pool.query('SELECT name FROM departments WHERE id=$1 AND organization_id=$2', [d.job.departmentId, organizationId])
       : Promise.resolve({ rows: [] }),
   ]);
-  const desg = desgRow.rows[0]?.name;
-  const dept = deptRow.rows[0]?.name;
-  if (!desg || !dept) {
-    console.warn('[hrms-mirror] skipping: missing designation/department lookup', { desg, dept });
-    return;
-  }
   const payload = {
     firstName: d.firstName ?? '',
     lastName: d.lastName ?? '',
     email: d.officialEmail || d.personalEmail || '',
-    designation: desg,
-    department: dept,
+    designation: desgRow.rows[0]?.name || '',
+    department: deptRow.rows[0]?.name || '',
     employmentType: d.job?.employmentType ?? 'Full-Time',
     dateOfJoining: d.job?.dateOfJoining || '',
     state: d.currentAddress?.stateCode || '',
@@ -152,7 +147,7 @@ async function mirrorToHrms(d: any, organizationId: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-wizard-secret': secret },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -205,8 +200,13 @@ app.post('/api/employees', auth, async (req,res)=>{
       await client.query(`INSERT INTO employee_audit_log(organization_id,employee_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$2,$3,'CREATED','EMPLOYEE',$2,$4)`,[a.organizationId,employeeId,actorId,{source:'employee-wizard'}]);
       return emp.rows[0];
     });
-    res.status(201).json({employee});
-    mirrorToHrms(parsed.data, a.organizationId).catch((err) => console.warn('[hrms-mirror] failed:', err?.message || err));
+    const mirroredToHrms = await mirrorToHrms(parsed.data, a.organizationId)
+      .then(() => true)
+      .catch((err: any) => {
+        console.warn('[hrms-mirror] failed:', err?.message || err);
+        return false;
+      });
+    res.status(201).json({ employee, mirroredToHrms });
   } catch (error: any) {
     console.error(error?.message || error);
     if (error?.status === 409) return res.status(409).json({message:error.message,issues:error.issues});

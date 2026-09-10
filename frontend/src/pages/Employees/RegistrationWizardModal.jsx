@@ -63,7 +63,8 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
       }
       if (e.data?.type !== "EMPLOYEE_REGISTERED") return;
       setRegistered(true);
-      toast("Employee registered in HRMS");
+      const synced = e.data?.payload?.mirroredToHrms !== false;
+      toast(synced ? "Employee registered in HRMS" : "Employee created — syncing to HRMS list…");
       onRegistered?.();
     };
     window.addEventListener("message", handler);
