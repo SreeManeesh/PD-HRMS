@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pool, withTx } from './db';
 import { auth, hashPassword, issueToken, verifyPassword } from './auth';
-import { employeeSchema, consentActionSchema } from './validators';
+import { employeeSchema, consentActionSchema, cleanEmployeePayload, validationMessage } from './validators';
 import { appendConsentAudit, ensureEmployeeConsents } from './consent';
 import { encrypt } from './crypto';
 
@@ -116,8 +116,8 @@ app.get('/api/consents/catalog', auth, async (_req,res)=>{
 });
 
 app.post('/api/employees', auth, async (req,res)=>{
-  const parsed = employeeSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({message:'Validation failed',issues:parsed.error.flatten()});
+  const parsed = employeeSchema.safeParse(cleanEmployeePayload(req.body));
+  if (!parsed.success) return res.status(400).json({message:`Validation failed: ${validationMessage(parsed.error)}`,issues:parsed.error.flatten()});
   const a = res.locals.auth;
   const actorId = a.userId === 'service' ? null : a.userId;
   try {
@@ -127,7 +127,8 @@ app.post('/api/employees', auth, async (req,res)=>{
         a.organizationId,d.employeeCode,d.firstName,d.middleName,d.lastName,d.displayName || `${d.firstName} ${d.lastName}`,d.dateOfBirth,d.gender,d.maritalStatus,d.bloodGroup,d.nationality,encrypt(d.aadhaar),d.aadhaar?.slice(-4),encrypt(d.pan),d.pan ? `*****${d.pan.slice(-4)}`:null,encrypt(d.passportNumber),d.passportExpiry,d.photographUrl,d.disabilityFlag,d.disabilityType,d.religion,d.governmentCategory,d.bloodDonor,d.organDonor,d.personalMobile,d.personalEmail,d.officialEmail,d.officialMobile,d.emergencyContactName,d.emergencyContactNumber,d.emergencyContactRelation,actorId,actorId
       ]);
       const employeeId = emp.rows[0].id;
-      await client.query(`INSERT INTO employee_addresses(employee_id,address_type,address_line1,address_line2,city,state_code,pincode,country_code,address_proof_type,resided_since) VALUES($1,'CURRENT',$2,$3,$4,$5,$6,$7,$8,$9),($1,'PERMANENT',$10,$11,$12,$13,$14,$15,$16,$17)`,[employeeId,d.currentAddress.line1,d.currentAddress.line2,d.currentAddress.city,d.currentAddress.stateCode,d.currentAddress.pincode,d.currentAddress.countryCode,d.currentAddress.proofType,d.currentAddress.since,d.permanentAddress.line1,d.permanentAddress.line2,d.permanentAddress.city,d.permanentAddress.stateCode,d.permanentAddress.pincode,d.permanentAddress.countryCode,d.permanentAddress.proofType,d.permanentAddress.since]);
+      const ca=d.currentAddress??{}; const pa=d.permanentAddress??{};
+      await client.query(`INSERT INTO employee_addresses(employee_id,address_type,address_line1,address_line2,city,state_code,pincode,country_code,address_proof_type,resided_since) VALUES($1,'CURRENT',COALESCE($2,''),$3,COALESCE($4,''),COALESCE($5,''),COALESCE($6,''),COALESCE($7,''),$8,$9),($1,'PERMANENT',COALESCE($10,''),$11,COALESCE($12,''),COALESCE($13,''),COALESCE($14,''),COALESCE($15,''),$16,$17)`,[employeeId,ca.line1,ca.line2,ca.city,ca.stateCode,ca.pincode,ca.countryCode,ca.proofType,ca.since,pa.line1,pa.line2,pa.city,pa.stateCode,pa.pincode,pa.countryCode,pa.proofType,pa.since]);
       const job = d.job;
       await client.query(`INSERT INTO employee_job_assignments(employee_id,employment_type,employee_category,date_of_joining,confirmation_date,probation_period_months,status,work_location_id,work_location_type,reporting_manager_id,designation_id,grade_id,department_id,sub_department,cost_center_id,business_unit,shift_id,weekly_offs,date_of_exit,exit_reason,rehire_eligible,attendance_tracking_mode,notice_period_days,effective_from) VALUES($1,$2::employment_type,$3::employee_category,$4,$5,$6,$7::employment_status,$8,$9::work_location_type,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$4)`,[employeeId,job.employmentType,job.employeeCategory,job.dateOfJoining,job.confirmationDate,job.probationMonths,job.status,job.workLocationId,job.workLocationType,job.reportingManagerId,job.designationId,job.gradeId,job.departmentId,job.subDepartment,job.costCenterId,job.businessUnit,job.shiftId,job.weeklyOffs ? JSON.stringify(job.weeklyOffs) : null,job.dateOfExit,job.exitReason,job.rehireEligible,job.attendanceTrackingMode,job.noticePeriodDays]);
       await client.query(`INSERT INTO employee_statutory(employee_id,uan_number,pf_number,pf_applicable,pf_joining_date,esic_number,esi_applicable,pt_state,pt_registration_number,lwf_applicable,tax_regime,pan_verified,aadhaar_pan_linked,tax_declaration_status,form16_delivery_mode,nomination_under_epf_done,eps_member,eps_previous_member_id,international_worker_flag,passport_country_of_origin,wc_policy_category,esic_dispensary) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::tax_regime,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,[employeeId,d.statutory.uanNumber,d.statutory.pfNumber,d.statutory.pfApplicable,d.statutory.pfJoiningDate,d.statutory.esicNumber,d.statutory.esiApplicable,d.statutory.ptState,d.statutory.ptRegistrationNumber,d.statutory.lwfApplicable,d.statutory.taxRegime,d.statutory.panVerified,d.statutory.aadhaarPanLinked,d.statutory.taxDeclarationStatus,d.statutory.form16DeliveryMode,d.statutory.nominationUnderEpfDone,d.statutory.epsMember,d.statutory.epsPreviousMemberId,d.statutory.internationalWorkerFlag,d.statutory.passportCountryOfOrigin,d.statutory.wcPolicyCategory,d.statutory.esicDispensary]);

@@ -11,8 +11,8 @@ export const employeeSchema = z.object({
   maritalStatus: z.enum(['SINGLE','MARRIED','DIVORCED','WIDOWED']).optional().nullable(),
   bloodGroup: z.string().max(5).optional().nullable(),
   nationality: z.string().min(1).max(50).default('India'),
-  aadhaar: z.string().regex(/^\d{12}$/).optional().nullable(),
-  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/).optional().nullable(),
+  aadhaar: z.string().transform(v=>v.replace(/\D/g,'')).refine(v=>v.length===12,'must be exactly 12 digits').optional().nullable(),
+  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/i).transform(v=>v.toUpperCase()).optional().nullable(),
   passportNumber: z.string().max(20).optional().nullable(),
   passportExpiry: z.string().optional().nullable(),
   photographUrl: z.string().url().optional().nullable(),
@@ -29,8 +29,8 @@ export const employeeSchema = z.object({
   emergencyContactName: z.string().min(1).max(100),
   emergencyContactNumber: z.string().min(7).max(20),
   emergencyContactRelation: z.string().max(40).optional().nullable(),
-  currentAddress: z.object({line1:z.string().min(1),line2:z.string().optional().nullable(),city:z.string().min(1),stateCode:z.string().min(2),pincode:z.string().min(4),countryCode:z.string().length(2),proofType:z.string().optional().nullable(),since:z.string().optional().nullable()}),
-  permanentAddress: z.object({line1:z.string().min(1),line2:z.string().optional().nullable(),city:z.string().min(1),stateCode:z.string().min(2),pincode:z.string().min(4),countryCode:z.string().length(2),proofType:z.string().optional().nullable(),since:z.string().optional().nullable()}),
+  currentAddress: z.object({line1:z.string().optional().nullable(),line2:z.string().optional().nullable(),city:z.string().optional().nullable(),stateCode:z.string().optional().nullable(),pincode:z.string().optional().nullable(),countryCode:z.string().optional().nullable(),proofType:z.string().optional().nullable(),since:z.string().optional().nullable()}).optional().nullable(),
+  permanentAddress: z.object({line1:z.string().optional().nullable(),line2:z.string().optional().nullable(),city:z.string().optional().nullable(),stateCode:z.string().optional().nullable(),pincode:z.string().optional().nullable(),countryCode:z.string().optional().nullable(),proofType:z.string().optional().nullable(),since:z.string().optional().nullable()}).optional().nullable(),
   job: z.object({
     employmentType: z.enum(['PERMANENT','CONTRACT','INTERN','CONSULTANT','PROBATION','TRAINEE']),
     employeeCategory: z.enum(['WHITE_COLLAR','BLUE_COLLAR','FIELD','WORK_FROM_HOME']).optional().nullable(),
@@ -75,3 +75,22 @@ export const consentActionSchema = z.object({
   deviceInfo: z.record(z.any()).optional(),
   geoLocation: z.record(z.any()).optional()
 });
+
+export function cleanEmployeePayload(raw:any):any{
+  const clean=(v:any):any=>{
+    if(typeof v==='string'){const t=v.trim();return t===''?null:t;}
+    if(Array.isArray(v))return v.map(clean);
+    if(v&&typeof v==='object'&&v.constructor===Object)return Object.fromEntries(Object.entries(v).map(([k,val]:[string,any])=>[k,clean(val)]));
+    return v;
+  };
+  const out=(clean(raw)||{}) as any;
+  if(typeof out.aadhaar==='string')out.aadhaar=out.aadhaar.replace(/\D/g,'')||null;
+  return out;
+}
+
+export function validationMessage(error:z.ZodError):string{
+  const fe=error.flatten().fieldErrors;
+  const key=Object.keys(fe)[0];
+  if(!key)return 'payload invalid';
+  return `${key} — ${(fe[key] && fe[key]![0]) || 'invalid'}`;
+}
