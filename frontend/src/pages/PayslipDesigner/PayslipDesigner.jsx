@@ -1,24 +1,20 @@
 /**
- * Smart Payslip Designer — three-area visual editor.
+ * Nesting Manager — organize payslip components into parent/child nesting
+ * groups, control calculation order, preview tax and manage versions.
  *
- *  LEFT   : component library (drag onto canvas)
- *  CENTER : A4 canvas with grid, drag/resize/select/duplicate/delete
- *  RIGHT  : context-sensitive properties (UI + logic + threshold + tax)
- *
- * Plus: Field Picker (visual variable binding), Nesting Manager, Calculation
- * Flow, Theme, Tax Preview, Live HTML preview, and Publish/Version history.
+ * The visual canvas design editor, Theme and Preview were moved out — Theme +
+ * Preview now live in the Payslip Branding page.
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  Plus, Trash2, Copy, MousePointer2, Save, Rocket, Undo2, Layers,
-  SlidersHorizontal, Palette, Calculator, FileText, FolderTree, CheckCircle2,
-  ChevronDown, ChevronRight, LayoutGrid,
+  Plus, Trash2, Save, Layers,
+  SlidersHorizontal, Calculator, FolderTree, Search,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
-import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
 import {
   listPayslipTemplates, createPayslipTemplate, getPayslipTemplate, savePayslipDraft,
   listPayslipVersions, publishPayslipTemplate, restorePayslipVersion,
@@ -28,13 +24,11 @@ import {
 } from "../../services/payslipDesignerService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-import { getCompanyBranding } from "../../services/payslipBrandingService.js";
-import { assetUrl } from "../../utils/assetUrl.js";
-import { FIELD_TREE, inr } from "./format.js";
+import { inr } from "./format.js";
+import { skillTypes } from "../../mock/employees.js";
+import { getEmployees } from "../../services/employeeService.js";
+import { getEmployeePayrollSummary } from "../../services/payrollService.js";
 import "./PayslipDesigner.css";
-
-const CANVAS_W = 780;
-const CANVAS_H = 1020;
 
 const DEFAULT_THEME = {
   primaryColor: "#0f766e",
@@ -44,6 +38,11 @@ const DEFAULT_THEME = {
   pageSize: "A4",
   orientation: "portrait",
   margins: { top: 40, right: 40, bottom: 40, left: 40 },
+};
+
+const pdInputStyle = {
+  width: "100%", height: 38, padding: "0 12px", border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)", fontSize: 13, color: "var(--text)", background: "var(--card)", outline: "none",
 };
 
 const DEFAULT_NESTS = [
@@ -70,12 +69,11 @@ export function PayslipDesignerPanel() {
   const [catalog, setCatalog] = useState([]);
   const [templateId, setTemplateId] = useState("");
   const [blueprint, setBlueprint] = useState(null);
-  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedId, setSelectedId] = useState(null);
-  const [activeView, setActiveView] = useState("design");
+  const [activeView, setActiveView] = useState("nest");
 
   // ── Custom component creation (Nesting manager) ──
   const [showNewComp, setShowNewComp] = useState(false);
@@ -89,27 +87,21 @@ export function PayslipDesignerPanel() {
   const [ncPriority, setNcPriority] = useState("20");
   const [ncNest, setNcNest] = useState("");
   const toast = useToast();
-  const [companyBranding, setCompanyBranding] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    getCompanyBranding()
-      .then((b) => { if (active) setCompanyBranding(b); })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
   const [calcResult, setCalcResult] = useState(null);
   const [taxCompare, setTaxCompare] = useState(null);
   const [validation, setValidation] = useState(null);
   const [versions, setVersions] = useState([]);
-  const [showConfirmPublish, setShowConfirmPublish] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
   const [history, setHistory] = useState([]);
   const [redoCursor, setRedoCursor] = useState(0);
-  const [canvasScale, setCanvasScale] = useState(0.62);
-  const [logoPreviewUrl, setLogoPreviewUrl] = useState(null);
+  const [matchedEmployees, setMatchedEmployees] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [empQuery, setEmpQuery] = useState("");
+  const [calcEmp, setCalcEmp] = useState(null);
 
-  const dragRef = useRef(null);
+  // ── New nesting template (asks for a skill type) ──
+  const [showNewTemplate, setShowNewTemplate] = useState(false);
+  const [ntName, setNtName] = useState("");
+  const [ntSkillType, setNtSkillType] = useState("");
 
   const load = useCallback(async (id) => {
     setBusy(true);
@@ -126,7 +118,7 @@ export function PayslipDesignerPanel() {
         nests: DEFAULT_NESTS.map((n) => ({ ...n })),
         components: [],
         taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
-        settings: { companyName: "Proteccio HRMS" },
+        settings: { companyName: "Proteccio HRMS", skillType: "" },
       };
       // Percentage components are based on CTC (monthly cost-to-company), not
       // basic — migrate any legacy "basic" source on load.
@@ -153,20 +145,40 @@ export function PayslipDesignerPanel() {
     setLoadingTemplates(true);
     listPayslipTemplates()
       .then((res) => {
-        setTemplates(res.data || []);
-        if (res.data?.length && !templateId) {
-          setTemplateId(res.data[0].id);
+        const list = res.data || [];
+        setTemplates(list);
+        if (!templateId) {
+          const active = list.find((t) => t.isActive && t.status === "Published");
+          const pick = (active || list[0]);
+          if (pick) setTemplateId(pick.id);
         }
       })
       .catch((e) => setError(e.message || "Could not load templates"))
       .finally(() => setLoadingTemplates(false));
     getComponentCatalog().then((r) => setCatalog(r.data || [])).catch(() => setCatalog([]));
+    getEmployees({ limit: 5000 }).then((res) => setEmployees(res.data || [])).catch(() => setEmployees([]));
   }, []);
 
   useEffect(() => {
     if (!templateId) return;
     load(templateId);
   }, [templateId, load]);
+
+  // Pull active employees whose skill type matches this nesting template's
+  // skill type — their payslips are generated from this nesting template.
+  const matchedSkillType = blueprint?.settings?.skillType || "";
+  useEffect(() => {
+    if (!matchedSkillType) { setMatchedEmployees([]); return; }
+    let active = true;
+    getEmployees({ status: "Active", limit: 5000 })
+      .then((res) => {
+        if (!active) return;
+        const list = res.data || [];
+        setMatchedEmployees(list.filter((e) => (e.skillType || "") === matchedSkillType));
+      })
+      .catch(() => { if (active) setMatchedEmployees([]); });
+    return () => { active = false; };
+  }, [matchedSkillType]);
 
   const pushHistory = useCallback((nextBp) => {
     setBlueprint((prev) => nextBp || prev);
@@ -196,148 +208,6 @@ export function PayslipDesignerPanel() {
       setRedoCursor((c) => c + 1);
       setBlueprint(cloneBlueprint(history[redoCursor + 1]));
     }
-  };
-
-  const packs = useMemo(() => {
-    const byType = { earning: [], deduction: [], employer: [], reimbursement: [] };
-    for (const c of catalog) {
-      if (byType[c.kind]) byType[c.kind].push(c);
-    }
-    return byType;
-  }, [catalog]);
-
-  const scaleBox = (b) => ({
-    x: b.x * canvasScale,
-    y: b.y * canvasScale,
-    w: b.w * canvasScale,
-    h: b.h * canvasScale,
-  });
-
-  const onDropCanvas = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    const data = JSON.parse(e.dataTransfer.getData("application/json") || "{}");
-    if (data.source === "library" || data.source === "catalog") {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const b = blueprint?.components.length || 0;
-      const newComp = {
-        id: uid(),
-        label: data.label || "Component",
-        kind: data.kind || "earning",
-        logic: data.logic ? JSON.parse(JSON.stringify(data.logic)) : { type: "fixed", value: 0, calculationPriority: 20 },
-        ui: {
-          x: Math.max(0, Math.round((e.clientX - rect.left) / canvasScale - 60)),
-          y: Math.max(0, Math.round((e.clientY - rect.top) / canvasScale)),
-          w: 60,
-          h: 24,
-        },
-        nestId: data.defaultNestId || null,
-        displayOrder: b,
-        visible: true,
-      };
-      mutateBlueprint((next) => {
-        next.components = [...next.components, newComp];
-      });
-      setSelectedId(newComp.id);
-    }
-  };
-
-  const onDragOverCanvas = (e) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-  const onDragLeaveCanvas = () => setDragOver(false);
-
-  const selectComp = (id) => {
-    setSelectedId(id);
-    setActiveView("design");
-  };
-
-  const removeComp = (id) => {
-    const existed = blueprint?.components.some((c) => c.id === id);
-    mutateBlueprint((next) => {
-      next.components = next.components.filter((c) => c.id !== id);
-    });
-    if (selectedId === id) setSelectedId(null);
-    if (existed) toast("Component removed");
-  };
-
-  const duplicateComp = (id) => {
-    mutateBlueprint((next) => {
-      const src = next.components.find((c) => c.id === id);
-      if (!src) return;
-      const copy = JSON.parse(JSON.stringify(src));
-      copy.id = uid();
-      copy.ui.y += 30;
-      next.components = [...next.components, copy];
-    });
-    toast("Component duplicated");
-  };
-
-  const selectedComp = blueprint?.components.find((c) => c.id === selectedId) || null;
-
-  const updateSelected = (patch) => {
-    mutateBlueprint((next) => {
-      const i = next.components.findIndex((c) => c.id === selectedId);
-      if (i >= 0) next.components[i] = { ...next.components[i], ...patch };
-    });
-  };
-
-  const updateSelectedLogic = (patch) => {
-    mutateBlueprint((next) => {
-      const i = next.components.findIndex((c) => c.id === selectedId);
-      if (i >= 0) next.components[i] = {
-        ...next.components[i],
-        logic: { ...(next.components[i].logic || {}), ...patch },
-      };
-    });
-  };
-
-  const moveActiveComp = (dx, dy) => {
-    if (!selectedId) return;
-    setBlueprint((prev) => {
-      const next = cloneBlueprint(prev);
-      const i = next.components.findIndex((c) => c.id === selectedId);
-      if (i >= 0) {
-        next.components[i].ui.x = Math.max(0, next.components[i].ui.x + dx);
-        next.components[i].ui.y = Math.max(0, next.components[i].ui.y + dy);
-      }
-      return next;
-    });
-  };
-
-  const onPointerMoveComp = (e, id) => {
-    if (!dragRef.current || dragRef.current.id !== id || !dragRef.current.start) return;
-    const cur = { x: e.clientX, y: e.clientY };
-    const start = dragRef.current.start;
-    const dx = (cur.x - start.x) / canvasScale;
-    const dy = (cur.y - start.y) / canvasScale;
-    setBlueprint((prev) => {
-      const next = cloneBlueprint(prev);
-      const i = next.components.findIndex((c) => c.id === id);
-      if (i >= 0) {
-        next.components[i].ui.x = Math.max(0, (next.components[i].ui.x || 0) + dx);
-        next.components[i].ui.y = Math.max(0, (next.components[i].ui.y || 0) + dy);
-      }
-      return next;
-    });
-    dragRef.current.start = cur;
-  };
-
-  const onPointerDownComp = (e, id) => {
-    e.stopPropagation();
-    selectComp(id);
-    dragRef.current = { id, start: { x: e.clientX, y: e.clientY } };
-    const up = () => {
-      dragRef.current = null;
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointerup", up);
-  };
-
-  const onCanvasClick = () => {
-    if (!dragRef.current) setSelectedId(null);
   };
 
   const runCalculate = useCallback(async () => {
@@ -376,50 +246,79 @@ export function PayslipDesignerPanel() {
     if (activeView === "tax") {
       runTaxCompare();
       runCalculate();
-    } else if (activeView === "preview") {
-      runCalculate();
     }
   }, [activeView, runTaxCompare, runCalculate]);
 
-  // Recalculate whenever the blueprint changes so the live preview/tax
-  // stay in sync with design edits (colours, logo, components, order).
+  // Recalculate whenever the blueprint changes so the calc-flow and tax
+  // views stay in sync with nesting edits (components, order, logic).
   useEffect(() => {
     if (!blueprint) return;
-    if (activeView === "design" || activeView === "preview" || activeView === "calcflow" || activeView === "tax" || activeView === "nest") {
+    if (activeView === "calcflow" || activeView === "tax" || activeView === "nest") {
       const t = window.setTimeout(() => { runCalculate(); }, 250);
       return () => window.clearTimeout(t);
     }
   }, [blueprint, activeView, runCalculate]);
 
-  const handleSave = async () => {
-    if (!blueprint) return;
-    setSaving(true);
+  const handleSaveAndPublish = async () => {
+    if (!blueprint || !templateId) return;
+    setBusy(true);
     setError("");
     setNotice("");
     try {
-      const res = await savePayslipDraft(templateId, blueprint, "Draft saved from designer");
-      setNotice(`Saved as v${res.data.version}`);
-      toast("Draft saved");
+      // 1. Validate
+      const v = await validateBlueprint(blueprint);
+      setValidation(v.data);
+      if (!v.data.ok) {
+        setError("Validation failed — fix the errors before publishing.");
+        toast("Validation failed", "error");
+        setActiveView("nest");
+        return;
+      }
+      // 2. Save the draft (persists this nesting template)
+      const s = await savePayslipDraft(templateId, blueprint, "Saved from Nesting Manager (Save & Publish)");
+      // 3. Publish as the active version
+      const p = await publishPayslipTemplate(templateId);
+      setNotice(`Validated, saved as v${s.data?.version ?? "?"} and published — active v${p.data?.version ?? "?"}`);
+      toast("Nesting template saved & published");
       load(templateId);
     } catch (e) {
-      setError(e.message || "Save failed");
+      setError(e.message || "Save & publish failed");
+      toast(e.message || "Save & publish failed", "error");
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   };
 
-  const handlePublish = async () => {
-    setShowConfirmPublish(false);
+  const handleNewTemplate = async () => {
+    if (!ntName.trim() || !ntSkillType) return;
     setBusy(true);
+    setError("");
+    setNotice("");
     try {
-      const res = await publishPayslipTemplate(templateId);
-      setNotice(`Published as active v${res.data.version}`);
-      toast("Template published");
-      load(templateId);
+      const r = await createPayslipTemplate({ name: ntName.trim() });
+      const id = r.data.id;
+      // Tag the new nesting with the chosen skill type, then persist it as a
+      // draft so payslips for employees of this skill type use this template.
+      const t = await getPayslipTemplate(id);
+      const bp0 = t.data.latestBlueprint || null;
+      if (bp0) {
+        const bp = JSON.parse(JSON.stringify(bp0));
+        bp.settings = { ...(bp.settings || {}), skillType: ntSkillType };
+        await savePayslipDraft(id, bp, "New nesting template with skill type");
+      }
+      const list = await listPayslipTemplates();
+      setTemplates(list.data || []);
+      setTemplateId(id);
+      load(id);
+      toast(`Nesting template created for ${ntSkillType}`);
     } catch (e) {
-      setError(e.message || "Publish failed");
+      setError(e.message || "Could not create template");
+      toast(e.message || "Could not create template", "error");
     } finally {
       setBusy(false);
+      setShowNewTemplate(false);
+      setNtName("");
+      setNtSkillType("");
     }
   };
 
@@ -459,25 +358,6 @@ export function PayslipDesignerPanel() {
     }
   };
 
-  const autoArrange = () => {
-    if (!blueprint) return;
-    mutateBlueprint((next) => {
-      const W = 60, H = 24, STEP_X = 72, STEP_Y = 30, ROWS_PER_COL = 10, X0 = 20, Y0 = 10;
-      const ordered = [...next.components].sort((a, b) =>
-        (a.logic.calculationPriority ?? 999) - (b.logic.calculationPriority ?? 999)
-      );
-      const idx = new Map(ordered.map((c, i) => [c.id.toLowerCase(), i]));
-      next.components = next.components.map((c) => {
-        const i = idx.get(c.id.toLowerCase());
-        if (i === undefined) return c;
-        const col = Math.floor(i / ROWS_PER_COL);
-        const row = i % ROWS_PER_COL;
-        return { ...c, ui: { ...c.ui, x: X0 + col * STEP_X, y: Y0 + row * STEP_Y, w: W, h: H } };
-      });
-    });
-    setNotice("Layout auto-arranged into a clean, non-overlapping grid");
-  };
-
   const createComponent = () => {
     if (!blueprint || !ncLabel.trim()) return;
     mutateBlueprint((next) => {
@@ -510,44 +390,6 @@ export function PayslipDesignerPanel() {
     toast("Component added");
   };
 
-  const liveHtml = useMemo(() => {
-    if (!blueprint) return "";
-    const t = blueprint.theme || DEFAULT_THEME;
-    const grouped = (blueprint.nests || []).map((n) => ({
-      nest: n,
-      comps: blueprint.components.filter((c) => c.nestId === n.id && c.visible !== false),
-    })).filter((g) => g.comps.length);
-    const nestedComps = grouped.flatMap((g) => g.comps);
-    const allVisible = blueprint.components.filter((c) => c.visible !== false);
-    const val = (id) => {
-      const r = calcResult?.results?.[id];
-      return r ? inr(r.final) : "—";
-    };
-    const sec = (title, comps, color) => {
-      if (!comps.length) return "";
-      return `<div style="margin-top:14px">
-        <div style="font-weight:800;color:${color};border-bottom:2px solid ${color};padding-bottom:4px;margin-bottom:6px">${title}</div>
-        ${comps.map((c) => `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12.5px"><span>${c.label}</span><span>${val(c.id)}</span></div>`).join("")}
-      </div>`;
-    };
-    const earnings = allVisible.filter((c) => (c.kind === "earning" || c.kind === "reimbursement") && (!c.nestId || nestedComps.includes(c)));
-    const deductions = allVisible.filter((c) => c.kind === "deduction" && (!c.nestId || nestedComps.includes(c)));
-    return `<div class="pd-preview-sheet" style="font-family:${t.font};color:#0e1e2c;max-width:640px;margin:0 auto">
-      <div style="background:${t.primaryColor};color:#fff;border-radius:6px;padding:14px 18px;display:flex;align-items:center;gap:12px">
-        ${companyBranding?.logoUrl ? `<img src="${assetUrl(companyBranding.logoUrl)}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : (blueprint.theme.logo ? `<img src="${blueprint.theme.logo}" alt="logo" style="max-height:44px;max-width:90px;object-fit:contain;background:#fff;border-radius:4px;padding:2px" />` : "")}
-        <div>
-          <h2 style="margin:0;font-size:16px">${companyBranding?.companyName || blueprint.settings?.companyName || "Company"}</h2>
-          <div style="opacity:.85;font-size:12px">${companyBranding?.tagline || `Salary Payslip · FY ${blueprint.financialYear}`}</div>
-        </div>
-      </div>
-      ${sec("Earnings", earnings, t.primaryColor)}
-      ${sec("Deductions", deductions, "#dc2626")}
-      <div style="display:flex;justify-content:space-between;border-top:2px solid ${t.primaryColor};margin-top:14px;padding-top:8px;font-weight:800;font-size:14px">
-        <span>Net Pay</span><span>${calcResult ? inr(calcResult.net) : "—"}</span>
-      </div>
-    </div>`;
-  }, [blueprint, calcResult, companyBranding?.companyName, companyBranding?.logoUrl, companyBranding?.tagline]);
-
   const engSummary = useMemo(() => {
     if (!calcResult) return [];
     return Object.entries(calcResult.results).map(([id, r]) => ({
@@ -567,37 +409,10 @@ export function PayslipDesignerPanel() {
   return (
     <>
       <div className="pd-shell">
-        <PageHeader title="Payslip Designer" subtitle="Design payslips visually — everything is JSON-driven and configurable">
-          <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-            {templates.map((t) => <option key={t.id} value={t.id}>{t.name} (v{t.latestVersion})</option>)}
-          </select>
-          <button
-            className="pd-btn"
-            onClick={async () => {
-              const name = prompt("Template name", "New Payslip Template");
-              if (name) {
-                const r = await createPayslipTemplate({ name });
-                setTemplateId(r.data.id);
-                load(r.data.id);
-              }
-            }}
-          >
-            <Plus size={15} /> New
-          </button>
-        </PageHeader>
+        <PageHeader title="Nesting Manager" subtitle="Organize components into nesting groups — everything is JSON-driven and configurable" />
 
         {error && <div className="pd-error">{error}</div>}
         {notice && <div style={{ fontSize: "12.5px", color: "#16a34a", fontWeight: 600 }}>{notice}</div>}
-
-        <div className="pd-toolbar">
-          <button className="pd-btn" onClick={undo} disabled={redoCursor === 0}><Undo2 size={15} /> Undo</button>
-          <button className="pd-btn" onClick={redo} disabled={redoCursor >= history.length - 1}>Redo</button>
-          <button className="pd-btn" onClick={handleAutoConfig} disabled={busy}><Layers size={15} /> Auto-Configure</button>
-          <button className="pd-btn" onClick={autoArrange} disabled={busy}><LayoutGrid size={15} /> Auto-arrange</button>
-          <button className="pd-btn" onClick={runValidation}><CheckCircle2 size={15} /> Validate</button>
-          <button className="pd-btn" onClick={handleSave} disabled={saving || !canWrite}>{saving ? "Saving…" : (<><Save size={15} /> Save Draft</>)}</button>
-          <button className="pd-btn primary" onClick={() => setShowConfirmPublish(true)} disabled={!canWrite || busy}><Rocket size={15} /> Publish</button>
-        </div>
 
         {validation && (
           <div style={{
@@ -622,12 +437,9 @@ export function PayslipDesignerPanel() {
 
         <div className="pd-tabs">
           {[
-            { id: "design", label: "Design", icon: MousePointer2 },
             { id: "nest", label: "Nesting", icon: FolderTree },
             { id: "calcflow", label: "Calc Flow", icon: Calculator },
-            { id: "theme", label: "Theme", icon: Palette },
             { id: "tax", label: "Tax", icon: SlidersHorizontal },
-            { id: "preview", label: "Preview", icon: FileText },
             { id: "history", label: "Versions", icon: Layers },
           ].map((t) => {
             const Icon = t.icon;
@@ -637,129 +449,24 @@ export function PayslipDesignerPanel() {
               </button>
             );
           })}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              style={{ height: 32, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
+            >
+              {templates.map((t) => <option key={t.id} value={t.id}>{t.name} (v{t.latestVersion}){t.isActive && t.status === "Published" ? " — Active" : ""}</option>)}
+            </select>
+            <button className="pd-btn" onClick={() => setActiveView("nest")}>
+              <FolderTree size={15} /> Nesting Manager
+            </button>
+            <button className="pd-btn" onClick={() => setShowNewTemplate(true)} disabled={busy}>
+              <Plus size={15} /> New Template
+            </button>
+          </div>
         </div>
 
         {busy && <Spinner />}
-
-        {/* DESIGN VIEW — 3 AREAS */}
-        {activeView === "design" && blueprint && (
-          <div className="pd-layout">
-            <aside className="pd-panel">
-              <div className="pd-panel-header">Component Library</div>
-              <div className="pd-library">
-                <div className="pd-library-group">
-                  <div className="pd-library-group-title">Basic</div>
-                  <div className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "library", type: "static_text", label: "Static Text", kind: "earning", logic: { type: "fixed", value: 0, calculationPriority: 10 } }))}>Static Text</div>
-                  <div className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "library", type: "dynamic_field", label: "Dynamic Field", kind: "earning", logic: { type: "formula", formula: "0", calculationPriority: 10 } }))}>Dynamic Field</div>
-                  <div className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "library", type: "divider", label: "Divider", kind: "earning", logic: { type: "fixed", value: 0, calculationPriority: 10 } }))}>Divider</div>
-                  <div className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "library", type: "table", label: "Table", kind: "earning", logic: { type: "fixed", value: 0, calculationPriority: 10 } }))}>Table</div>
-                </div>
-                <div className="pd-library-group">
-                  <div className="pd-library-group-title">Earnings</div>
-                  {(packs.earning || []).map((c) => (
-                    <div key={c.id} className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "catalog", ...c }))}>{c.label}</div>
-                  ))}
-                  {!packs.earning?.length && <div className="pd-hint">Click Auto-Configure to load these.</div>}
-                </div>
-                <div className="pd-library-group">
-                  <div className="pd-library-group-title">Deductions</div>
-                  {(packs.deduction || []).map((c) => (
-                    <div key={c.id} className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "catalog", ...c }))}>{c.label}</div>
-                  ))}
-                </div>
-                <div className="pd-library-group">
-                  <div className="pd-library-group-title">Employer</div>
-                  {(packs.employer || []).map((c) => (
-                    <div key={c.id} className="pd-lib-item" draggable onDragStart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ source: "catalog", ...c }))}>{c.label}</div>
-                  ))}
-                </div>
-              </div>
-            </aside>
-
-            <div
-              className="pd-canvas-wrap"
-              style={{ background: dragOver ? "var(--primary-light)" : "var(--background)" }}
-              onDragOver={onDragOverCanvas}
-              onDragLeave={onDragLeaveCanvas}
-            >
-              <div
-                className="pd-page"
-                style={{
-                  width: CANVAS_W * canvasScale,
-                  height: CANVAS_H * canvasScale,
-                  background: dragOver ? "#f0fdfa" : "#fff",
-                }}
-                onDrop={onDropCanvas}
-                onClick={onCanvasClick}
-              >
-                {!blueprint.components.length && (
-                  <div className="pd-empty-canvas">
-                    <MousePointer2 size={28} />
-                    <span>Drag components from the left onto the canvas</span>
-                  </div>
-                )}
-                {blueprint.components.filter((c) => c.visible !== false).map((c) => {
-                  const s = scaleBox(c.ui);
-                  const isSel = selectedId === c.id;
-                  return (
-                    <div
-                      key={c.id}
-                      className={`pd-comp ${isSel ? "selected" : ""}`}
-                      style={{ left: s.x, top: s.y, width: s.w, height: s.h }}
-                      onPointerDown={(e) => onPointerDownComp(e, c.id)}
-                      onPointerMove={(e) => onPointerMoveComp(e, c.id)}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="pd-comp-header">
-                        {c.label}
-                        <span className="pd-comp-actions">
-                          <button className="pd-btn small" onClick={() => duplicateComp(c.id)}><Copy size={11} /></button>
-                          <button className="pd-btn small danger" onClick={() => removeComp(c.id)}><Trash2 size={11} /></button>
-                        </span>
-                      </div>
-                      <div className="pd-comp-body">
-                        {c.dataBinding?.source
-                          ? c.dataBinding.source
-                          : c.logic.type === "percentage"
-                            ? `${c.logic.pct || 0}% of ${c.logic.sourceField === "ctc" ? "CTC" : c.logic.sourceField || "—"}`
-                            : c.logic.formula || (c.logic.value ?? 0)}
-                      </div>
-                      {isSel && (
-                        <div style={{ position: "absolute", right: 0, bottom: 0, fontSize: 9, color: "var(--primary)", background: "var(--primary-light)", padding: "1px 4px", borderRadius: 2 }}>
-                          {c.ui.x},{c.ui.y} · {c.logic.calculationPriority ?? 20}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ display: "flex", gap: 10, marginTop: 12, fontSize: 12, color: "var(--subtext)" }}>
-                <button className="pd-btn small" onClick={() => setCanvasScale(0.45)}>Fit page</button>
-                <button className="pd-btn small" onClick={() => setCanvasScale(0.75)}>Zoom</button>
-                <span>A4 · Grid 20px · Snap to grid · Drag to move · Click to select</span>
-              </div>
-            </div>
-
-            <aside className="pd-panel">
-              <div className="pd-panel-header">Properties</div>
-              <div className="pd-props">
-                {!selectedComp ? (
-                  <div className="pd-hint">Select a component on the canvas to edit its properties.</div>
-                ) : (
-                  <PropertyEditor
-                    comp={selectedComp}
-                    nests={blueprint.nests}
-                    onChange={updateSelected}
-                    onLogic={updateSelectedLogic}
-                    onRemove={() => removeComp(selectedComp.id)}
-                    onDuplicate={() => duplicateComp(selectedComp.id)}
-                    onMove={moveActiveComp}
-                  />
-                )}
-              </div>
-            </aside>
-          </div>
-        )}
 
         {/* NESTING VIEW */}
         {activeView === "nest" && blueprint && (
@@ -822,7 +529,45 @@ export function PayslipDesignerPanel() {
                 })}
               />
             ))}
-            <button className="pd-btn" onClick={() => setShowNewComp((s) => !s)}><Plus size={15} /> New Component</button>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="pd-btn" onClick={() => setShowNewComp((s) => !s)}><Plus size={15} /> New Component</button>
+                <button className="pd-btn" onClick={() => {
+                  const n = prompt("Nest name");
+                  if (n) { mutateBlueprint((next) => { next.nests = [...next.nests, { id: uid(), name: n, displayOrder: (next.nests.length + 1) * 10 }]; }); toast("Nest created"); }
+                }}><Plus size={15} /> New Nest</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--label)" }}>
+                  Skill Type
+                  <select
+                    value={blueprint.settings?.skillType || ""}
+                    onChange={(e) => mutateBlueprint((next) => { next.settings = { ...(next.settings || {}), skillType: e.target.value }; })}
+                    style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13, background: "var(--card)", outline: "none", cursor: "pointer" }}
+                  >
+                    <option value="">Select Skill Type</option>
+                    {skillTypes.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </label>
+                <button className="pd-btn primary" onClick={handleSaveAndPublish} disabled={busy || !canWrite}>
+                  {busy ? "Saving…" : (<><Save size={15} /> Save & Publish</>)}
+                </button>
+              </div>
+            </div>
+
+            {matchedSkillType && (
+              <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: "var(--radius)", background: "var(--primary-light)", border: "1px solid var(--primary)", fontSize: 12.5 }}>
+                <span style={{ fontWeight: 700, color: "var(--primary)" }}>{matchedEmployees.length}</span>
+                <span style={{ color: "var(--text)" }}> active employee{matchedEmployees.length === 1 ? "" : "s"} match the skill type "{matchedSkillType}" — their payslips will be generated with this nesting template.</span>
+                {matchedEmployees.length > 0 && (
+                  <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {matchedEmployees.map((e) => (
+                      <span key={e.id} style={{ padding: "3px 10px", background: "#fff", border: "1px solid var(--border)", borderRadius: 99, fontSize: 11.5, color: "var(--label)" }}>{e.firstName} {e.lastName} ({e.id})</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {showNewComp && (
               <div style={{ background: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14, marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Create a new component</div>
@@ -879,10 +624,6 @@ export function PayslipDesignerPanel() {
                 </div>
               </div>
             )}
-            <button className="pd-btn" onClick={() => {
-              const n = prompt("Nest name");
-              if (n) { mutateBlueprint((next) => { next.nests = [...next.nests, { id: uid(), name: n, displayOrder: (next.nests.length + 1) * 10 }]; }); toast("Nest created"); }
-            }}><Plus size={15} /> New Nest</button>
           </div>
         )}
 
@@ -893,7 +634,25 @@ export function PayslipDesignerPanel() {
             <div className="pd-hint" style={{ marginBottom: 12 }}>
               Payroll is computed in dependency order (not canvas order). Drag rows to change priority; dependencies are validated automatically.
             </div>
-            <button className="pd-btn" onClick={runCalculate} style={{ marginBottom: 12 }}><Calculator size={15} /> Recalculate</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--label)" }}>
+                Nesting Template
+                <select
+                  value={templateId}
+                  onChange={(e) => setTemplateId(e.target.value)}
+                  style={{ height: 32, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
+                >
+                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name} (v{t.latestVersion}){t.isActive && t.status === "Published" ? " — Active" : ""}</option>)}
+                </select>
+              </label>
+              <button className="pd-btn" onClick={runCalculate} style={{ display: "flex", alignItems: "center", gap: 6 }}><Calculator size={15} /> Recalculate</button>
+              <EmployeeSearchBox
+                employees={employees}
+                value={empQuery}
+                onChange={setEmpQuery}
+                onSelect={(emp) => { setCalcEmp(emp); setEmpQuery(""); }}
+              />
+            </div>
             {calcResult && (
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
                 <div style={{ background: "var(--background)", padding: "10px 14px", borderRadius: "var(--radius)" }}><strong>Gross</strong> {inr(calcResult.gross)}</div>
@@ -902,88 +661,37 @@ export function PayslipDesignerPanel() {
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {[...blueprint.components].sort((a, b) => (a.logic.calculationPriority ?? 999) - (b.logic.calculationPriority ?? 999)).map((c, i) => {
-                const r = calcResult?.results?.[c.id];
-                return (
-                  <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
-                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--primary-light)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12 }}>{i + 1}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{c.label} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({c.id})</span></div>
-                      <div style={{ fontSize: 11.5, color: "var(--subtext)" }}>
-                        {c.logic.type === "percentage" ? `${c.logic.pct || 0}% of ${c.logic.sourceField === "ctc" ? "CTC" : c.logic.sourceField}` : c.logic.type === "formula" ? `formula: ${c.logic.formula}` : `fixed: ${c.logic.value}`}
-                        {c.logic.max ? ` · max ${c.logic.max.pct !== undefined ? `${c.logic.max.pct}% of ${c.logic.max.pctOf || "?"}` : (c.logic.max.value ?? c.logic.max.formula ?? "")} → ${c.logic.max.action || "none"}${c.logic.max.transferTo ? ` → ${c.logic.max.transferTo}` : ""}` : ""}
-                        {c.logic.isBalancing ? " · balancing" : ""}
+              {(() => {
+                const sortedComps = [...blueprint.components].sort((a, b) => (a.logic.calculationPriority ?? 999) - (b.logic.calculationPriority ?? 999));
+                const rankBy = new Map(sortedComps.map((c, i) => [c.id, i + 1]));
+                return sortedComps.map((c) => {
+                  const r = calcResult?.results?.[c.id];
+                  return (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
+                      <span style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--primary-light)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12 }}>{rankBy.get(c.id)}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{c.label} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({c.id})</span></div>
+                        <div style={{ fontSize: 11.5, color: "var(--subtext)" }}>
+                          {c.logic.type === "percentage" ? `${c.logic.pct || 0}% of ${c.logic.sourceField === "ctc" ? "CTC" : c.logic.sourceField}` : c.logic.type === "formula" ? `formula: ${c.logic.formula}` : `fixed: ${c.logic.value}`}
+                          {c.logic.max ? ` · max ${c.logic.max.pct !== undefined ? `${c.logic.max.pct}% of ${c.logic.max.pctOf || "?"}` : (c.logic.max.value ?? c.logic.max.formula ?? "")} → ${c.logic.max.action || "none"}${c.logic.max.transferTo ? ` → ${c.logic.max.transferTo}` : ""}` : ""}
+                          {c.logic.isBalancing ? " · balancing" : ""}
+                        </div>
                       </div>
+                      <input
+                        type="number"
+                        value={c.logic.calculationPriority ?? 99}
+                        onChange={(e) => mutateBlueprint((next) => {
+                          const i2 = next.components.findIndex((x) => x.id === c.id);
+                          next.components[i2].logic = { ...next.components[i2].logic, calculationPriority: Number(e.target.value) };
+                        })}
+                        style={{ width: 60, height: 30, textAlign: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5 }}
+                      />
+                      {r && <span style={{ fontFamily: "monospace", fontSize: 12 }}>{inr(r.final)}{r.excess ? ` (excess ${inr(r.excess)})` : ""}</span>}
                     </div>
-                    <input
-                      type="number"
-                      value={c.logic.calculationPriority ?? 99}
-                      onChange={(e) => mutateBlueprint((next) => {
-                        const i2 = next.components.findIndex((x) => x.id === c.id);
-                        next.components[i2].logic = { ...next.components[i2].logic, calculationPriority: Number(e.target.value) };
-                      })}
-                      style={{ width: 60, height: 30, textAlign: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5 }}
-                    />
-                    {r && <span style={{ fontFamily: "monospace", fontSize: 12 }}>{inr(r.final)}{r.excess ? ` (excess ${inr(r.excess)})` : ""}</span>}
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
-          </div>
-        )}
-
-        {/* THEME */}
-        {activeView === "theme" && blueprint && (
-          <div className="pd-sec">
-            <h3 style={{ fontWeight: 800, marginTop: 0 }}>Theme</h3>
-            <div className="pd-hint" style={{ marginBottom: 12 }}>Global colors, fonts, logo, page size and margins apply automatically to every component bound to theme variables.</div>
-            <div className="pd-field" style={{ maxWidth: 420 }}>
-              <label>Company logo (upload from your computer)</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                {(blueprint.theme.logo || logoPreviewUrl) && (
-                  <div style={{ width: 90, height: 60, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
-                    <img src={logoPreviewUrl || blueprint.theme.logo} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-                  </div>
-                )}
-                <label className="pd-btn" style={{ cursor: "pointer" }}>
-                  <Plus size={14} /> {blueprint.theme.logo || logoPreviewUrl ? "Replace logo" : "Upload logo"}
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (!file) return;
-                      const url = URL.createObjectURL(file);
-                      setLogoPreviewUrl(url);
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        mutateBlueprint((next) => { next.theme.logo = reader.result; });
-                        window.setTimeout(() => URL.revokeObjectURL(url), 4000);
-                      };
-                      reader.readAsDataURL(file);
-                    }}
-                  />
-                </label>
-                {(blueprint.theme.logo || logoPreviewUrl) && (
-                  <button className="pd-btn danger" onClick={() => { setLogoPreviewUrl(null); mutateBlueprint((next) => { delete next.theme.logo; }); }}>Remove</button>
-                )}
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
-              <ThemeField label="Primary color" value={blueprint.theme.primaryColor} onChange={(v) => mutateBlueprint((next) => { next.theme.primaryColor = v; })} type="color" />
-              <ThemeField label="Secondary color" value={blueprint.theme.secondaryColor} onChange={(v) => mutateBlueprint((next) => { next.theme.secondaryColor = v; })} type="color" />
-              <ThemeField label="Accent color" value={blueprint.theme.accentColor} onChange={(v) => mutateBlueprint((next) => { next.theme.accentColor = v; })} type="color" />
-              <ThemeField label="Font" value={blueprint.theme.font} onChange={(v) => mutateBlueprint((next) => { next.theme.font = v; })} />
-              <ThemeField label="Page size" value={blueprint.theme.pageSize} onChange={(v) => mutateBlueprint((next) => { next.theme.pageSize = v; })} />
-              <ThemeField label="Orientation" value={blueprint.theme.orientation} onChange={(v) => mutateBlueprint((next) => { next.theme.orientation = v; })} />
-              <ThemeField label="Left margin" value={blueprint.theme.margins.left} onChange={(v) => mutateBlueprint((next) => { next.theme.margins.left = Number(v); })} type="number" />
-              <ThemeField label="Top margin" value={blueprint.theme.margins.top} onChange={(v) => mutateBlueprint((next) => { next.theme.margins.top = Number(v); })} type="number" />
-            </div>
-            <h4 style={{ marginTop: 20 }}>Company</h4>
-            <ThemeField label="Company name" value={blueprint.settings?.companyName} onChange={(v) => mutateBlueprint((next) => { next.settings = { ...next.settings, companyName: v }; })} />
-            <ThemeField label="Employee count (eligibility)" value={blueprint.settings?.companyEmployeeCount ?? 50} onChange={(v) => mutateBlueprint((next) => { next.settings = { ...next.settings, companyEmployeeCount: Number(v) }; })} type="number" />
           </div>
         )}
 
@@ -1022,17 +730,6 @@ export function PayslipDesignerPanel() {
           </div>
         )}
 
-        {/* PREVIEW */}
-        {activeView === "preview" && (
-          <div className="pd-sec">
-            <h3 style={{ fontWeight: 800, marginTop: 0 }}>Live Preview</h3>
-            <div className="pd-hint" style={{ marginBottom: 12 }}>
-              Renders live from the current design state (colors, logo, components, order) — refresh while you edit. PDF is generated on demand (toolbar button).
-            </div>
-            <div className="pd-preview-frame" dangerouslySetInnerHTML={{ __html: liveHtml || `<div class="pd-hint">Add components to the canvas to see the live payslip.</div>` }} />
-          </div>
-        )}
-
         {/* VERSIONS */}
         {activeView === "history" && (
           <div className="pd-sec">
@@ -1054,14 +751,33 @@ export function PayslipDesignerPanel() {
         )}
       </div>
 
-      <ConfirmDialog
-        isOpen={showConfirmPublish}
-        title="Publish payslip template"
-        message="Publishing creates an immutable active version used by payroll processing. The blueprint is validated first. Proceed?"
-        confirmLabel="Publish version"
-        onConfirm={handlePublish}
-        onCancel={() => setShowConfirmPublish(false)}
-      />
+      {calcEmp && <EmployeeSalaryModal employee={calcEmp} onClose={() => setCalcEmp(null)} />}
+
+      {showNewTemplate && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22, width: "100%", maxWidth: 420 }}>
+            <h3 style={{ fontWeight: 800, fontSize: 16, margin: "0 0 4px" }}>Create Nesting Template</h3>
+            <p style={{ fontSize: 12.5, color: "var(--subtext)", margin: "0 0 16px" }}>Pick the skill type — payslips are generated from this nesting template for employees whose skill type matches.</p>
+            <label style={{ display: "block", fontSize: 12.5, color: "var(--label)", marginBottom: 12 }}>
+              Template name
+              <input value={ntName} onChange={(e) => setNtName(e.target.value)} placeholder="e.g. Skilled Pay Structure" style={{ ...pdInputStyle, marginTop: 6 }} />
+            </label>
+            <label style={{ display: "block", fontSize: 12.5, color: "var(--label)", marginBottom: 18 }}>
+              Skill Type
+              <select value={ntSkillType} onChange={(e) => setNtSkillType(e.target.value)} style={{ ...pdInputStyle, marginTop: 6, cursor: "pointer" }}>
+                <option value="">Select Skill Type</option>
+                {skillTypes.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="pd-btn" onClick={() => { setShowNewTemplate(false); setNtName(""); setNtSkillType(""); }}>Cancel</button>
+              <button className="pd-btn primary" onClick={handleNewTemplate} disabled={busy || !ntName.trim() || !ntSkillType}>
+                {busy ? "Creating…" : "Create Template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1072,14 +788,187 @@ export default function PayslipDesigner() {
 
 /* ── Sub-components ──────────────────────────────────────────── */
 
-function ThemeField({ label, value, onChange, type = "text" }) {
+/** Employee search bar with dropdown — same interaction as the
+ *  Employee Payroll picker; selecting an employee opens their salary popup. */
+function EmployeeSearchBox({ employees, value, onChange, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const q = value.trim().toLowerCase();
+  const matches = (employees || []).filter((emp) =>
+    !q || (emp.id || "").toLowerCase().includes(q) || `${emp.firstName} ${emp.lastName}`.toLowerCase().includes(q)
+  ).slice(0, 50);
+
   return (
-    <div className="pd-field">
-      <label>{label}</label>
-      <input type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+    <div ref={boxRef} style={{ position: "relative", flex: "1 1 220px", maxWidth: 300 }}>
+      <Search size={15} style={{ color: "var(--subtext)", position: "absolute", left: 12, top: 9, pointerEvents: "none" }} />
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder="Search employee by name or ID…"
+        style={{ width: "100%", height: 32, padding: "0 30px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, color: "var(--text)", background: "var(--card)", outline: "none" }}
+      />
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-label="Toggle employee list"
+        style={{ position: "absolute", right: 4, top: 2, width: 28, height: 28, background: "none", border: "none", borderRadius: "var(--radius-sm)", cursor: "pointer", color: "var(--subtext)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: 38, left: 0, right: 0, zIndex: 30, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)", maxHeight: 300, overflowY: "auto" }}>
+          {matches.length === 0 ? (
+            <div style={{ padding: "14px 16px", fontSize: 12.5, color: "var(--subtext)" }}>No employee found.</div>
+          ) : (
+            matches.map((emp) => (
+              <button key={emp.id} type="button" onClick={() => { onSelect(emp); setOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "var(--text)" }}>
+                <span style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--primary-light)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 700, flexShrink: 0 }}>
+                  {(emp.firstName?.[0] || "?")}{(emp.lastName?.[0] || "")}
+                </span>
+                <span style={{ fontWeight: 600, flex: 1 }}>{emp.firstName} {emp.lastName}</span>
+                <span style={{ color: "var(--subtext)", fontFamily: "monospace", fontSize: 11.5 }}>{emp.id}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+/** Salary popup shown when an employee is selected in the Calculation Order
+ *  card — gross, annual package, leave deduction, total deductions, net
+ *  payroll plus earnings/deductions breakdown, same as Employee Payroll. */
+function EmployeeSalaryModal({ employee, onClose }) {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    setSummary(null);
+    getEmployeePayrollSummary(employee.id, month, year)
+      .then((res) => setSummary(res.data))
+      .catch((err) => setError(err.message || "Could not load payroll summary"))
+      .finally(() => setLoading(false));
+  }, [employee.id, month, year]);
+
+  const statusColor = { Draft: "#64748b", Processing: "#d97706", Approved: "#0284c7", Paid: "#16a34a", Failed: "#dc2626" };
+  const statusBg = { Draft: "#f8fafc", Processing: "#fffbeb", Approved: "#f0f9ff", Paid: "#f0fdf4", Failed: "#fef2f2" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22, width: "100%", maxWidth: 720, maxHeight: "86vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+          <h3 style={{ fontWeight: 800, fontSize: 16, margin: 0 }}>
+            {employee.firstName} {employee.lastName} <span style={{ color: "var(--subtext)", fontWeight: 500, fontSize: 13 }}>({employee.id})</span>
+          </h3>
+          <button onClick={onClose} className="pd-btn small">Close</button>
+        </div>
+
+        {loading ? (
+          <Spinner />
+        ) : error ? (
+          <p style={{ fontSize: 13, color: "var(--red)", fontWeight: 600 }}>{error}</p>
+        ) : !summary ? (
+          <p style={{ fontSize: 13, color: "var(--subtext)" }}>No summary found for this employee & period.</p>
+        ) : (
+          (() => {
+            const { earnings, deductions } = summary;
+            const earningGroups = summary.earningGroups?.length ? summary.earningGroups : [{ id: null, name: "Earnings", kind: "earning", rows: [] }];
+            const deductionGroups = summary.deductionGroups?.length ? summary.deductionGroups : [{ id: null, name: "Deductions", kind: "deduction", rows: [] }];
+            const flatRows = (obj) => Object.entries(obj || {})
+              .filter(([k, v]) => k !== "total" && k !== "leaveDeduction" && Number(v) > 0)
+              .map(([label, amount]) => ({ label: label.replace(/([A-Z])/g, " $1").trim(), amount: Number(amount) }));
+            const fallbackEarnings = flatRows(earnings);
+            const fallbackDeductions = flatRows(deductions);
+            const earnedTotal = earningGroups.some((g) => g.rows.length)
+              ? earningGroups.reduce((s, g) => s + g.rows.reduce((a, r) => a + r.amount, 0), 0)
+              : fallbackEarnings.reduce((s, r) => s + r.amount, 0);
+            const stat = (label, value, color = "var(--text)") => (
+              <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "12px 14px", flex: "1 1 130px" }}>
+                <p style={{ fontSize: 10.5, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 6 }}>{label}</p>
+                <p style={{ fontSize: 17, fontWeight: 800, color, fontFamily: "monospace", lineHeight: 1.2 }}>{value}</p>
+              </div>
+            );
+            const detail = (label, entries, color, isDeduction, total, totalLabel, fallback) => {
+              return (
+                <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "14px 16px" }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 10 }}>{label}</p>
+                  {entryGroups(label, entries, color, isDeduction, fallback)}
+                  {isDeduction && summary.leaveDeduction > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                      <span style={{ fontSize: 12.5, color: "var(--label)" }}>Leave Deduction (unpaid days)</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{inr(summary.leaveDeduction)}</span>
+                    </div>
+                  )}
+                  <div style={{ borderTop: "1px solid var(--border)", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{totalLabel}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{inr(total)}</span>
+                  </div>
+                </div>
+              );
+            };
+            const entryGroups = (label, entries, color, isDeduction, fallback) => {
+              const groups = label === "Earnings" ? earningGroups : deductionGroups;
+              return groups.map((g, gi) => {
+                const rows = g.rows.length ? g.rows : fallback;
+                return (
+                  <div key={g.id || g.name} style={gi > 0 ? { marginTop: 10 } : undefined}>
+                    {groups.length > 1 && <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", opacity: 0.85, marginBottom: 6 }}>{g.name}</p>}
+                    {rows.length === 0 ? (
+                      <p style={{ fontSize: 12, color: "var(--subtext)" }}>No {label.toLowerCase()} in this period.</p>
+                    ) : (
+                      rows.map((row) => (
+                        <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                          <span style={{ fontSize: 12.5, color: "var(--label)" }}>{row.label}</span>
+                          <span style={{ fontSize: 12.5, fontWeight: 500, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{inr(row.amount)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                );
+              });
+            };
+            return (
+              <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+                  <span style={{ fontSize: 12.5, color: "var(--subtext)" }}>Payroll · {MONTHS_FULL_PD[month - 1]} {year}</span>
+                  {summary.status && (
+                    <span style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, fontWeight: 700, color: statusColor[summary.status] || "#64748b", background: statusBg[summary.status] || "#f8fafc" }}>{summary.status}</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                  {stat("Gross", inr(summary.gross))}
+                  {stat("Annual Package", summary.annualSalary ? inr(summary.annualSalary) : "—", "var(--primary)")}
+                  {stat("Leave Deduction", summary.leaveDeduction > 0 ? `−${inr(summary.leaveDeduction)}` : "—", summary.leaveDeduction > 0 ? "var(--amber)" : "var(--subtext)")}
+                  {stat("Total Deductions", `−${inr((deductions || {}).total)}`, "var(--red)")}
+                  {stat("Net Payroll", inr(summary.netPay), "var(--green)")}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  {detail("Earnings", earnings, "var(--green)", false, earnedTotal, "Total Earnings", fallbackEarnings)}
+                  {detail("Deductions", deductions, "var(--red)", true, (deductions || {}).total, "Total Deductions", fallbackDeductions)}
+                </div>
+              </>
+            );
+          })()
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MONTHS_FULL_PD = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 function NestCard({ nest, comps, catalog, allComponents, onChangeNest, onRemoveNest, onDropComp, onAddToNest, onUnassignComp, onDeleteComp, onUpdateComp }) {
   const [open, setOpen] = useState(nest.expandByDefault !== false);
@@ -1250,195 +1139,6 @@ function NestThresholdEditor({ comp, onUpdateComp }) {
         </div>
       )}
     </div>
-  );
-}
-
-/* Property editor for the selected component */
-function PropertyEditor({ comp, nests, onChange, onLogic, onRemove, onDuplicate, onMove }) {
-  const [showFieldPicker, setShowFieldPicker] = useState(false);
-  const kindColor = { earning: "var(--green)", deduction: "var(--red)", employer: "var(--primary)", reimbursement: "#7c3aed" }[comp.kind] || "var(--text)";
-  return (
-    <>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 13 }}>{comp.label}</div>
-          <div style={{ fontSize: 11, color: "var(--subtext)" }}>{comp.id} · <span style={{ color: kindColor }}>{comp.kind}</span> · {comp.logic.type}</div>
-        </div>
-        <span style={{ display: "flex", gap: 4 }}>
-          <button className="pd-btn small" onClick={onDuplicate}><Copy size={11} /></button>
-          <button className="pd-btn small danger" onClick={onRemove}><Trash2 size={11} /></button>
-        </span>
-      </div>
-
-      <div className="pd-row" style={{ marginBottom: 8 }}>
-        <div><button className="pd-btn small" onClick={() => onMove(0, -10)}>▲</button></div>
-        <div><button className="pd-btn small" onClick={() => onMove(0, 10)}>▼</button></div>
-        <div><button className="pd-btn small" onClick={() => onMove(-10, 0)}>◀</button></div>
-        <div><button className="pd-btn small" onClick={() => onMove(10, 0)}>▶</button></div>
-      </div>
-
-      <h4>Identity</h4>
-      <div className="pd-field"><label>Label</label><input value={comp.label} onChange={(e) => onChange({ label: e.target.value })} /></div>
-      <div className="pd-field">
-        <label>Nest / group</label>
-        <select value={comp.nestId || ""} onChange={(e) => onChange({ nestId: e.target.value || null })}>
-          <option value="">(unassigned)</option>
-          {nests.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
-        </select>
-      </div>
-
-      <h4>Data binding</h4>
-      <div className="pd-field" style={{ position: "relative" }}>
-        <label>Field source <button className="pd-btn small" onClick={() => setShowFieldPicker((s) => !s)} style={{ marginLeft: 6 }}>Pick field</button></label>
-        <input value={comp.dataBinding?.source || ""} onChange={(e) => onChange({ dataBinding: { ...comp.dataBinding, source: e.target.value } })} placeholder="employee.name" />
-        {showFieldPicker && (
-          <div style={{ position: "absolute", top: 52, left: 0, right: 0, zIndex: 40, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-md)", maxHeight: 300, overflowY: "auto" }}>
-            {FIELD_TREE.map((g) => (
-              <div key={g.group}>
-                <div style={{ padding: "6px 12px 2px", fontSize: 10.5, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>{g.group}</div>
-                {g.fields.map((f) => (
-                  <button
-                    key={f.source}
-                    className="pd-btn"
-                    style={{ display: "flex", width: "100%", justifyContent: "space-between", border: "none", borderBottom: "1px solid var(--border)", borderRadius: 0 }}
-                    onClick={() => { onChange({ dataBinding: { ...comp.dataBinding, source: f.source } }); setShowFieldPicker(false); }}
-                  >
-                    <span>{f.label}</span><span style={{ color: "var(--subtext)", fontFamily: "monospace", fontSize: 10 }}>{f.source}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <h4>Calculation logic</h4>
-      <div className="pd-field">
-        <label>Type</label>
-        <select value={comp.logic.type} onChange={(e) => onLogic({ type: e.target.value })}>
-          <option value="fixed">Fixed amount</option>
-          <option value="percentage">Percentage of field</option>
-          <option value="formula">Formula</option>
-        </select>
-      </div>
-      {comp.logic.type === "fixed" && (
-        <div className="pd-field">
-          <label>Fixed amount (₹)</label>
-          <input type="number" value={comp.logic.value ?? 0} onChange={(e) => onLogic({ value: Number(e.target.value) })} />
-        </div>
-      )}
-      {comp.logic.type === "percentage" && (
-        <>
-          <div className="pd-field">
-            <label>Percentage %</label>
-            <input type="number" value={comp.logic.pct ?? 0} onChange={(e) => onLogic({ pct: Number(e.target.value) })} />
-          </div>
-          <div className="pd-field">
-            <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--label)", marginBottom: 4 }}>Source field (of)</label>
-            <select
-              value={comp.logic.sourceField || "ctc"}
-              onChange={(e) => onLogic({ sourceField: e.target.value })}
-              style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
-            >
-              {["basic", "hra", "conveyance", "medical", "performance_bonus", "other", "ctc", "monthlyGross", "gross"].map((s) => (
-                <option key={s} value={s}>{s === "ctc" ? "ctc (monthly CTC)" : s === "monthlyGross" ? "monthlyGross (CTC)" : s}</option>
-              ))}
-            </select>
-          </div>
-        </>
-      )}
-      {comp.logic.type === "formula" && (
-        <div className="pd-field">
-          <label>Formula (safe syntax, e.g. basic*0.5 or MIN(basic*0.5,15000))</label>
-          <textarea rows={2} value={comp.logic.formula || ""} onChange={(e) => onLogic({ formula: e.target.value })} />
-        </div>
-      )}
-      <div className="pd-row">
-        <div className="pd-field">
-          <label>Priority</label>
-          <input type="number" value={comp.logic.calculationPriority ?? 20} onChange={(e) => onLogic({ calculationPriority: Number(e.target.value) })} />
-        </div>
-        <div className="pd-field">
-          <label>Balancing</label>
-          <select value={comp.logic.isBalancing ? "yes" : "no"} onChange={(e) => onLogic({ isBalancing: e.target.value === "yes" })}>
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
-      </div>
-
-      <h4>Maximum threshold</h4>
-      <div className="pd-field">
-        <label>Threshold type</label>
-        <select
-          value={comp.logic.max?.pct !== undefined ? "percent" : comp.logic.max?.formula ? "formula" : "amount"}
-          onChange={(e) => {
-            const mode = e.target.value;
-            if (mode === "percent") onLogic({ max: { ...(comp.logic.max || {}), pct: comp.logic.max?.pct ?? 10, pctOf: comp.logic.max?.pctOf || "ctc", value: undefined, formula: undefined, action: comp.logic.max?.action || "cap" } });
-            else if (mode === "formula") onLogic({ max: { ...(comp.logic.max || {}), pct: undefined, pctOf: undefined, formula: comp.logic.max?.formula || "basic * 0.5", value: undefined, action: comp.logic.max?.action || "cap" } });
-            else onLogic({ max: { ...(comp.logic.max || {}), value: comp.logic.max?.value ?? 0, pct: undefined, pctOf: undefined, formula: undefined, action: comp.logic.max?.action || "cap" } });
-          }}
-        >
-          <option value="amount">Amount (₹)</option>
-          <option value="percent">Percentage (% of a field)</option>
-          <option value="formula">Formula</option>
-        </select>
-      </div>
-      <div className="pd-row">
-        {comp.logic.max?.pct !== undefined ? (
-          <>
-            <div className="pd-field">
-              <label>Max percent %</label>
-              <input type="number" value={comp.logic.max.pct} onChange={(e) => onLogic({ max: { ...comp.logic.max, pct: Number(e.target.value), action: comp.logic.max.action || "cap" } })} />
-            </div>
-            <div className="pd-field">
-              <label>Percent of field</label>
-              <input value={comp.logic.max.pctOf || ""} onChange={(e) => onLogic({ max: { ...comp.logic.max, pctOf: e.target.value, action: comp.logic.max.action || "cap" } })} placeholder="ctc" />
-            </div>
-          </>
-        ) : comp.logic.max?.formula ? (
-          <div className="pd-field">
-            <label>Max formula (e.g. basic*0.5, MIN(basic*0.5, 15000))</label>
-            <textarea rows={2} value={comp.logic.max.formula} onChange={(e) => onLogic({ max: { ...comp.logic.max, formula: e.target.value, action: comp.logic.max.action || "cap" } })} />
-          </div>
-        ) : (
-          <div className="pd-field">
-            <label>Max value (₹)</label>
-            <input type="number" value={comp.logic.max?.value ?? ""} onChange={(e) => onLogic({ max: { ...(comp.logic.max || {}), value: e.target.value === "" ? undefined : Number(e.target.value), action: comp.logic.max?.action || "cap" } })} />
-          </div>
-        )}
-        <div className="pd-field">
-          <label>Action</label>
-          <select value={comp.logic.max?.action || ""} onChange={(e) => onLogic({ max: { ...(comp.logic.max || {}), action: e.target.value } })}>
-            <option value="">None</option>
-            <option value="cap">Cap</option>
-            <option value="transfer">Transfer excess</option>
-            <option value="error">Error</option>
-            <option value="set_zero">Set to zero</option>
-            <option value="ignore">Ignore</option>
-          </select>
-        </div>
-      </div>
-      {comp.logic.max?.action === "transfer" && (
-        <div className="pd-field">
-          <label>Transfer excess to component</label>
-          <input value={comp.logic.max.transferTo || ""} onChange={(e) => onLogic({ max: { ...comp.logic.max, transferTo: e.target.value } })} placeholder="special_allowance" />
-        </div>
-      )}
-
-      <h4>Visibility</h4>
-      <div className="pd-field">
-        <label>Visible</label>
-        <select value={comp.visible === false ? "no" : "yes"} onChange={(e) => onChange({ visible: e.target.value === "yes" })}>
-          <option value="yes">Yes</option>
-          <option value="no">No</option>
-        </select>
-      </div>
-
-      <div className="pd-row" style={{ marginTop: 8 }}>
-        <div><button className="pd-btn" onClick={() => onChange({ ui: { ...comp.ui, x: 20, y: 20 } })}>Reset position</button></div>
-      </div>
-    </>
   );
 }
 

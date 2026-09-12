@@ -90,6 +90,7 @@
 .leave-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 250ms ease; }
 
 .leave-request-header { display: flex; justify-content: space-between; align-items: end; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+.leave-digest-header { margin-top: 28px; }
 .leave-request-header h2 { font-size: 15px; color: var(--text); }
 .leave-request-header p { margin-top: 3px; font-size: 11.5px; color: var(--subtext); }
 .leave-status-cards { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }

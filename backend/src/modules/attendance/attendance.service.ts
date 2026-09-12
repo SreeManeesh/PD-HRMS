@@ -1,12 +1,12 @@
 import { Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { prisma } from "../../lib/prisma";
-import { upsertLeaveRequestFromUpload } from "../leave/leave.service";
+import { syncUploadLeaveRequests, isUploadSyncedLeaveRequest } from "../leave/leave.service";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import { serializeAttendanceList, serializeTeamSummary } from "../../serializers/attendance.serializer";
 import { formatDate } from "../../serializers/helpers";
-import { reconcileEmployee } from "../payroll/reconciliation.service";
+import { reconcileEmployees } from "../payroll/reconciliation.service";
 import { startOfDay } from "../../serializers/helpers";
 
 const PUNCH_INCLUDE = {
@@ -29,6 +29,7 @@ export async function resolveEmployeeId(employeeCode: string, actorEmployeeId?: 
 export interface AttendanceFilters {
   employeeId?: string;
   month?: number;
+  day?: number;
   year?: number;
 }
 
@@ -43,13 +44,27 @@ export async function listAttendance(filters: AttendanceFilters, actorEmployeeId
   }
   // Staff (admin/HR/manager) without an explicit employeeId see the whole team.
 
-  if (filters.month && filters.year) {
-    const month = filters.month;
-    const year = filters.year;
-    where.punchDate = {
-      gte: new Date(Date.UTC(year, month - 1, 1)),
-      lt: new Date(Date.UTC(year, month, 1)),
-    };
+  if (filters.year) {
+    const y = filters.year;
+    if (filters.month) {
+      const m = filters.month;
+      if (filters.day) {
+        where.punchDate = {
+          gte: new Date(Date.UTC(y, m - 1, filters.day)),
+          lt: new Date(Date.UTC(y, m - 1, filters.day + 1)),
+        };
+      } else {
+        where.punchDate = {
+          gte: new Date(Date.UTC(y, m - 1, 1)),
+          lt: new Date(Date.UTC(y, m, 1)),
+        };
+      }
+    } else {
+      where.punchDate = {
+        gte: new Date(Date.UTC(y, 0, 1)),
+        lt: new Date(Date.UTC(y + 1, 0, 1)),
+      };
+    }
   }
 
   const rows = await prisma.attendancePunch.findMany({
@@ -75,7 +90,9 @@ export async function getTeamSummary(filters: { month?: number; year?: number } 
     const employees = await prisma.employee.findMany({ where: { status: "Active" }, select: { id: true } });
     const counts = { present: 0, late: 0, wfh: 0, absent: 0, onLeave: 0 };
     let total = 0;
-    const results = await Promise.all(employees.map((emp) => reconcileEmployee(emp.id, year, month)));
+    // One batched reconciliation (6 queries total) instead of N per-employee
+    // reconciliations — the exact same classification, just loaded together.
+    const results = await reconcileEmployees(employees.map((e) => e.id), year, month);
     for (const { daily } of results) {
       for (const d of daily) {
         if (d.status === "Holiday" || d.status === "Weekend") continue;
@@ -370,6 +387,13 @@ function parseTimeParts(value: string): { hours: number; minutes: number } | nul
   return { hours, minutes };
 }
 
+/** Strict calendar check: rejects 2023-02-30, 2021-04-31, 0/13 months, etc. */
+function isValidCalendarDate(y: number, m: number, d: number): boolean {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
 function rowCell(cells: string[], index: number): string {
   return index >= 0 && index < cells.length ? cells[index].trim() : "";
 }
@@ -530,9 +554,26 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
   const hhmm = (d: Date | null): string | null => d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : null;
 
   const seen = new Map<string, ImportCandidate>();
+
+  // — Strict row validation with a bounded error report — green rows are
+  // imported even when earlier rows failed, but a pathologically broken file is
+  // stopped early so the server never grinds through hundreds of thousands of
+  // garbage rows. `skipped` always counts every rejected row; `errors` only
+  // keeps the first MAX_ERROR_REPORT messages (plus one summary tail entry).
+  const MAX_ERROR_REPORT = 200;
+  const MAX_INVALID_ROWS = 5000;
+  let skipped = 0;
   const errors: string[] = [];
+  const recordError = (message: string) => {
+    skipped += 1;
+    if (errors.length < MAX_ERROR_REPORT) errors.push(message);
+  };
 
   for (const [rowNo, cells] of dataRows.entries()) {
+    if (skipped >= MAX_INVALID_ROWS) {
+      errors.push(`Stopped early after ${MAX_INVALID_ROWS} invalid rows — fix the file and re-upload.`);
+      break;
+    }
     if (cells.every((c) => c === "")) continue;
 
     const name = rowCell(cells, colIndex("name"));
@@ -547,26 +588,40 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
 
     const dateParts = parseDateParts(dateValue);
     if (!dateParts) {
-      errors.push(`Row ${rowNo + 1}: unrecognised date "${dateValue}"`);
+      recordError(`Row ${rowNo + 1}: unrecognised date "${dateValue}"`);
+      continue;
+    }
+    if (!isValidCalendarDate(dateParts.y, dateParts.m, dateParts.d)) {
+      recordError(`Row ${rowNo + 1}: impossible date "${dateValue}"`);
       continue;
     }
     const employee = resolve(idValue, name);
     if (!employee) {
-      errors.push(`Row ${rowNo + 1}: no employee found for id "${idValue}" / name "${name}"`);
+      recordError(`Row ${rowNo + 1}: no employee found for id "${idValue}" / name "${name}"`);
       continue;
     }
 
-    // A row counts as paid leave ONLY when an admin has approved it. Without
-    // approval (or with the row just sitting in the file) and no login/logout,
-    // the employee is treated as Absent, not On Leave.
+    // Strict time validation — a non-empty login/logout that can't be parsed is
+    // a data error, not an excuse to silently classify the day as "Absent".
+    const login = loginValue ? parseTimeParts(loginValue) : null;
+    if (loginValue !== "" && loginValue?.trim() !== "" && login === null) {
+      recordError(`Row ${rowNo + 1}: invalid login time "${loginValue}" (expected HH:MM)`);
+      continue;
+    }
+    const logout = logoutValue ? parseTimeParts(logoutValue) : null;
+    if (logoutValue !== "" && logoutValue?.trim() !== "" && logout === null) {
+      recordError(`Row ${rowNo + 1}: invalid logout time "${logoutValue}" (expected HH:MM)`);
+      continue;
+    }
+
+    // Present is the default. A row is ONLY on leave when the leave column
+    // itself says yes (with approval deciding), so filler in a leave-type
+    // column ("-") can never turn a present day into a leave request.
     const leaveIndicated =
-      /^(y|yes|1|true|on\.leave|leave|leave\s*wop|lwp)$/i.test(leaveValue) ||
-      /^(from|start)/i.test(leaveValue) ||
-      Boolean(leaveTypeValue.trim());
+      /^(y|yes|1|true|on\s*leave|leave|lwp)$/i.test(leaveValue) ||
+      /^(from|start)/i.test(leaveValue);
     const approvedLeave = leaveIndicated && /approv/i.test(approvalValue) && !/pending|reject/i.test(approvalValue);
 
-    const login = parseTimeParts(loginValue);
-    const logout = parseTimeParts(logoutValue);
     const status = login || logout ? "Present" : approvedLeave ? "Leave" : "Absent";
 
     const isoDate = `${dateParts.y}-${String(dateParts.m).padStart(2, "0")}-${String(dateParts.d).padStart(2, "0")}`;
@@ -585,6 +640,10 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
       approvalValue,
       approvedByValue,
     });
+  }
+
+  if (skipped > errors.length) {
+    errors.push(`… and ${skipped - errors.length} more invalid row(s) omitted from this report.`);
   }
 
   const candidates = [...seen.values()];
@@ -651,30 +710,114 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
   }));
   imported.push(...sample);
 
-  // Leave sync is best-effort (attendance always imported regardless).
-  for (const c of candidates) {
-    if (c.leaveIndicated && c.leaveTypeValue.trim()) {
-      try {
-        await upsertLeaveRequestFromUpload({
-          employeeId: c.employee.id,
-          employeeCode: c.employee.employeeCode,
-          date: c.isoDate,
-          leaveTypeValue: c.leaveTypeValue,
-          approvalValue: c.approvalValue,
-          approvedByValue: c.approvedByValue,
-          reason: `${c.leaveValue ? `Leave: ${c.leaveValue}. ` : ""}${c.leaveTypeValue} on ${c.isoDate}`.trim(),
-        });
-      } catch {
-        // Leave sync is best-effort — attendance still imported.
-      }
-    }
+  // Leave sync is best-effort (attendance always imported regardless) and now
+  // happens in ONE batched call instead of the old per-row loop (~4-8 queries
+  // per employee-day row) — the file stays the ground truth: approved-Leave
+  // rows produce an auto-approved request; every other row retires any stale
+  // upload-synced request for that day.
+  try {
+    await syncUploadLeaveRequests(
+      candidates.map((c) => ({
+        employeeId: c.employee.id,
+        employeeCode: c.employee.employeeCode,
+        date: c.isoDate,
+        isLeave: c.status === "Leave",
+        leaveTypeValue: c.leaveTypeValue,
+        approvalValue: c.approvalValue,
+        approvedByValue: c.approvedByValue,
+        reason: `${c.leaveValue ? `Leave: ${c.leaveValue}. ` : ""}${c.leaveTypeValue ? `${c.leaveTypeValue} on ${c.isoDate}` : "On leave per attendance file on " + c.isoDate}`.trim(),
+      })),
+    );
+  } catch {
+    // Leave sync is best-effort — attendance still imported.
   }
 
   return {
     imported: toInsert.length + toUpdate.length,
     totalImported: toInsert.length + toUpdate.length,
-    skipped: errors.length,
+    skipped,
     errors,
     data: imported,
   };
+}
+
+/**
+ * Permanently remove uploaded attendance data ("Clear"). Every punch imported
+ * from a file (method = "Upload") is deleted, along with the leave requests
+ * that uploads synced into the leave module. Additionally all pending leave
+ * requests (any origin) are removed so stale approvals don't linger.
+ * Approved requests removed have their annual leave-balance used-days
+ * restored. Seed / wizard / manual check-in / manual leave data is untouched.
+ * Idempotent: calling it with nothing uploaded/clearable is a no-op.
+ */
+export async function clearUploadedAttendance() {
+  const uploadPunches = await prisma.attendancePunch.findMany({
+    where: { method: "Upload" },
+    select: { employeeId: true, punchDate: true },
+  });
+
+  // ── 1. Upload-synced leave requests (matched by pair + import marker) ─────
+  const pairSet = new Set(uploadPunches.map((p) => `${p.employeeId}|${p.punchDate.getTime()}`));
+  const empIds = [...new Set(uploadPunches.map((p) => p.employeeId))];
+  const dateSet = [...new Set(uploadPunches.map((p) => p.punchDate.getTime()))].map((t) => new Date(t));
+
+  const uploadCandidates = await prisma.leaveRequest.findMany({
+    where: { employeeId: { in: empIds }, startDate: { in: dateSet } },
+    select: { id: true, employeeId: true, leaveTypeId: true, startDate: true, status: true, reason: true, comments: true },
+  });
+  const uploadRequests = uploadCandidates.filter(
+    (r) => pairSet.has(`${r.employeeId}|${r.startDate.getTime()}`) && isUploadSyncedLeaveRequest(r),
+  );
+
+  // ── 2. All pending leave requests (any origin) ───────────────────────────
+  const pendingRequests = await prisma.leaveRequest.findMany({
+    where: { status: "Pending" },
+    select: { id: true, employeeId: true, leaveTypeId: true, startDate: true, status: true, reason: true, comments: true },
+  });
+  const pendingIds = new Set(pendingRequests.map((r) => r.id));
+
+  // Merge: upload-synced + pending (deduplicated).
+  const toDelete = [...uploadRequests, ...pendingRequests.filter((r) => !pendingIds.has(r.id) || !uploadRequests.some((u) => u.id === r.id))];
+  const allToDeleteIds = new Set(toDelete.map((r) => r.id));
+
+  // Restore used-days for every approved request being removed.
+  const balanceDeltas = new Map<string, number>();
+  for (const r of toDelete) {
+    if (r.status !== "Approved") continue;
+    const key = `${r.employeeId}|${r.leaveTypeId}|${r.startDate.getUTCFullYear()}`;
+    balanceDeltas.set(key, (balanceDeltas.get(key) ?? 0) + 1);
+  }
+
+  const punchCount = uploadPunches.length;
+  const requestCount = allToDeleteIds.size;
+
+  await prisma.$transaction(async (tx) => {
+    if (requestCount > 0) {
+      await tx.leaveRequest.deleteMany({ where: { id: { in: [...allToDeleteIds] } } });
+    }
+    if (punchCount > 0) {
+      await tx.attendancePunch.deleteMany({ where: { method: "Upload" } });
+    }
+    for (const [key, delta] of balanceDeltas) {
+      const [employeeId, leaveTypeId, year] = key.split("|");
+      const balance = await tx.leaveBalance.findUnique({
+        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: Number(year) } },
+      });
+      if (balance) {
+        await tx.leaveBalance.update({
+          where: { id: balance.id },
+          data: { usedDays: Math.max(0, Number(balance.usedDays) - delta) },
+        });
+      }
+    }
+  });
+
+  writeAuditLog({
+    action: "DELETE",
+    entityType: "AttendanceUpload",
+    entityId: "",
+    newValue: { punches: punchCount, leaveRequests: requestCount },
+  });
+
+  return { punches: punchCount, leaveRequests: requestCount };
 }

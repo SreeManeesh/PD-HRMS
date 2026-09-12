@@ -131,4 +131,5 @@ export const leaveStatusMeta = {
   Approved: { label: "Approved", color: "#16a34a", bg: "#f0fdf4" },
   Rejected: { label: "Rejected", color: "#dc2626", bg: "#fef2f2" },
   Cancelled: { label: "Cancelled", color: "#64748b", bg: "#f8fafc" },
+  Absent: { label: "Absent", color: "#dc2626", bg: "#fef2f2" },
 };

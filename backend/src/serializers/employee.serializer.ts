@@ -56,6 +56,7 @@ export function serializeEmployee(emp: EmployeeWithRelations) {
     annualSalary: Math.round(salarySource),
     managerId: emp.reportingManager?.employeeCode ?? null,
     gender: emp.gender ?? "",
+    skillType: emp.skillType ?? "",
     dob: emp.dateOfBirth ? formatDate(emp.dateOfBirth) : null,
   };
 }

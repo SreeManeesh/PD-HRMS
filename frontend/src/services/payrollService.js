@@ -10,6 +10,11 @@ export const getPayrollRuns = async () => {
   return res.data;
 };
 
+export const getPayrollYears = async () => {
+  const res = await api.get("/payroll/years");
+  return res.data;
+};
+
 export const getPayslips = async (employeeId = "EMP001") => {
   const res = await api.get("/payroll/payslips", { params: { employeeId } });
   return res.data;
@@ -26,28 +31,24 @@ export const getRunPayslips = async (payrollRunId) => {
   return res.data; // { data }
 };
 
-/** Rupee-formatted PDF download URL for a payslip (PS-YYYY-MM-EMPCODE). */
-export const payslipPdfUrl = (id) =>
-  `${import.meta.env.VITE_API_URL || "/api"}/payroll/payslips/${id}/pdf`;
-
-/**
- * Download a payslip PDF via axios (carries the Bearer auth token) and return
- * the blob. The caller opens/saves it. A plain anchor can't send the auth
- * header, which is why we fetch through the axios client.
- */
-export const downloadPayslipPdf = async (id) => {
-  const res = await api.get(`/payroll/payslips/${id}/pdf`, { responseType: "blob" });
-  const disposition = res.headers?.["content-disposition"] || "";
-  const match = /filename="?([^";]+)"?/.exec(disposition);
-  return {
-    blob: res.data,
-    filename: match ? match[1] : `payslip_${id}.pdf`,
-  };
-};
-
 export const getEmployeePayrollSummary = async (employeeId, month, year) => {
   const res = await api.get("/payroll/employee-summary", { params: { employeeId, month, year } });
   return res.data; // { data }
+};
+
+/** Batched payroll summaries for all active employees (annual/monthly views). */
+export const getEmployeePayrollSummaries = async (month, year) => {
+  const res = await api.get("/payroll/employee-summaries", { params: { month, year } });
+  return res.data; // { data: rows[] }
+};
+
+/**
+ * Create a Draft payroll run for a month/year (start of the
+ * run → process → approve → distribute flow).
+ */
+export const createPayrollRun = async (month, year) => {
+  const res = await api.post("/payroll/runs", { month, year });
+  return res.data;
 };
 
 /**

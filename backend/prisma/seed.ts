@@ -4,6 +4,13 @@ import { hashPassword } from "../src/lib/password";
 
 const prisma = new PrismaClient();
 
+// Seed static demo records (org master, employees, attendance, payroll, leave,
+// recruitment, compliance, helpdesk, LMS, assets…) only when SEED_DEMO_DATA=true.
+// OFF by default so the app starts empty and is driven entirely by data you create
+// or upload. RBAC roles/permissions, leave types, holidays, the general shift and a
+// single bootstrap admin are always seeded.
+const SEED_DEMO_DATA = process.env.SEED_DEMO_DATA === "true";
+
 // ── Permissions (mirrors frontend/src/context/AuthContext.jsx ROLE_PERMISSIONS) ──
 
 const PERMISSIONS = [
@@ -320,23 +327,25 @@ async function main() {
     data: { companyId: company.id, name: "Core Business" },
   });
 
-  // Departments / Locations / Designations
+  // Departments / Locations / Designations (demo only — manage via Org Management)
   const deptByName = new Map<string, string>();
-  for (const name of DEPARTMENTS) {
-    const d = await prisma.department.create({ data: { companyId: company.id, businessUnitId: bu.id, name } });
-    deptByName.set(name, d.id);
-  }
-
   const locByName = new Map<string, string>();
-  for (const l of LOCATIONS) {
-    const loc = await prisma.location.create({ data: { companyId: company.id, name: l.name, address: l.address } });
-    locByName.set(l.name, loc.id);
-  }
-
   const desigByTitle = new Map<string, string>();
-  for (const title of DESIGNATIONS) {
-    const d = await prisma.designation.create({ data: { title, grade: title === "CEO" ? "L1" : "L2" } });
-    desigByTitle.set(title, d.id);
+  if (SEED_DEMO_DATA) {
+    for (const name of DEPARTMENTS) {
+      const d = await prisma.department.create({ data: { companyId: company.id, businessUnitId: bu.id, name } });
+      deptByName.set(name, d.id);
+    }
+
+    for (const l of LOCATIONS) {
+      const loc = await prisma.location.create({ data: { companyId: company.id, name: l.name, address: l.address } });
+      locByName.set(l.name, loc.id);
+    }
+
+    for (const title of DESIGNATIONS) {
+      const d = await prisma.designation.create({ data: { title, grade: title === "CEO" ? "L1" : "L2" } });
+      desigByTitle.set(title, d.id);
+    }
   }
 
   // Roles + Permissions
@@ -360,6 +369,12 @@ async function main() {
       }
     }
   }
+
+  // Bootstrap admin account (the single login when demo data is disabled)
+  const adminUser = await prisma.user.create({
+    data: { email: "admin@proteccio.com", passwordHash: await hashPassword("Admin@123"), roleId: roles["ADMIN"] },
+  });
+  void adminUser;
 
   // Leave types
   const leaveTypeByCode = new Map<string, string>();
@@ -405,9 +420,12 @@ async function main() {
   });
   void shift;
 
-  // Users + Employees
-  const empByCode = new Map<string, string>(); // code -> employee PK
-  const passwordHash = await hashPassword("Password@123");
+  // ── Static demo records (only when SEED_DEMO_DATA=true; the rest of this
+  //    function seeds demo employees and everything dependent on them) ──
+  if (SEED_DEMO_DATA) {
+    // Users + Employees
+    const empByCode = new Map<string, string>(); // code -> employee PK
+    const passwordHash = await hashPassword("Password@123");
 
   for (const e of EMPLOYEES) {
     const user = await prisma.user.create({
@@ -455,32 +473,10 @@ async function main() {
     }
   }
 
-  // Salary structures (per employee, monthly components derived from annual salary)
+  // Salary structures: NOT seeded — the payroll module starts empty and only
+  // shows amounts once an admin configures a salary structure per employee.
+  // (Previously this block synthesized monthly components from annual salary.)
   const empPKByCode = empByCode;
-  for (const e of EMPLOYEES) {
-    const monthly = e.salary / 12;
-    const basic = Math.round((monthly * 0.5) / 10) * 10;
-    const hra = Math.round((monthly * 0.2) / 10) * 10;
-    const conveyance = 400;
-    const medical = 250;
-    const other = Math.max(0, Math.round((monthly - basic - hra - conveyance - medical) / 10) * 10);
-    await prisma.salaryStructure.create({
-      data: {
-        employeeId: empPKByCode.get(e.code)!,
-        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
-        basicSalary: basic,
-        hra,
-        conveyanceAllowance: conveyance,
-        medicalAllowance: medical,
-        performanceBonus: 0,
-        otherAllowances: other,
-        providentFund: Math.round((basic * 0.12) / 10) * 10,
-        professionalTax: 200,
-        incomeTax: Math.round((monthly * 0.05) / 10) * 10,
-        healthInsurance: 180,
-      },
-    });
-  }
 
   // Leave balances (2026) — mirror mock/leave.js for EMP001, defaults for the rest
   const year = 2026;
@@ -505,18 +501,13 @@ async function main() {
     });
   }
 
-  // Leave requests (mirror mock/leave.js LR001–LR006)
+  // Leave requests (mirror mock/leave.js LR001–LR006) — only Pending/Rejected
+  // rows are seeded; APPROVED requests are omitted so they never feed payroll
+  // reconciliation's paid-leave days with static demo data.
   const requests = [
     { id: "LR001", emp: "EMP001", type: "LT01", start: "2026-07-28", end: "2026-07-30", reason: "Personal vacation", status: "Pending", approver: "EMP005", applied: "2026-07-20", approvedOn: null, comments: "" },
-    { id: "LR002", emp: "EMP001", type: "LT02", start: "2026-06-10", end: "2026-06-11", reason: "Fever", status: "Approved", approver: "EMP005", applied: "2026-06-10", approvedOn: "2026-06-10", comments: "Approved. Get well soon." },
-    { id: "LR003", emp: "EMP001", type: "LT03", start: "2026-05-04", end: "2026-05-04", reason: "Personal work", status: "Approved", approver: "EMP005", applied: "2026-05-01", approvedOn: "2026-05-01", comments: "" },
     { id: "LR004", emp: "EMP002", type: "LT01", start: "2026-07-27", end: "2026-07-27", reason: "Family event", status: "Pending", approver: "EMP007", applied: "2026-07-19", approvedOn: null, comments: "" },
-    { id: "LR005", emp: "EMP006", type: "LT02", start: "2026-07-14", end: "2026-07-21", reason: "Surgery recovery", status: "Approved", approver: "EMP009", applied: "2026-07-12", approvedOn: "2026-07-12", comments: "Approved. Please share medical certificate on return." },
     { id: "LR006", emp: "EMP003", type: "LT01", start: "2026-07-22", end: "2026-07-23", reason: "Travel", status: "Rejected", approver: "EMP002", applied: "2026-07-18", approvedOn: "2026-07-19", comments: "Sprint deadline. Please reschedule." },
-    { id: "LR007", emp: "EMP002", type: "LT07", start: "2026-07-16", end: "2026-07-17", reason: "Personal travel", status: "Approved", approver: "EMP007", applied: "2026-07-10", approvedOn: "2026-07-10", comments: "" },
-    { id: "LR008", emp: "EMP004", type: "LT07", start: "2026-07-06", end: "2026-07-07", reason: "Personal work", status: "Approved", approver: "EMP005", applied: "2026-07-01", approvedOn: "2026-07-01", comments: "" },
-    { id: "LR009", emp: "EMP001", type: "LT07", start: "2026-06-24", end: "2026-06-24", reason: "Personal errand", status: "Approved", approver: "EMP005", applied: "2026-06-20", approvedOn: "2026-06-20", comments: "" },
-    { id: "LR010", emp: "EMP001", type: "LT07", start: "2026-05-05", end: "2026-05-05", reason: "Family event", status: "Approved", approver: "EMP005", applied: "2026-05-02", approvedOn: "2026-05-02", comments: "" },
   ];
   for (const r of requests) {
     await prisma.leaveRequest.create({
@@ -535,86 +526,11 @@ async function main() {
     });
   }
 
-  // Attendance (mirror mock/attendance.js 17 records for EMP001, July 2026)
-  const mockAttendance = [
-    ["2026-07-01", "09:02", "18:05", "Present"], ["2026-07-02", "09:45", "18:10", "Late"],
-    ["2026-07-03", null, null, "WFH"], ["2026-07-04", null, null, "Holiday"],
-    ["2026-07-05", "08:55", "17:50", "Present"], ["2026-07-06", null, null, "Weekend"],
-    ["2026-07-07", null, null, "Weekend"], ["2026-07-08", "09:10", "18:00", "Present"],
-    ["2026-07-09", null, null, "Absent"], ["2026-07-10", "09:00", "17:55", "Present"],
-    ["2026-07-11", "09:05", "18:10", "Present"], ["2026-07-14", "10:15", "18:30", "Late"],
-    ["2026-07-15", null, null, "WFH"], ["2026-07-16", "09:00", "18:00", "Present"],
-    ["2026-07-17", "09:02", "17:45", "Present"], ["2026-07-18", "08:50", "18:05", "Present"],
-    ["2026-07-21", "09:30", "18:00", "Late"],
-  ];
+  // Attendance: NOT seeded — punches are only created via attendance uploads
+  // or manual check-in/out, so payroll reconciliation starts from a clean
+  // slate instead of a static demo month. (Previously seeded 17 Web-method
+  // punches for EMP001 in July 2026 that survived "clear uploaded data".)
   const emp001 = empPKByCode.get("EMP001")!;
-  for (const [date, checkIn, checkOut, status] of mockAttendance) {
-    const punchIn = checkIn ? new Date(`${date}T${checkIn}:00Z`) : null;
-    const punchOut = checkOut ? new Date(`${date}T${checkOut}:00Z`) : null;
-    await prisma.attendancePunch.create({
-      data: { employeeId: emp001, punchDate: new Date(`${date}T00:00:00Z`), punchIn, punchOut, status: status ?? "Present", method: "Web" },
-    });
-  }
-
-  // Payroll runs + payslips (mirror mock/payroll.js)
-  const runSpecs = [
-    { month: 7, year: 2026, status: "Draft", processedOn: null, approvedBy: null, employees: 15 },
-    { month: 6, year: 2026, status: "Paid", processedOn: "2026-06-28", approvedBy: "EMP011", employees: 15 },
-    { month: 5, year: 2026, status: "Paid", processedOn: "2026-05-30", approvedBy: "EMP011", employees: 15 },
-  ];
-
-  const runByKey = new Map<string, { id: string; month: number; year: number }>();
-  for (const spec of runSpecs) {
-    const run = await prisma.payrollRun.create({
-      data: {
-        period: `${spec.month}/${spec.year}`,
-        month: spec.month,
-        year: spec.year,
-        status: spec.status,
-        processedOn: spec.processedOn ? new Date(`${spec.processedOn}T00:00:00Z`) : null,
-        approvedBy: spec.approvedBy ? empPKByCode.get(spec.approvedBy) ?? null : null,
-        totalEmployees: spec.employees,
-        grossPayroll: 4250000,
-        totalDeductions: 680000,
-        netPayroll: 3570000,
-      },
-    });
-    runByKey.set(`${spec.month}-${spec.year}`, run);
-  }
-
-  // Payslips for EMP001 for June & May 2026 (mock shapes)
-  const mockPayslips = [
-    {
-      runKey: "6-2026", period: "June 2026",
-      earnings: { basicSalary: 5750, hra: 2300, conveyanceAllowance: 400, medicalAllowance: 250, performanceBonus: 500, otherAllowances: 200, total: 9400 },
-      deductions: { providentFund: 690, professionalTax: 200, incomeTax: 1200, healthInsurance: 180, total: 2270 },
-      netPay: 7130, status: "Paid", paidOn: "2026-06-28",
-    },
-    {
-      runKey: "5-2026", period: "May 2026",
-      earnings: { basicSalary: 5750, hra: 2300, conveyanceAllowance: 400, medicalAllowance: 250, performanceBonus: 0, otherAllowances: 200, total: 8900 },
-      deductions: { providentFund: 690, professionalTax: 200, incomeTax: 1100, healthInsurance: 180, total: 2170 },
-      netPay: 6730, status: "Paid", paidOn: "2026-05-30",
-    },
-  ];
-  const emp001Structure = await prisma.salaryStructure.findFirst({ where: { employeeId: emp001 } });
-  for (const slip of mockPayslips) {
-    const run = runByKey.get(slip.runKey);
-    if (!run) continue;
-    await prisma.payslip.create({
-      data: {
-        payrollRunId: run.id,
-        employeeId: emp001,
-        salaryStructureId: emp001Structure!.id,
-        period: slip.period,
-        earnings: slip.earnings as unknown as Prisma.InputJsonValue,
-        deductions: slip.deductions as unknown as Prisma.InputJsonValue,
-        netPay: slip.netPay,
-        status: slip.status,
-        paidOn: new Date(`${slip.paidOn}T00:00:00Z`),
-      },
-    });
-  }
 
   // Workflow Engine definitions (mirror mock/workflowEngine.js)
   const workflowDefs = [
@@ -1544,7 +1460,6 @@ async function main() {
   await prisma.notification.createMany({
     data: [
       { userId: userByEmail.get("matsya.singh@company.com")!, title: "Leave approved", body: "Your Sick Leave request (10 Jun - 11 Jun) was approved.", category: "Leave", link: "/leave", isRead: true, readAt: new Date("2026-06-10T12:00:00Z"), createdAt: new Date("2026-06-10T09:00:00Z") },
-      { userId: userByEmail.get("matsya.singh@company.com")!, title: "Payslip available", body: "Your payslip for June 2026 is now available.", category: "Payroll", link: "/payroll", isRead: false, createdAt: new Date("2026-06-28T09:00:00Z") },
       { userId: userByEmail.get("vijay.mudgal@company.com")!, title: "New task assigned", body: "You have been assigned 'Feature walkthrough recording'.", category: "Tasks", link: "/tasks", isRead: false, createdAt: new Date("2026-08-10T08:00:00Z") },
       { userId: userByEmail.get("anjali.desai@company.com")!, title: "Leave request awaiting approval", body: "Matsya Singh requested Earned Leave (28 Jul - 30 Jul).", category: "Leave", link: "/leave/approvals", isRead: false, createdAt: new Date("2026-07-20T10:00:00Z") },
       { userId: userByEmail.get("sunita.reddy@company.com")!, title: "Compliance obligation due", body: "GST Monthly Return (GSTR-3B) is due on 2026-10-20.", category: "Compliance", link: "/compliance", isRead: false, createdAt: new Date("2026-08-01T09:00:00Z") },
@@ -1552,12 +1467,18 @@ async function main() {
     ],
   });
 
+  } // end SEED_DEMO_DATA
+
   console.log("✅ Seed complete.");
-  console.log("🔑 Login credentials (all): email from list below / Password@123");
-  console.log("   ADMIN  → robert.king@company.com (Robert King, CEO)");
-  console.log("   HR     → sunita.reddy@company.com (Sunita Reddy, HR Manager)");
-  console.log("   MANAGER→ anjali.desai@company.com (Anjali Desai, Engineering Manager)");
-  console.log("   EMP    → matsya.singh@company.com (Matsya Singh, Senior Software Engineer)");
+  if (SEED_DEMO_DATA) {
+    console.log("🔑 Login credentials (all): email from list below / Password@123");
+    console.log("   ADMIN  → robert.king@company.com (Robert King, CEO)");
+    console.log("   HR     → sunita.reddy@company.com (Sunita Reddy, HR Manager)");
+    console.log("   MANAGER→ anjali.desai@company.com (Anjali Desai, Engineering Manager)");
+    console.log("   EMP    → matsya.singh@company.com (Matsya Singh, Senior Software Engineer)");
+  } else {
+    console.log("🔑 Login: admin@proteccio.com / Admin@123 — create data via the app or bulk uploads.");
+  }
 }
 
 main()

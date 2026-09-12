@@ -7,23 +7,25 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Users, Upload, Camera } from "lucide-react";
+import { Plus, Search, Filter, Users, Upload, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
+import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 import {
   getEmployees,
   updateEmployee,
-  uploadEmployeePhoto,
   bulkUploadEmployees,
+  deleteEmployee,
 } from "../../services/employeeService.js";
 import RegistrationWizardModal from "./RegistrationWizardModal.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-import { departments, statuses } from "../../mock/employees.js";
+import { departments, locations, employmentTypes, statuses, skillTypes, genders } from "../../mock/employees.js";
 
 const EMPLOYEE_STATUS_META = {
   Active:     { label: "Active",     color: "#16a34a", bg: "#f0fdf4" },
@@ -33,10 +35,12 @@ const EMPLOYEE_STATUS_META = {
 };
 
 // ─── Edit Employee Form ───────────────────────────────────────────────────────
-function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
+function EditEmployeeModal({ employee, employees, isOpen, onClose, onUpdated }) {
   const toast = useToast();
   const [form, setForm] = useState({
-    firstName: "", lastName: "", email: "", designation: "", department: "",
+    firstName: "", lastName: "", email: "", phone: "", gender: "", dob: "",
+    designation: "", skillType: "", department: "", location: "", employmentType: "Full-Time",
+    status: "Active", managerId: "", dateOfJoining: "",
     state: "", country: "", annualSalary: "",
   });
   const [errors, setErrors] = useState({});
@@ -46,7 +50,14 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
   useEffect(() => {
     if (employee) {
       setForm({
-        firstName: employee.firstName || "", lastName: employee.lastName || "", email: employee.email || "", designation: employee.designation || "", department: employee.department || "",
+        firstName: employee.firstName || "", lastName: employee.lastName || "", email: employee.email || "",
+        phone: employee.phone || "", gender: employee.gender || "",
+        dob: employee.dob ? String(employee.dob).slice(0, 10) : "",
+        designation: employee.designation || "", skillType: employee.skillType || "",
+        department: employee.department || "",
+        location: employee.location || "", employmentType: employee.employmentType || "Full-Time",
+        status: employee.status || "Active", managerId: employee.managerId || "",
+        dateOfJoining: employee.joinDate ? String(employee.joinDate).slice(0, 10) : "",
         state: employee.state || "", country: employee.country || "", annualSalary: employee.annualSalary ?? "",
       });
       setError("");
@@ -75,10 +86,19 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim(),
+        phone: form.phone.trim() || undefined,
+        gender: form.gender.trim() || undefined,
+        dob: form.dob ? String(form.dob).slice(0, 10) : undefined,
         designation: form.designation.trim(),
+        skillType: form.skillType || undefined,
         department: form.department,
-        state: form.state.trim(),
-        country: form.country.trim(),
+        location: form.location || undefined,
+        employmentType: form.employmentType,
+        status: form.status,
+        managerId: form.managerId || null,
+        dateOfJoining: form.dateOfJoining ? String(form.dateOfJoining).slice(0, 10) : undefined,
+        state: form.state.trim() || undefined,
+        country: form.country.trim() || undefined,
         annualSalary: form.annualSalary ? Number(form.annualSalary) : undefined,
       });
       onUpdated();
@@ -113,39 +133,71 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
     </div>
   );
 
+  const select = (label, key, options, placeholder) => {
+    const items = (options || []).map((o) => (typeof o === "object" && o !== null ? o : { value: o, label: String(o) }));
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{label}</label>
+        <select
+          value={form[key]}
+          onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+          style={{
+            height: "38px", padding: "0 12px",
+            border: `1px solid ${errors[key] ? "var(--red)" : "var(--border)"}`,
+            borderRadius: "var(--radius-sm)",
+            fontSize: "13.5px", color: "var(--text)",
+            background: "var(--card)", outline: "none",
+          }}
+        >
+          <option value="">{placeholder || `Select ${label.replace(" *", "")}`}</option>
+          {items.map((it) => <option key={it.value} value={it.value}>{it.label}</option>)}
+        </select>
+        {errors[key] && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors[key]}</span>}
+      </div>
+    );
+  };
+
+  const managerOptions = (employees || [])
+    .filter((m) => (m.id || "") !== (employee?.id || ""))
+    .map((m) => ({ value: m.id, label: `${m.firstName} ${m.lastName} (${m.id})` }));
+
+  // Designation dropdown options — derived from the loaded employee roster so
+  // the current value always appears even when it isn't in a fixed catalog.
+  const designationOptions = [...new Set((employees || []).map((e) => e.designation).filter(Boolean))].sort();
+
   return (
     <Modal isOpen={isOpen} title="Edit Employee" onClose={onClose}>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
           {field("First Name *", "firstName")}
           {field("Last Name *", "lastName")}
         </div>
-        {field("Work Email *", "email", "email")}
-        {field("Designation *", "designation")}
-
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {field("Work Email *", "email", "email")}
+          {field("Phone", "phone")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {select("Gender", "gender", genders, "Select Gender")}
+          {field("Date of Birth", "dob", "date")}
+        </div>
+        {select("Designation *", "designation", designationOptions, "Select Designation")}
+        {select("Skill Type", "skillType", skillTypes, "Select Skill Type")}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {select("Department *", "department", departments)}
+          {select("Work Location", "location", locations, "Select Work Location")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {select("Employment Type", "employmentType", employmentTypes)}
+          {select("Status", "status", statuses)}
+        </div>
+        {select("Reporting Manager", "managerId", managerOptions, "None")}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {field("Date of Joining", "dateOfJoining", "date")}
+          {field("Yearly Salary Package", "annualSalary", "number")}
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
           {field("State", "state")}
           {field("Country", "country")}
-        </div>
-        {field("Yearly Salary Package", "annualSalary", "number")}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Department *</label>
-          <select
-            value={form.department}
-            onChange={(e) => setForm((p) => ({ ...p, department: e.target.value }))}
-            style={{
-              height: "38px", padding: "0 12px",
-              border: `1px solid ${errors.department ? "var(--red)" : "var(--border)"}`,
-              borderRadius: "var(--radius-sm)",
-              fontSize: "13.5px", color: "var(--text)",
-              background: "var(--card)", outline: "none",
-            }}
-          >
-            <option value="">Select department</option>
-            {departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-          {errors.department && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.department}</span>}
         </div>
 
         {error && (
@@ -172,7 +224,10 @@ function EditEmployeeModal({ employee, isOpen, onClose, onUpdated }) {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function Employees() {
   const navigate = useNavigate();
-  const { role } = useAuth();
+  const { role, permissions } = useAuth();
+  const canEdit = role === "ADMIN" || role === "HR";
+  const canDelete = permissions.includes("employees:delete");
+  const showActions = canEdit || canDelete;
   const toast = useToast();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -181,12 +236,13 @@ export default function Employees() {
   const [filterStatus, setFilterStatus] = useState("");
   const [showWizard, setShowWizard] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
-  const [photoBusyId, setPhotoBusyId] = useState(null);
   const [bulkResult, setBulkResult] = useState(null);
   const [editingEmployee, setEditingEmployee] = useState(null);
+  const [menuOpenFor, setMenuOpenFor] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(1);
   const bulkInputRef = useRef(null);
-  const photoInputRefs = useRef({});
   const PAGE_SIZE = 8;
 
   const load = useCallback(async () => {
@@ -201,6 +257,29 @@ export default function Employees() {
   }, [search, filterDept, filterStatus]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Close the open row-actions menu when clicking anywhere outside it.
+  useEffect(() => {
+    const closeMenu = () => setMenuOpenFor(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, []);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteEmployee(deleteTarget.id);
+      toast(`${deleteTarget.firstName} ${deleteTarget.lastName} (${deleteTarget.id}) permanently deleted`);
+      setDeleteTarget(null);
+      setMenuOpenFor(null);
+      load();
+    } catch (err) {
+      toast(err?.response?.data?.message || err?.message || "Could not delete employee", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleBulkUpload = async (file) => {
     if (!file) return;
@@ -224,23 +303,6 @@ export default function Employees() {
     } finally {
       setBulkUploading(false);
       if (bulkInputRef.current) bulkInputRef.current.value = "";
-    }
-  };
-
-  const handlePhoto = async (emp, file) => {
-    if (!file) return;
-    setPhotoBusyId(emp.id);
-    try {
-      const formData = new FormData();
-      formData.append("photo", file);
-      await uploadEmployeePhoto(emp.id, formData);
-      toast("Photo updated");
-      load();
-    } catch (err) {
-      toast(err?.message || "Could not update photo", "error");
-    } finally {
-      setPhotoBusyId(null);
-      photoInputRefs.current[emp.id] && (photoInputRefs.current[emp.id].value = "");
     }
   };
 
@@ -410,7 +472,7 @@ export default function Employees() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {["Employee", "Designation", "Department", "Location", "Type", "Status", "Joined", ...(role === "HR" ? ["Actions"] : [])].map((h) => (
+                    {["Employee", "Designation", "Department", "Work Location", "Type", "Status", "Joined", ...(showActions ? ["Actions"] : [])].map((h) => (
                       <th
                         key={h}
                         style={{
@@ -441,39 +503,7 @@ export default function Employees() {
                       {/* Employee cell */}
                       <td style={{ padding: "14px 16px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <div style={{ position: "relative", flexShrink: 0 }}>
-                            <img src={emp.avatar} alt={`${emp.firstName} ${emp.lastName}`}
-                              style={{ width: "34px", height: "34px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)", display: "block" }} />
-                            {role === "HR" && (
-                              <>
-                                <button
-                                  title="Change photo"
-                                  onClick={(e) => { e.stopPropagation(); photoInputRefs.current[emp.id]?.click(); }}
-                                  style={{
-                                    position: "absolute", right: "-4px", bottom: "-4px",
-                                    width: "18px", height: "18px", borderRadius: "50%",
-                                    background: "var(--primary)", color: "#fff",
-                                    border: "2px solid var(--card)", cursor: "pointer",
-                                    display: "grid", placeItems: "center", padding: 0,
-                                  }}
-                                >
-                                  {photoBusyId === emp.id ? (
-                                    <span style={{ width: "8px", height: "8px", border: "1.5px solid #fff", borderTopColor: "transparent", borderRadius: "50%", display: "block" }} />
-                                  ) : (
-                                    <Camera size={10} />
-                                  )}
-                                </button>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  style={{ display: "none" }}
-                                  ref={(el) => (photoInputRefs.current[emp.id] = el)}
-                                  onChange={(e) => handlePhoto(emp, e.target.files?.[0])}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              </>
-                            )}
-                          </div>
+                          <InitialsAvatar firstName={emp.firstName} lastName={emp.lastName} size={34} />
                           <div>
                             <p style={{ fontWeight: 600, fontSize: "13.5px", color: "var(--text)", lineHeight: 1.3 }}>
                               {emp.firstName} {emp.lastName}
@@ -496,20 +526,70 @@ export default function Employees() {
                       <td style={{ padding: "14px 16px", fontSize: "12.5px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
                         {new Date(emp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                       </td>
-                      {role === "HR" && (
-                        <td style={{ padding: "14px 16px" }} onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setEditingEmployee(emp)}
-                            style={{
-                              padding: "6px 12px", background: "none", border: "1px solid var(--border)",
-                              borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600,
-                              color: "var(--text)", cursor: "pointer", transition: "all 0.15s",
-                            }}
-                            onMouseEnter={(e) => { e.target.style.background = "var(--background)"; e.target.style.borderColor = "var(--primary)"; }}
-                            onMouseLeave={(e) => { e.target.style.background = "none"; e.target.style.borderColor = "var(--border)"; }}
-                          >
-                            Edit
-                          </button>
+{showActions && (
+                        <td style={{ padding: "14px 16px", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ position: "relative", display: "inline-block" }}>
+                            <button
+                              aria-label="Row actions"
+                              onClick={() => setMenuOpenFor((cur) => (cur === emp.id ? null : emp.id))}
+                              style={{
+                                width: "32px", height: "32px", borderRadius: "var(--radius-sm)",
+                                border: "1px solid var(--border)",
+                                background: menuOpenFor === emp.id ? "var(--background)" : "none",
+                                color: "var(--label)", cursor: "pointer",
+                                display: "grid", placeItems: "center",
+                                transition: "all 0.15s",
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.color = "var(--primary)"; }}
+                              onMouseLeave={(e) => { if (menuOpenFor !== emp.id) { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--label)"; } }}
+                            >
+                              <MoreVertical size={16} />
+                            </button>
+
+                            {menuOpenFor === emp.id && (
+                              <div
+                                style={{
+                                  position: "absolute", right: 0, top: "38px", zIndex: 20,
+                                  background: "var(--card)", border: "1px solid var(--border)",
+                                  borderRadius: "var(--radius-md)", boxShadow: "0 8px 24px rgba(15,23,42,0.14)",
+                                  minWidth: "168px", overflow: "hidden", padding: "6px",
+                                }}
+                              >
+                                {canEdit && (
+                                  <button
+                                    onClick={() => { setMenuOpenFor(null); setEditingEmployee(emp); }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: "9px", width: "100%",
+                                      padding: "9px 12px", border: "none", background: "none",
+                                      color: "var(--text)", fontSize: "13px", fontWeight: 500,
+                                      cursor: "pointer", textAlign: "left", borderRadius: "var(--radius-sm)",
+                                      transition: "background 0.12s",
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--background)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                                  >
+                                    <Pencil size={14} color="var(--label)" /> Edit Employee
+                                  </button>
+                                )}
+                                {canDelete && (
+                                  <button
+                                    onClick={() => { setMenuOpenFor(null); setDeleteTarget(emp); }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: "9px", width: "100%",
+                                      padding: "9px 12px", border: "none", background: "none",
+                                      color: "var(--red)", fontSize: "13px", fontWeight: 500,
+                                      cursor: "pointer", textAlign: "left", borderRadius: "var(--radius-sm)",
+                                      transition: "background 0.12s",
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--red-light)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                                  >
+                                    <Trash2 size={14} /> Delete Employee
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -556,7 +636,17 @@ export default function Employees() {
       </div>
 
       <RegistrationWizardModal isOpen={showWizard} onClose={() => setShowWizard(false)} onRegistered={load} />
-      <EditEmployeeModal isOpen={!!editingEmployee} employee={editingEmployee} onClose={() => setEditingEmployee(null)} onUpdated={load} />
+      <EditEmployeeModal isOpen={!!editingEmployee} employee={editingEmployee} employees={employees} onClose={() => setEditingEmployee(null)} onUpdated={load} />
+      <ConfirmDialog
+        isOpen={!!deleteTarget}
+        title="Delete employee"
+        message={`Permanently delete ${deleteTarget?.firstName} ${deleteTarget?.lastName} (${deleteTarget?.id})? This removes the employee and all their records — attendance, leave, payroll, reviews and more — and can't be undone.`}
+        confirmLabel={deleting ? "Deleting…" : "Delete employee"}
+        cancelLabel="Cancel"
+        danger
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </MainLayout>
   );
 }

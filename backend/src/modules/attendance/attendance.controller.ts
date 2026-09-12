@@ -10,6 +10,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
     {
       employeeId: q.employeeId,
       month: q.month ? Number(q.month) : undefined,
+      day: q.day ? Number(q.day) : undefined,
       year: q.year ? Number(q.year) : undefined,
     },
     req.auth?.employeeId,
@@ -46,5 +47,10 @@ export const doCheckOut = asyncHandler(async (req: Request, res: Response) => {
 export const uploadAttendance = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) throw AppError.badRequest("No file uploaded. Attach a CSV, Excel or delimited-text attendance file.");
   const result = await attendanceService.importAttendanceFromCsv(req.file);
+  sendSuccess(res, result);
+});
+
+export const clearUpload = asyncHandler(async (req: Request, res: Response) => {
+  const result = await attendanceService.clearUploadedAttendance();
   sendSuccess(res, result);
 });

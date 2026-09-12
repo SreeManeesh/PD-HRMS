@@ -11,12 +11,16 @@ import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
-import { getMyAttendance, checkIn, checkOut, uploadAttendanceFile } from "../../services/attendanceService.js";
+import { getMyAttendance, checkIn, checkOut, uploadAttendanceFile, clearUploadedAttendance } from "../../services/attendanceService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { attendanceStatusMeta } from "../../mock/attendance.js";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Uploaded rows are cached locally so the preview survives navigating to other
+// tabs (and coming back) until the user clears them.
+const UPLOAD_STORAGE_KEY = "hrms_uploaded_attendance";
 
 const formatFullDate = (iso) => {
   if (!iso) return "—";
@@ -42,7 +46,8 @@ function StatCard({ icon: Icon, label, value, color, bg }) {
 export default function Attendance() {
   const { user } = useAuth();
   const now = new Date();
-  const [month, setMonth]     = useState(now.getMonth() + 1);
+  const [month, setMonth]     = useState(0);
+  const [day, setDay]         = useState(0);
   const [year, setYear]       = useState(now.getFullYear());
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,18 +71,41 @@ export default function Attendance() {
     try {
       // Staff see the whole team's monthly attendance; employees only their own.
       const isStaff = user.role !== "EMPLOYEE";
-      const recRes = await getMyAttendance({ month, year, ...(isStaff ? {} : { employeeId: user.id }) });
+      const recRes = await getMyAttendance({ day, month, year, ...(isStaff ? {} : { employeeId: user.id }) });
       setRecords(recRes.data);
     } catch {
       // Leave current data as-is on error.
     } finally {
       setLoading(false);
     }
-  }, [user.id, user.role, month, year]);
+  }, [user.id, user.role, day, month, year]);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
+
+  // Rehydrate the uploaded-records overlay after tab navigation / reload.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(UPLOAD_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) setUploadedRecords(parsed);
+      }
+    } catch {
+      // Storage unavailable — the backend still reloads records on visit.
+    }
+  }, []);
+
+  // Keep the overlay cached so it is not lost when switching tabs.
+  useEffect(() => {
+    try {
+      if (uploadedRecords.length === 0) localStorage.removeItem(UPLOAD_STORAGE_KEY);
+      else localStorage.setItem(UPLOAD_STORAGE_KEY, JSON.stringify(uploadedRecords));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [uploadedRecords]);
 
   const handleCheckIn = async () => {
     setChecking(true);
@@ -132,6 +160,26 @@ export default function Attendance() {
     }
   };
 
+  const handleClearUpload = async () => {
+    if (!window.confirm("Clear all uploaded attendance data? This permanently removes every record imported from files (attendance rows + the leave requests they synced).")) return;
+    setUploading(true);
+    setUploadMsg(null);
+    try {
+      const result = await clearUploadedAttendance();
+      setUploadedRecords([]);
+      setRecords([]);
+      setPage(1);
+      setUploadMsg({
+        ok: true,
+        text: `Cleared uploaded data — ${result?.punches ?? 0} attendance record(s) and ${result?.leaveRequests ?? 0} synced leave request(s) removed.`,
+      });
+    } catch (err) {
+      setUploadMsg({ ok: false, text: err?.response?.data?.message || err?.message || "Clear failed" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const ymOf = (date) => {
     const s = String(date || "");
     return { y: Number(s.slice(0, 4)) || 0, m: Number(s.slice(5, 7)) || 0 };
@@ -140,11 +188,16 @@ export default function Attendance() {
   const displayRecords = [
     // Uploaded rows are shown only for the period selected in the dropdowns,
     // so previous-month data becomes visible by choosing that month.
-    ...uploadedRecords.filter((r) => { const { y, m } = ymOf(r.date); return y === year && m === month; }).map((r) => ({ ...r, __uploaded: true })),
+    ...uploadedRecords.filter((r) => {
+      const { y, m } = ymOf(r.date);
+      const d = Number(String(r.date || "").slice(8, 10)) || 0;
+      return y === year && (month === 0 || m === month) && (day === 0 || d === day);
+    }).map((r) => ({ ...r, __uploaded: true })),
     ...records.filter((r) => !uploadedRecords.some((u) => u.employeeId === r.employeeId && u.date === r.date)),
   ];
 
   const countStatus = (s) => displayRecords.filter((r) => r.status === s).length;
+  const periodLabel = month === 0 ? "All months" : `${MONTHS[month - 1]}${day === 0 ? "" : ` ${day}`}`;
 
   // Pagination — 100 rows per page.
   const PAGE_SIZE = 100;
@@ -156,7 +209,7 @@ export default function Attendance() {
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "24px" }}>
-          <PageHeader title="Attendance" subtitle={`${MONTHS[month-1]} ${year} — My attendance log`} />
+          <PageHeader title="Attendance" subtitle={`${periodLabel} ${year} — My attendance log`} />
           <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xlsm,.xltx,.xltm,.xlam,.xlsb,.xls,.xlt,.xla,.xlw,.csv,.tsv,.txt,.prn,.dif,.slk,.xml" style={{ display: "none" }} onChange={handleUpload} />
             <button
@@ -179,11 +232,12 @@ export default function Attendance() {
             </button>
             <button
                 id="clear-upload-btn"
-                onClick={() => { setUploadedRecords([]); setRecords([]); setPage(1); setUploadMsg(null); }}
-                style={{ display: "flex", alignItems: "center", gap: "7px", padding: "10px 20px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px", cursor: "pointer" }}
+                onClick={handleClearUpload}
+                disabled={uploading}
+                style={{ display: "flex", alignItems: "center", gap: "7px", padding: "10px 20px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px", cursor: uploading ? "not-allowed" : "pointer", opacity: uploading ? 0.7 : 1 }}
               >
                 <RotateCcw size={16} />
-                Clear Upload
+                {uploading ? "Clearing…" : "Clear Upload"}
               </button>
             <button
               id={checkedIn ? "check-out-btn" : "check-in-btn"}
@@ -243,7 +297,13 @@ export default function Attendance() {
         <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "16px", flexWrap: "wrap" }}>
           <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setPage(1); }}
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
+            <option value={0}>All</option>
             {MONTHS.map((m, i) => <option key={m} value={i+1}>{m}</option>)}
+          </select>
+          <select value={day} onChange={(e) => { setDay(Number(e.target.value)); setPage(1); }}
+            style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
+            <option value={0}>All</option>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
           <select value={year} onChange={(e) => { setYear(Number(e.target.value)); setPage(1); }}
             style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
@@ -267,7 +327,7 @@ export default function Attendance() {
           {loading ? (
             <Spinner />
           ) : displayRecords.length === 0 ? (
-            <EmptyState title="No records for this month" subtitle="Select a different month or year, or upload an attendance file." />
+            <EmptyState title="No records for the selected period" subtitle="Select a different period, or upload an attendance file." />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>

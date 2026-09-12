@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock3,
   XCircle,
+  RotateCcw,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -20,10 +21,13 @@ import {
   getMyLeaveBalance,
   getLeaveRequests,
   getLeaveTypes,
+  getAttendanceDigest,
   applyLeave,
   approveLeave,
   rejectLeave,
+  decideAbsentLeave,
 } from "../../services/leaveService.js";
+import { clearUploadedAttendance } from "../../services/attendanceService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { leaveStatusMeta } from "../../mock/leave.js";
 import "./Leave.css";
@@ -120,7 +124,7 @@ function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, on
               <span>Page {legendPageSafe + 1} of {legendPages}</span>
               <button type="button" onClick={() => setLegendPage((p) => Math.min(legendPages - 1, p + 1))} disabled={legendPageSafe >= legendPages - 1}>Next ›</button>
             </div>
-          )}
+)}
         </div>
       </div>
 
@@ -251,8 +255,13 @@ function LeaveDecisionModal({ request, action, onClose, onCompleted }) {
     setSaving(true);
     setError("");
     try {
-      if (rejecting) await rejectLeave(request.id, cleanComments);
-      else await approveLeave(request.id, cleanComments);
+      if (rejecting) {
+        if (request.id) await rejectLeave(request.id, cleanComments);
+        else await decideAbsentLeave({ employeeId: request.employeeId, date: request.startDate, action: "reject", comments: cleanComments });
+      } else {
+        if (request.id) await approveLeave(request.id, cleanComments);
+        else await decideAbsentLeave({ employeeId: request.employeeId, date: request.startDate, action: "approve", comments: cleanComments });
+      }
       await onCompleted();
       onClose();
     } catch (err) {
@@ -262,17 +271,19 @@ function LeaveDecisionModal({ request, action, onClose, onCompleted }) {
     }
   };
 
+  const isAbsent = request?.status === "Absent";
+
   return (
     <Modal
       isOpen={Boolean(request && action)}
-      title={rejecting ? "Reject Leave Request" : "Approve Leave Request"}
+      title={rejecting ? (isAbsent ? "Reject Absent Day" : "Reject Leave Request") : (isAbsent ? "Approve Absent Day" : "Approve Leave Request")}
       onClose={saving ? undefined : onClose}
     >
       <form onSubmit={submit} className="leave-decision-form">
         <div className="leave-decision-summary">
           <strong>{request?.employeeName}</strong>
-          <span>{request?.leaveTypeName} · {request?.days} day{request?.days === 1 ? "" : "s"}</span>
-          <small>{request?.reason || "No application reason provided"}</small>
+          <span>{isAbsent ? "Absent day" : `${request?.leaveTypeName} · ${request?.days} day${request?.days === 1 ? "" : "s"}`}</span>
+          <small>{request?.startDate ? `No check-in/out on ${request.startDate}` : request?.reason || "No application reason provided"}</small>
         </div>
         <label htmlFor="leave-decision-comments">
           {rejecting ? "Rejection reason *" : "Approval comment (optional)"}
@@ -304,24 +315,59 @@ export default function Leave() {
   const [balances, setBalances] = useState([]);
   const [requests, setRequests] = useState([]);
   const [leaveTypes, setLeaveTypes] = useState([]);
+  const [digest, setDigest] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingDigest, setLoadingDigest] = useState(true);
   const [showApply, setShowApply] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedBalanceId, setSelectedBalanceId] = useState(null);
   const [decision, setDecision] = useState({ request: null, action: "" });
+  const [clearing, setClearing] = useState(false);
+  const [clearMsg, setClearMsg] = useState(null);
   const canApprove = permissions.includes("leave:approve");
   const canApply = permissions.includes("leave:write");
+  // Deleting uploaded attendance + synced leave requests is an ADMIN/HR action
+  // (matches the backend clear-upload route guard).
+  const canClear = user.role === "ADMIN" || user.role === "HR";
+
+  const handleClear = async () => {
+    if (!window.confirm("Clear uploaded attendance data and all pending leave requests? This permanently removes attendance records imported from files, upload-synced leave requests and any stale pending approvals. Approved leave balances are restored.")) return;
+    setClearing(true);
+    setClearMsg(null);
+    try {
+      const result = await clearUploadedAttendance();
+      await loadData();
+      setClearMsg({ ok: true, text: `Cleared — ${result?.punches ?? 0} attendance record(s) and ${result?.leaveRequests ?? 0} leave request(s) removed.` });
+    } catch (err) {
+      setClearMsg({ ok: false, text: err?.response?.data?.message || err?.message || "Clear failed" });
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const loadData = useCallback(async () => {
-    const [balRes, reqRes, ltRes] = await Promise.all([
-      getMyLeaveBalance(user.id),
+    const [reqRes, ltRes] = await Promise.all([
       getLeaveRequests(canApprove ? {} : { employeeId: user.id }),
       getLeaveTypes(),
     ]);
-    setBalances(balRes.data);
-    setSelectedBalanceId((current) => current || balRes.data?.[0]?.leaveTypeId || null);
     setRequests(reqRes.data);
     setLeaveTypes(ltRes.data);
+    try {
+      const balRes = await getMyLeaveBalance(user.id);
+      setBalances(balRes.data);
+      setSelectedBalanceId((current) => current || balRes.data?.[0]?.leaveTypeId || null);
+    } catch {
+      setBalances([]);
+      setSelectedBalanceId(null);
+    }
+    try {
+      const digRes = await getAttendanceDigest();
+      setDigest(digRes.data || []);
+    } catch {
+      setDigest([]);
+    } finally {
+      setLoadingDigest(false);
+    }
   }, [canApprove, user.id]);
 
   useEffect(() => {
@@ -337,17 +383,21 @@ export default function Leave() {
     return counts;
   }, {});
 
-  // Full catalog merged with balances — used by the distribution card + cards
-  // so every leave type is visible and pagination works.
+  // The leave distribution follows the uploaded attendance data exactly: the
+  // balance endpoint only returns leave types present in the file, so the donut
+  // shows precisely those types (including ones the catalog never had — they
+  // are created on demand during import). Before any upload the catalog renders
+  // so the overview stays meaningful.
   const distributionTypes = useMemo(() => {
     const balByType = new Map(balances.map((b) => [b.leaveTypeId, b]));
-    const source = leaveTypes.length > 0 ? leaveTypes : balances;
+    const source = balances.length > 0 ? balances : leaveTypes;
     return source.map((t) => {
-      const bal = balByType.get(t.leaveTypeId || (t.id));
+      const key = t.leaveTypeId || t.id;
+      const bal = balByType.get(key);
       return {
-        leaveTypeId: t.leaveTypeId || t.id,
+        leaveTypeId: key,
         leaveTypeName: t.leaveTypeName || t.name,
-        total: bal ? Number(bal.total) : Number(t.maxDays || 0),
+        total: bal ? Number(bal.total) : 0,
         used: bal ? Number(bal.used) : 0,
         pending: bal ? Number(bal.pending || 0) : 0,
         available: bal ? Number(bal.available) : 0,
@@ -365,9 +415,77 @@ export default function Leave() {
             style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
             <Plus size={16} /> Apply Leave
           </button>}
+          {canClear && (
+            <button id="clear-uploaded-btn" onClick={handleClear} disabled={clearing}
+              style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: clearing ? "not-allowed" : "pointer", opacity: clearing ? 0.7 : 1 }}>
+              <RotateCcw size={16} /> {clearing ? "Clearing…" : "Clear"}
+            </button>
+          )}
         </PageHeader>
 
+        {clearMsg && (
+          <div
+            style={{
+              marginBottom: "16px", padding: "10px 14px", borderRadius: "var(--radius-sm)",
+              fontSize: "12.5px", fontWeight: 600,
+              background: clearMsg.ok ? "var(--green-light, #f0fdf4)" : "var(--red-light)",
+              color: clearMsg.ok ? "#16a34a" : "var(--red)",
+              border: `1px solid ${clearMsg.ok ? "#bbf7d0" : "var(--red)"}`,
+            }}
+          >
+            {clearMsg.text}
+          </div>
+        )}
+
         <LeaveBalanceOverview distributionTypes={distributionTypes} selectedId={selectedBalanceId} onSelect={setSelectedBalanceId} onClear={() => setSelectedBalanceId(null)} />
+
+        {/* Attendance summary from uploaded files */}
+        <div className="leave-request-header leave-digest-header">
+          <div>
+            <h2>Attendance Summary</h2>
+            <p>Pulled from uploaded files — days present, absent and on leave per employee, with approval decisions.</p>
+          </div>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
+          {loadingDigest ? (
+            <div style={{ padding: "28px", textAlign: "center" }}><Spinner /></div>
+          ) : digest.length === 0 ? (
+            <EmptyState
+              icon={CalendarDays}
+              title="No attendance data yet"
+              subtitle="Upload an attendance file to see per-employee summaries here."
+            />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                    {["Employee", "Days", "Present", "Late / WFH", "Absent", "Leave", "Approved", "Pending"].map((h) => (
+                      <th key={h} style={{ padding: "11px 16px", textAlign: h === "Employee" ? "left" : "center", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {digest.map((row, i) => (
+                    <tr key={`${row.employeeCode}-${i}`} style={{ borderBottom: i < digest.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>
+                        {row.employeeName}
+                        <span style={{ display: "block", fontSize: "11.5px", color: "var(--subtext)", fontWeight: 400 }}>{row.employeeCode}</span>
+                      </td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)", textAlign: "center" }}>{row.days}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#059669", fontWeight: 600, textAlign: "center" }}>{row.present}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)", textAlign: "center" }}>{row.lateWfh}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#dc2626", fontWeight: 600, textAlign: "center" }}>{row.absent}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#0284c7", fontWeight: 600, textAlign: "center" }}>{row.leave}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#059669", fontWeight: 600, textAlign: "center" }}>{row.approved}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#d97706", fontWeight: 600, textAlign: "center" }}>{row.pending}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         {/* Requests table */}
         <div className="leave-request-header">
@@ -378,7 +496,7 @@ export default function Leave() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ height: "34px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
             <option value="">All Statuses</option>
-            {["Pending", "Approved", "Rejected", "Cancelled"].map((s) => <option key={s} value={s}>{s}</option>)}
+            {["Pending", "Approved", "Rejected", "Cancelled", "Absent"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 
@@ -428,18 +546,20 @@ export default function Leave() {
                   {filtered.map((req, i) => {
                     const meta = leaveStatusMeta[req.status] || leaveStatusMeta.Pending;
                     return (
-                      <tr key={req.id} style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <tr key={`${req.id}-${req.employeeId}-${req.startDate}-${req.status}`} style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none" }}>
                         <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>{req.employeeName}</td>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)" }}>{req.leaveTypeName}</td>
+                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)" }}>{req.leaveTypeName || "—"}</td>
                         <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--text)", whiteSpace: "nowrap" }}>
                           {new Date(req.startDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
                           {req.startDate !== req.endDate && ` – ${new Date(req.endDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
                         </td>
                         <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", textAlign: "center" }}>{req.days}</td>
-                        <td style={{ padding: "13px 16px", fontSize: "13px", color: "var(--subtext)", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{req.reason}</td>
+                        <td style={{ padding: "13px 16px", fontSize: "13px", color: "var(--subtext)", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{req.reason || "—"}</td>
                         <td style={{ padding: "13px 16px" }}><StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /></td>
                         <td className="leave-decision-cell">
-                          {req.status === "Pending" ? (
+                          {req.status === "Absent" ? (
+                            <span className="leave-rejection-reason">Marked absent — no check-in/out recorded</span>
+                          ) : req.status === "Pending" ? (
                             <span className="leave-awaiting">Awaiting decision</span>
                           ) : (
                             <div>
@@ -454,7 +574,7 @@ export default function Leave() {
                         </td>
                         {canApprove && (
                           <td style={{ padding: "13px 16px" }}>
-                            {req.status === "Pending" && req.employeeId !== user.id ? (
+                            {(req.status === "Pending" || req.status === "Absent") && req.employeeId !== user.id ? (
                               <div className="leave-row-actions">
                                 <button type="button" className="leave-approve-button" onClick={() => setDecision({ request: req, action: "approve" })}>Approve</button>
                                 <button type="button" className="leave-reject-button" onClick={() => setDecision({ request: req, action: "reject" })}>Reject</button>

@@ -5,8 +5,8 @@
 
 import api from "./api.js";
 
-export const getMyAttendance = async ({ employeeId, month, year } = {}) => {
-  const res = await api.get("/attendance", { params: { employeeId, month, year, limit: 100 } });
+export const getMyAttendance = async ({ employeeId, day, month, year } = {}) => {
+  const res = await api.get("/attendance", { params: { employeeId, day, month, year, limit: 100 } });
   return res.data; // { data, total }
 };
 
@@ -32,4 +32,9 @@ export const uploadAttendanceFile = async (file) => {
   // Supports: xlsx, xlsm, xlsb, xls, xltx, xltm, xlt, xlam, xla, xlw, csv, tsv, txt, prn, dif, slk, xml
   const res = await api.post("/attendance/upload", formData, { timeout: 300000 });
   return res.data.data; // { imported, skipped, errors, data: rows[] }
+};
+
+export const clearUploadedAttendance = async () => {
+  const res = await api.post("/attendance/clear-upload");
+  return res.data.data; // { punches, leaveRequests }
 };

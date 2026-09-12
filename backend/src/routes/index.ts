@@ -24,6 +24,7 @@ import dashboardRoutes from "../modules/dashboard/dashboard.routes";
 import notificationRoutes from "../modules/notifications/notifications.routes";
 import calendarRoutes from "../modules/calendar/calendar.routes";
 import companyBrandingRoutes from "../modules/companyBranding/companyBranding.routes";
+import companyConfigRoutes from "../modules/companyConfig/companyConfig.routes";
 import wizardRoutes from "../modules/wizard/wizard.routes";
 
 
@@ -34,6 +35,7 @@ const serviceName = process.env.SERVICE_NAME;
 if (!serviceName || serviceName === "auth") router.use("/auth", authRoutes);
 if (!serviceName || serviceName === "organization") router.use("/organization", organizationManagementRoutes);
 router.use("/company", companyBrandingRoutes);
+router.use("/company", companyConfigRoutes);
 router.use("/wizard", wizardRoutes);
 if (!serviceName || serviceName === "employees") router.use("/employees", employeeRoutes);
 if (!serviceName || serviceName === "recruitment") router.use("/recruitment", recruitmentRoutes);

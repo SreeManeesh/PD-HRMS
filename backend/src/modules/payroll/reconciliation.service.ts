@@ -34,6 +34,23 @@ export interface ShiftWindow {
 type Punch = { punchDate: Date; status: string; punchIn: Date | null; punchOut: Date | null };
 type ApprovedLeave = { startDate: Date; endDate: Date };
 
+type CompanyWithConfig = {
+  weeklyOffDays: unknown;
+  companyConfig: { shiftStartMinutes: number; shiftEndMinutes: number; weeklyOffDays: unknown } | null;
+};
+
+function filterDayNumbers(value: unknown): number[] {
+  return Array.isArray(value)
+    ? (value as unknown[]).filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 6)
+    : [];
+}
+
+function weeklyOffDays(row: CompanyWithConfig): number[] {
+  const fromConfig = filterDayNumbers(row.companyConfig?.weeklyOffDays);
+  if (fromConfig.length) return fromConfig;
+  return filterDayNumbers(row.weeklyOffDays);
+}
+
 function monthBounds(year: number, month: number): { start: Date; end: Date } {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
@@ -119,8 +136,12 @@ export function reconcile(
 /** Fetch calendar context (holidays + weekly offs) for an employee's period. */
 export async function loadCalendarContext(year: number, month: number, country?: string | null, state?: string | null) {
   const { start, end } = monthBounds(year, month);
-  const [companies, holidays] = await Promise.all([
-    prisma.company.findMany({ where: { isActive: true }, select: { weeklyOffDays: true }, orderBy: { createdAt: "asc" } }),
+  const [companys, holidays] = await Promise.all([
+    prisma.company.findMany({
+      where: { isActive: true },
+      select: { weeklyOffDays: true, companyConfig: { select: { shiftStartMinutes: true, shiftEndMinutes: true, weeklyOffDays: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
     prisma.holiday.findMany({
       where: {
         isActive: true,
@@ -132,9 +153,8 @@ export async function loadCalendarContext(year: number, month: number, country?:
     }),
   ]);
 
-  const weeklyOff: number[] = Array.isArray(companies[0]?.weeklyOffDays)
-    ? (companies[0].weeklyOffDays as unknown as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
-    : [];
+  const companyRow = companys[0] as CompanyWithConfig | undefined;
+  const weeklyOff: number[] = companyRow ? weeklyOffDays(companyRow) : [];
 
   const days: DayInfo[] = [];
   for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
@@ -144,78 +164,156 @@ export async function loadCalendarContext(year: number, month: number, country?:
   return { days, weeklyOff };
 }
 
+// ── Scheduled shift window (loaded once per batch) ────────────────────────
+
+function parseShiftRow(
+  shiftRow: { startTime: Date; endTime: Date } | null,
+  fallback: ShiftWindow,
+): ShiftWindow {
+  if (shiftRow) {
+    return {
+      startMinutes: shiftRow.startTime.getHours() * 60 + shiftRow.startTime.getMinutes(),
+      endMinutes: shiftRow.endTime.getHours() * 60 + shiftRow.endTime.getMinutes(),
+    };
+  }
+  return fallback;
+}
+
+function defaultShiftWindow(cfg: CompanyWithConfig["companyConfig"]): ShiftWindow {
+  return {
+    startMinutes: cfg ? cfg.shiftStartMinutes : 9 * 60,
+    endMinutes: cfg ? cfg.shiftEndMinutes : 18 * 60,
+  };
+}
+
+/**
+ * Batch-reconcile attendance + approved leave for N employees in a single
+ * set of DB queries instead of N×6 (the old per-employee path).
+ * Results are keyed by employee id for O(1) lookup; throws if any
+ * requested id is missing (mirrors reconcileEmployee's own guard).
+ */
+export async function reconcileEmployees(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<EmployeeReconciliation[]> {
+  if (employeeIds.length === 0) return [];
+
+  const { start, end } = monthBounds(year, month);
+  const idSet = employeeIds;
+
+  // ── Single batch of queries (6 total, independent of N) ────────────────
+  const [companyRow, allHolidays, employees, allPunches, allLeaves, shiftRow] =
+    await Promise.all([
+      prisma.company.findFirst({
+        where: { isActive: true },
+        select: {
+          weeklyOffDays: true,
+          companyConfig: { select: { shiftStartMinutes: true, shiftEndMinutes: true, weeklyOffDays: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.holiday.findMany({
+        where: { isActive: true, date: { gte: start, lte: end } },
+        orderBy: { date: "asc" },
+        select: { date: true, name: true, country: true, state: true },
+      }),
+      prisma.employee.findMany({
+        where: { id: { in: idSet } },
+        select: { id: true, employeeCode: true, dateOfJoining: true, state: true, country: true },
+      }),
+      prisma.attendancePunch.findMany({
+        where: { employeeId: { in: idSet }, punchDate: { gte: start, lte: end } },
+        select: { employeeId: true, punchDate: true, status: true, punchIn: true, punchOut: true },
+        orderBy: { punchDate: "asc" },
+      }),
+      prisma.leaveRequest.findMany({
+        where: {
+          employeeId: { in: idSet },
+          status: "Approved",
+          startDate: { lte: end },
+          endDate: { gte: start },
+        },
+        select: { employeeId: true, startDate: true, endDate: true },
+      }),
+      prisma.attendanceShift.findFirst(),
+    ]);
+
+  if (employees.length !== idSet.length) {
+    const found = new Set(employees.map((e) => e.id));
+    const missing = idSet.filter((id) => !found.has(id));
+    throw new Error(`Employees not found: ${missing.join(", ")}`);
+  }
+
+  // ── Shared context (already loaded) ────────────────────────────────────
+  const weeklyOff: number[] = companyRow ? weeklyOffDays(companyRow as CompanyWithConfig) : [];
+  const shift = parseShiftRow(shiftRow, defaultShiftWindow((companyRow as CompanyWithConfig)?.companyConfig ?? null));
+  const shiftHours = (shift.endMinutes - shift.startMinutes) / 60;
+
+  // Group punches / leaves by employeeId (O(M) where M = rows returned).
+  const punchesByEmp = new Map<string, Punch[]>();
+  for (const raw of allPunches) {
+    const arr = punchesByEmp.get(raw.employeeId) ?? [];
+    arr.push({ punchDate: raw.punchDate, status: raw.status, punchIn: raw.punchIn, punchOut: raw.punchOut });
+    punchesByEmp.set(raw.employeeId, arr);
+  }
+
+  const leavesByEmp = new Map<string, ApprovedLeave[]>();
+  for (const raw of allLeaves) {
+    const arr = leavesByEmp.get(raw.employeeId) ?? [];
+    arr.push({ startDate: raw.startDate, endDate: raw.endDate });
+    leavesByEmp.set(raw.employeeId, arr);
+  }
+
+  // ── Per-employee classification (CPU-only, no DB) ──────────────────────
+  const results: EmployeeReconciliation[] = [];
+
+  for (const emp of employees) {
+    // Filter holidays for this employee's state/country (in-memory).
+    const empCountry = emp.country ?? "India";
+    const empState = emp.state;
+    const filteredHolidays = allHolidays.filter((h) => {
+      if (h.country !== empCountry) return false;
+      if (empState) return h.state === empState || h.state === null;
+      return h.state === null;
+    });
+
+    const days: DayInfo[] = [];
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      days.push(classifyDay(new Date(d), weeklyOff, filteredHolidays));
+    }
+
+    const punches = punchesByEmp.get(emp.id) ?? [];
+    const leaves = leavesByEmp.get(emp.id) ?? [];
+    const joining = emp.dateOfJoining ? new Date(emp.dateOfJoining.toISOString()) : null;
+
+    const { summary, daily } = reconcile(punches, leaves, days, joining, shift);
+
+    const clipped = [...daily].filter(
+      (d) => new Date(`${d.date}T00:00:00.000Z`) >= new Date(start) && new Date(`${d.date}T00:00:00.000Z`) <= end,
+    );
+
+    results.push({
+      employeeId: emp.id,
+      employeeCode: emp.employeeCode,
+      year,
+      month,
+      periodStart: start,
+      periodEnd: end,
+      hiredWithinPeriod: joining ? joining > start : false,
+      shiftHours,
+      summary,
+      daily: clipped,
+    });
+  }
+
+  return results;
+}
+
 /** Reconcile attendance + approved leave for one employee for a month. */
 export async function reconcileEmployee(employeeId: string, year: number, month: number): Promise<EmployeeReconciliation> {
-  const { start, end } = monthBounds(year, month);
-  const { days } = await loadCalendarContext(year, month, "India", null);
-
-  const [employee, punches, leaves] = await Promise.all([
-    prisma.employee.findUnique({
-      where: { id: employeeId },
-      select: { id: true, employeeCode: true, dateOfJoining: true, state: true, country: true },
-    }),
-    prisma.attendancePunch.findMany({
-      where: { employeeId, punchDate: { gte: start, lte: end } },
-      select: { punchDate: true, status: true, punchIn: true, punchOut: true },
-      orderBy: { punchDate: "asc" },
-    }),
-    prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        status: "Approved",
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-      select: { startDate: true, endDate: true },
-    }),
-  ]);
-
-  if (!employee) throw new Error(`Employee ${employeeId} not found`);
-
-  // Re-load days with the employee's state so state holidays are respected.
-  const stateDays = employee.state
-    ? (await loadCalendarContext(year, month, employee.country ?? "India", employee.state)).days
-    : days;
-
-  // Scheduled shift (global for now — no per-employee assignment yet). Falls
-  // back to a 09:00–18:00 window so overtime stays well-defined without config.
-  // NOTE: Prisma returns `time` columns as wall-clock local time, so read them
-  // with local getters — mirroring how punches (timestamp w/o tz) are read back
-  // as UTC and therefore use UTC getters in the reconcile loop below.
-  const shiftRow = await prisma.attendanceShift.findFirst();
-  const shift: ShiftWindow | null = shiftRow
-    ? {
-        startMinutes: shiftRow.startTime.getHours() * 60 + shiftRow.startTime.getMinutes(),
-        endMinutes: shiftRow.endTime.getHours() * 60 + shiftRow.endTime.getMinutes(),
-      }
-    : { startMinutes: 9 * 60, endMinutes: 18 * 60 };
-  const shiftHours = shift ? (shift.endMinutes - shift.startMinutes) / 60 : 9;
-
-  const joining = employee.dateOfJoining ? new Date(employee.dateOfJoining.toISOString()) : null;
-  const { summary, daily } = reconcile(
-    punches as Punch[],
-    leaves as ApprovedLeave[],
-    stateDays,
-    joining?.toISOString() ? new Date(joining.toISOString()) : null,
-    shift
-  );
-
-  const clipped = [...daily].filter(
-    (d) => new Date(`${d.date}T00:00:00.000Z`) >= new Date(start) && new Date(`${d.date}T00:00:00.000Z`) <= end
-  );
-
-  return {
-    employeeId,
-    employeeCode: employee.employeeCode,
-    year,
-    month,
-    periodStart: start,
-    periodEnd: end,
-    hiredWithinPeriod: joining ? joining > start : false,
-    shiftHours,
-    summary,
-    daily: clipped,
-  };
+  const [result] = await reconcileEmployees([employeeId], year, month);
+  return result;
 }
 
 /** Aggregate a reconciliation summary across paycheck-building helpers. */

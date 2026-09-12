@@ -7,7 +7,6 @@
 
 import { employees } from "./employees.js";
 import { leaveRequests } from "./leave.js";
-import { payrollRuns } from "./payroll.js";
 
 /**
  * Builds the global search corpus at startup.
@@ -52,25 +51,6 @@ export function buildSearchIndex() {
         req.leaveTypeName.toLowerCase(),
         req.status.toLowerCase(),
         req.id.toLowerCase(),
-      ],
-    });
-  });
-
-  // Payroll Runs
-  payrollRuns.forEach((run) => {
-    entries.push({
-      id: run.id,
-      type: "Payroll Run",
-      title: run.period,
-      subtitle: `${run.totalEmployees} employees · Net ₹${(run.netPayroll / 100000).toFixed(1)}L`,
-      meta: run.status,
-      avatar: null,
-      href: `/payroll`,
-      keywords: [
-        run.period.toLowerCase(),
-        run.status.toLowerCase(),
-        run.id.toLowerCase(),
-        String(run.year),
       ],
     });
   });

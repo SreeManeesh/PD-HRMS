@@ -11,6 +11,7 @@ import MainLayout from "../../components/layout/MainLayout.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import { getEmployee } from "../../services/employeeService.js";
+import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 
 const EMPLOYEE_STATUS_META = {
   Active:     { label: "Active",     color: "#16a34a", bg: "#f0fdf4" },
@@ -92,11 +93,7 @@ export default function EmployeeProfile() {
             flexWrap: "wrap",
           }}
         >
-          <img
-            src={employee.avatar}
-            alt={`${employee.firstName} ${employee.lastName}`}
-            style={{ width: "80px", height: "80px", borderRadius: "50%", objectFit: "cover", border: "3px solid var(--border)", flexShrink: 0 }}
-          />
+          <InitialsAvatar firstName={employee.firstName} lastName={employee.lastName} size={80} borderWidth={3} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" }}>
               <h1 style={{ fontSize: "22px", fontWeight: 700, color: "var(--text)" }}>
@@ -139,7 +136,7 @@ export default function EmployeeProfile() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "24px" }}>
               <InfoRow icon={Mail}      label="Email"         value={employee.email} />
               <InfoRow icon={Phone}     label="Phone"         value={employee.phone} />
-              <InfoRow icon={MapPin}    label="Location"      value={employee.location} />
+              <InfoRow icon={MapPin}    label="Work Location" value={employee.location} />
               <InfoRow icon={MapPin}    label="State"         value={employee.state} />
               <InfoRow icon={MapPin}    label="Country"       value={employee.country} />
               <InfoRow icon={Calendar}  label="Date of Birth" value={employee.dob ? new Date(employee.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"} />
@@ -149,6 +146,7 @@ export default function EmployeeProfile() {
           {activeTab === "employment" && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "24px" }}>
               <InfoRow icon={Briefcase} label="Designation"      value={employee.designation} />
+              <InfoRow icon={Briefcase} label="Skill Type"       value={employee.skillType} />
               <InfoRow icon={Building2} label="Department"       value={employee.department} />
               <InfoRow icon={Calendar}  label="Join Date"        value={new Date(employee.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
               <InfoRow icon={Briefcase} label="Employment Type"  value={employee.employmentType} />

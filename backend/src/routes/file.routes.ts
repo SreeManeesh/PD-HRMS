@@ -37,7 +37,9 @@ function streamFromMinio(bucket: string, objectName: string) {
 function serveWithDiskFallback(bucket: string, folder: string) {
     return async (req: Request, res: Response) => {
         const objectName = `${folder}/${req.params[0]}`;
-        const isSafe = !req.params[0].includes("..") && !req.params[0].includes("/") && !req.params[0].includes("\\");
+        // Company assets live in a nested subfolder (logo/x.png), so slashes
+        // are allowed here; only path-traversal segments are rejected.
+        const isSafe = !req.params[0].split(/[\\/]/).includes("..");
         try {
             const stat = await minioClient.statObject(bucket, objectName);
             const stream = await minioClient.getObject(bucket, objectName);

@@ -11,6 +11,16 @@ export const runs = asyncHandler(async (_req: Request, res: Response) => {
   sendSuccess(res, result.data);
 });
 
+export const createRun = asyncHandler(async (req: Request, res: Response) => {
+  const result = await payrollService.createPayrollRun(req.body, req.auth?.sub);
+  sendSuccess(res, result.data, undefined, 201);
+});
+
+export const years = asyncHandler(async (_req: Request, res: Response) => {
+  const result = await payrollService.getPayrollYears();
+  sendSuccess(res, result.data);
+});
+
 export const runDetail = asyncHandler(async (req: Request, res: Response) => {
   const result = await payrollService.getPayrollRun(req.params.id);
   sendSuccess(res, result.data);
@@ -31,6 +41,16 @@ export const employeeSummary = asyncHandler(async (req: Request, res: Response) 
   sendSuccess(res, result.data);
 });
 
+export const employeeSummaries = asyncHandler(async (req: Request, res: Response) => {
+  const actor = req.auth;
+  if (actor?.role === "EMPLOYEE") {
+    throw AppError.forbidden("Employees should use their own summary endpoint");
+  }
+  const q = req.query as Record<string, string | undefined>;
+  const result = await payrollService.getEmployeePayrollSummaries(Number(q.month), Number(q.year));
+  sendSuccess(res, result.data);
+});
+
 export const payslips = asyncHandler(async (req: Request, res: Response) => {
   const q = req.query as Record<string, string | undefined>;
   const result = await payrollService.listPayslips(q.employeeId);
@@ -45,16 +65,6 @@ export const runPayslips = asyncHandler(async (req: Request, res: Response) => {
 export const payslipDetail = asyncHandler(async (req: Request, res: Response) => {
   const result = await payrollService.getPayslip(req.params.id);
   sendSuccess(res, result.data);
-});
-
-export const payslipPdf = asyncHandler(async (req: Request, res: Response) => {
-  const { buffer, filename } = await payrollService.getPayslipPdf(req.params.id, {
-    role: req.auth?.role,
-    employeeCode: req.auth?.employeeCode,
-  });
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  res.send(buffer);
 });
 
 export const process = asyncHandler(async (req: Request, res: Response) => {

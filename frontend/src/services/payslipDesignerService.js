@@ -87,23 +87,6 @@ export const previewPayslip = async (id, { employeeId, month, year }) => {
   return res.data;
 };
 
-export const payslipPdfUrl = (id, { employeeId, month, year }) => {
-  const params = new URLSearchParams({ employeeId: employeeId || "", month, year });
-  return `${import.meta.env.VITE_API_URL || "/api"}/payslip/templates/${id}/pdf?${params.toString()}`;
-};
-
-/** Download a designer payslip PDF via axios (carries the Bearer auth token). */
-export const downloadDesignerPayslipPdf = async (id, { employeeId = "", month, year } = {}) => {
-  const res = await api.get(`/payslip/templates/${id}/pdf`, {
-    params: { employeeId, month, year },
-    responseType: "blob",
-  });
-  const disposition = res.headers?.["content-disposition"] || "";
-  const match = /filename="?([^";]+)"?/.exec(disposition);
-  const filename = match ? match[1] : `payslip_${id}.pdf`;
-  return { blob: res.data, filename };
-};
-
 export const getTaxSelection = async ({ employeeId, year } = {}) => {
   const res = await api.get("/payslip/tax-selection", { params: { employeeId, year } });
   return res.data;

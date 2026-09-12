@@ -14,7 +14,7 @@ const balanceQuerySchema = z.object({
 
 const requestsQuerySchema = z.object({
   employeeId: z.string().optional(),
-  status: z.enum(["Pending", "Approved", "Rejected", "Cancelled"]).optional(),
+  status: z.enum(["Pending", "Approved", "Rejected", "Cancelled", "Absent"]).optional(),
 });
 
 const applyBodySchema = z.object({
@@ -33,6 +33,13 @@ const rejectionBodySchema = z.object({
   comments: z.string().trim().min(1, "Rejection reason is required").max(1000),
 });
 
+const decideAbsentBodySchema = z.object({
+  employeeId: z.string().min(1, "employeeId is required"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  action: z.enum(["approve", "reject"]),
+  comments: z.string().max(1000).optional(),
+});
+
 // GET /api/leave/types — leave:read
 router.get("/types", authenticate, requirePermission("leave:read"), leaveController.listTypes);
 
@@ -42,8 +49,14 @@ router.get("/balance", authenticate, requirePermission("leave:read"), validate({
 // GET /api/leave/requests — leave:read
 router.get("/requests", authenticate, requirePermission("leave:read"), validate({ query: requestsQuerySchema }), leaveController.listRequests);
 
+// GET /api/leave/attendance-digest — leave:read (per-employee attendance summary)
+router.get("/attendance-digest", authenticate, requirePermission("leave:read"), leaveController.attendanceDigest);
+
 // POST /api/leave/apply — leave:write
 router.post("/apply", authenticate, requirePermission("leave:write"), validate({ body: applyBodySchema }), leaveController.apply);
+
+// PUT /api/leave/absent/decide — leave:approve (decision on an uploaded absent day)
+router.put("/absent/decide", authenticate, requirePermission("leave:approve"), validate({ body: decideAbsentBodySchema }), leaveController.decideAbsent);
 
 // PUT /api/leave/:id/approve — leave:approve
 router.put("/:id/approve", authenticate, requirePermission("leave:approve"), validate({ body: approvalBodySchema }), leaveController.approve);

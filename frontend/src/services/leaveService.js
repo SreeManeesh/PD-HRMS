@@ -20,6 +20,11 @@ export const getLeaveRequests = async ({ employeeId, status } = {}) => {
   return res.data; // { data, total }
 };
 
+export const getAttendanceDigest = async ({ month, year } = {}) => {
+  const res = await api.get("/leave/attendance-digest", { params: { month, year } });
+  return res.data; // { data }
+};
+
 export const applyLeave = async (payload) => {
   const res = await api.post("/leave/apply", payload);
   return res.data;
@@ -32,5 +37,11 @@ export const approveLeave = async (requestId, comments = "") => {
 
 export const rejectLeave = async (requestId, comments = "") => {
   const res = await api.put(`/leave/${requestId}/reject`, { comments });
+  return res.data;
+};
+
+/** Decide (approve/reject) an uploaded Absent day that has no leave request. */
+export const decideAbsentLeave = async ({ employeeId, date, action, comments = "" }) => {
+  const res = await api.put("/leave/absent/decide", { employeeId, date, action, comments });
   return res.data;
 };

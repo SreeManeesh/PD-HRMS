@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { CheckCircle2, Eye } from "lucide-react";
-import { Play, FileText, Download, Users, Wallet, CalendarRange, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, FileText, Users, Wallet, CalendarRange, Search, ChevronDown, ChevronRight } from "lucide-react";
 import PayslipPreviewModal from "../../components/payslip/PayslipPreviewModal.jsx";
 import { PayslipDistributionPanel } from "../PayslipDistribution/PayslipDistribution.jsx";
 import { PayslipDesignerPanel } from "../PayslipDesigner/PayslipDesigner.jsx";
@@ -22,17 +22,24 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
-import { getPayrollRuns, getPayslips, getRunPayslips, runPayroll, approvePayrollRun, getEmployeePayrollSummary, downloadPayslipPdf } from "../../services/payrollService.js";
+import { getPayrollRuns, getPayrollYears, getPayslips, getRunPayslips, createPayrollRun, runPayroll, approvePayrollRun, getEmployeePayrollSummary, getEmployeePayrollSummaries } from "../../services/payrollService.js";
 import { getTaxSelection, setTaxSelection } from "../../services/payslipDesignerService.js";
 import { getMyAttendance } from "../../services/attendanceService.js";
 import { getEmployees } from "../../services/employeeService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-import { payrollStatusMeta } from "../../mock/payroll.js";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+const payrollStatusMeta = {
+  Draft: { label: "Draft", color: "#64748b", bg: "#f8fafc" },
+  Processing: { label: "Processing", color: "#d97706", bg: "#fffbeb" },
+  Approved: { label: "Approved", color: "#0284c7", bg: "#f0f9ff" },
+  Paid: { label: "Paid", color: "#16a34a", bg: "#f0fdf4" },
+  Failed: { label: "Failed", color: "#dc2626", bg: "#fef2f2" },
+};
 
 const fmt = (n) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
@@ -178,6 +185,7 @@ export default function Payroll() {
   const isStaff = user.role !== "EMPLOYEE";
   const canApprove = Array.isArray(permissions) && permissions.includes("payroll:approve");
   const [runs, setRuns]         = useState([]);
+  const [dataYears, setDataYears] = useState([]);
   const [payslips, setPayslips] = useState([]);
   const [taxYear, setTaxYear] = useState(new Date().getFullYear());
   const [taxRegime, setTaxRegime] = useState("");
@@ -196,6 +204,9 @@ export default function Payroll() {
   const [year, setYear]         = useState(now.getFullYear());
   const [annualSearch, setAnnualSearch] = useState("");
   const [monthlySearch, setMonthlySearch] = useState("");
+  // Bumped after a Run/Approve so the monthly batched summaries + payroll totals
+  // re-fetch reflecting the newly processed (or paid) run.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Annual: expanded period's per-employee payroll rows.
   const [expandedRun, setExpandedRun] = useState(null); // { month, year }
@@ -221,11 +232,13 @@ export default function Payroll() {
     // runs or payslips error out and vice versa.
     Promise.all([
       getPayrollRuns().catch(() => ({ data: [] })),
+      getPayrollYears().catch(() => ({ data: [] })),
       getPayslips(user.id).catch(() => ({ data: [] })),
       getEmployees({ limit: 5000 }).catch(() => ({ data: [] })),
     ])
-      .then(([runRes, slipRes, empRes]) => {
+      .then(([runRes, yearRes, slipRes, empRes]) => {
         setRuns(runRes.data);
+        setDataYears(yearRes.data || []);
         setPayslips(slipRes.data);
         const empList = empRes.data || [];
         setEmployees(empList);
@@ -265,29 +278,25 @@ export default function Payroll() {
     }
   };
 
-  const handleDownloadPayslip = async (id) => {
-    setRegimeMsg(null);
-    try {
-      const { blob, filename } = await downloadPayslipPdf(id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) {
-      setRegimeMsg({ ok: false, text: e.message || "Could not download the payslip PDF" });
-    }
-  };
-
   const handleRunPayroll = async () => {
     if (!activeRun) return;
     setRunning(true);
     try {
-      await runPayroll(activeRun.id);
-      setRuns((prev) => prev.map((r) => (r.id === activeRun.id ? { ...r, status: "Processing" } : r)));
+      // Run from the Monthly tab may target a run that doesn't exist yet —
+      // create the Draft run for that month, then process it in one action.
+      let runId = activeRun.id;
+      if (!runId) {
+        const created = await createPayrollRun(month, year);
+        runId = created.data?.id;
+        if (!runId) throw new Error("Could not create the payroll run for this month");
+        setRuns((prev) => [...prev, created.data]);
+      }
+      await runPayroll(runId);
+      // Re-fetch runs so the annual table + monthly header reflect the fresh
+      // Processing status & totals instead of a locally-stamped stub.
+      const res = await getPayrollRuns().catch(() => ({ data: [] }));
+      setRuns(res.data || []);
+      setRefreshKey((k) => k + 1);
       setRegimeMsg({ ok: true, text: `Payroll run ${activeRun.period} processed for ${activeRun.totalEmployees || 0} employees.` });
       toast(`Payroll processed for ${activeRun.period} — awaiting approval`);
     } catch (e) {
@@ -314,7 +323,7 @@ export default function Payroll() {
     }
   };
 
-  const YEARS = [...new Set([...runs.map((r) => r.year), 2024, 2025, now.getFullYear(), year])].sort((a, b) => b - a);
+  const YEARS = [...new Set([...runs.map((r) => r.year), ...dataYears, now.getFullYear(), year])].sort((a, b) => b - a);
 
   // ═══ Annual Payroll: load per-employee rows when a period is expanded ═══
   useEffect(() => {
@@ -340,8 +349,10 @@ export default function Payroll() {
               workingDays: att.workingDays ?? 0,
               leaveDays: att.unpaidLeaveDays ?? 0,
               presentDays: att.presentDays ?? 0,
-              gross: slip.earnings?.total ?? 0,
-              deductions: { total: slip.deductions?.total ?? 0 },
+              // Full monthly package gross + leave included in deductions — the
+              // same figures the summary panel shows (gross − total = net pay).
+              gross: slip.gross ?? (slip.earnings?.total ?? 0),
+              deductions: { total: (slip.deductions?.total ?? 0) + (slip.leaveDeduction ?? 0) },
               netPay: slip.netPay ?? 0,
               status: runStatus,
             };
@@ -367,12 +378,29 @@ export default function Payroll() {
     }
 
     if (!employees.length) { setYearLoading(false); setYearRows([]); return; }
-    Promise.all(employees.map((emp) =>
-      getEmployeePayrollSummary(emp.id, m, y)
-        .then((res) => ({ ...res.data, employeeId: emp.id }))
-        .catch(() => null)
-    ))
-      .then((rows) => setYearRows(rows.filter(Boolean)))
+    // Draft runs have no stored slips yet — fetch all summaries in ONE batched
+    // request instead of N per-employee calls, then line them up with the
+    // known employee roster (anyone missing falls back to a zero row).
+    getEmployeePayrollSummaries(m, y)
+      .then((res) => {
+        const rows = (res.data || []).map((summary) => ({
+          ...summary,
+          employeeId: summary.employeeId,
+        }));
+        const byCode = Object.fromEntries(rows.map((r) => [r.employeeId, r]));
+        const aligned = employees.map((emp) => byCode[emp.id] || {
+          employeeId: emp.id,
+          employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+          workingDays: 0,
+          leaveDays: 0,
+          presentDays: 0,
+          gross: 0,
+          deductions: { total: 0 },
+          netPay: 0,
+          status: "Not Processed",
+        });
+        setYearRows(aligned);
+      })
       .catch((err) => setYearError(err.message || "Could not load employee details"))
       .finally(() => setYearLoading(false));
   }, [expandedRun, employees, runs, user.id]);
@@ -385,22 +413,24 @@ export default function Payroll() {
     setDayLoading(true);
     setDayError("");
     setSelectedDay(null);
-    Promise.all(employees.map((emp) =>
-      Promise.all([
+    // Payroll summaries load in ONE batched request; attendance stays
+    // per-employee so the day-grid keeps fresh punch data.
+    Promise.all([
+      getEmployeePayrollSummaries(month, year).then((res) => res.data || []).catch(() => []),
+      Promise.all(employees.map((emp) =>
         getMyAttendance({ employeeId: emp.id, month, year })
           .then((res) => res.data || [])
-          .catch(() => []),
-        getEmployeePayrollSummary(emp.id, month, year)
-          .then((res) => res.data)
-          .catch(() => null),
-      ]).then(([att, pay]) => ({ employeeId: emp.id, att, pay }))
-    ))
-      .then((results) => {
+          .catch(() => [])
+      )),
+    ])
+      .then(([summaries, attByEmp]) => {
+        const payByCode = Object.fromEntries((summaries || []).map((s) => [s.employeeId, s]));
         const map = {};
         const payMap = {};
-        results.forEach(({ att, pay, employeeId }) => {
-          if (pay) payMap[employeeId] = pay;
-          att.forEach((r) => {
+        employees.forEach((emp, i) => {
+          const pay = payByCode[emp.id];
+          if (pay) payMap[emp.id] = pay;
+          (attByEmp[i] || []).forEach((r) => {
             const date = String(r.date).slice(0, 10);
             const slot = map[date] || (map[date] = { present: 0, wfh: 0, late: 0, leave: 0, absent: 0, total: 0, records: [] });
             slot.total += 1;
@@ -420,7 +450,7 @@ export default function Payroll() {
       })
       .catch((err) => setDayError(err.message || "Could not load daily attendance"))
       .finally(() => setDayLoading(false));
-  }, [employees, month, year, user.id]);
+  }, [employees, month, year, user.id, refreshKey]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const dayRows = Array.from({ length: daysInMonth }, (_, i) => {
@@ -495,7 +525,7 @@ export default function Payroll() {
         { id: "employee",  label: "Employee Payroll" },
         { id: "payslips",  label: "My Payslips"      },
         { id: "distribution", label: "Payslip Distribution" },
-        { id: "designer",  label: "Payslip Designer" },
+        { id: "designer",  label: "Nesting Manager" },
         { id: "branding",  label: "Payslip Branding" },
       ]
     : [
@@ -522,7 +552,7 @@ export default function Payroll() {
                 style={{ height: 38, padding: "0 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13.5, background: "var(--card)", outline: "none", cursor: "pointer" }}>
                 {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
-              <span style={{ fontSize: 12.5, color: "var(--subtext)" }}>12 months of {year}{year === 2024 || year === 2025 ? " · demo view" : ""}</span>
+              <span style={{ fontSize: 12.5, color: "var(--subtext)" }}>12 months of {year}</span>
               <input value={annualSearch} onChange={(e) => setAnnualSearch(e.target.value)} placeholder="Search employee…"
                 style={{ marginLeft: "auto", height: 38, padding: "0 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13.5, color: "var(--text)", background: "var(--card)", outline: "none", minWidth: 220 }} />
             </div>
@@ -565,13 +595,21 @@ export default function Payroll() {
                         <td style={{ padding: "13px 18px" }}>
                           {run && meta ? <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /> : <span style={{ fontSize: 12, color: "var(--subtext)" }}>No run</span>}
                         </td>
-                        <td style={{ padding: "13px 18px" }}>
-                          {run?.status === "Draft" && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--primary)" }}>Run ▶</span>}
-                          {run?.status === "Processing" && canApprove && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--amber)" }}>Approve ✓</span>}
-                          {run?.status === "Processing" && !canApprove && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Awaiting approval</span>}
-                          {run?.status === "Paid" && <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--green)" }}>Download ⤓</span>}
-                          {!run && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Demo view · click</span>}
-                        </td>
+<td style={{ padding: "13px 18px" }}>
+  {run?.status === "Draft" && (
+    <button onClick={(e) => { e.stopPropagation(); setActiveRun(run); setShowConfirm(true); }}
+      style={{ fontSize: 11.5, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", border: "1px solid var(--primary)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Run</button>
+  )}
+  {run?.status === "Processing" && canApprove && (
+    <button onClick={(e) => { e.stopPropagation(); setApproveRun(run); }}
+      style={{ fontSize: 11.5, fontWeight: 700, color: "var(--amber)", background: "var(--amber-light)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Approve</button>
+  )}
+  {run?.status === "Processing" && !canApprove && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Awaiting approval</span>}
+  {run?.status === "Paid" && (
+    <span style={{ fontSize: 11.5, color: "var(--green)", fontWeight: 700 }}>Paid</span>
+  )}
+  {!run && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Future</span>}
+</td>
                       </tr>
                     );
                   })}
@@ -602,7 +640,7 @@ export default function Payroll() {
                       {run.status === "Paid" && (
                         <button onClick={() => setActiveTab("payslips")}
                           style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", background: "var(--green-light)", color: "var(--green)", border: "1px solid var(--green)", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                          <Download size={13} /> Download
+                          <Wallet size={13} /> View Payslips
                         </button>
                       )}
                     </div>
@@ -651,7 +689,47 @@ export default function Payroll() {
         {/* ═══ Monthly Payroll ═══ */}
         {effectiveTab === "monthly" && (
           <section style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: "20px" }}>
-            <SectionTitle icon={Wallet} title="Monthly Payroll" subtitle={`Day-by-day calculations for ${MONTHS_FULL[month - 1]} ${year} — click any day to see its employees`} />
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+              <SectionTitle icon={Wallet} title="Monthly Payroll" subtitle={`Day-by-day calculations for ${MONTHS_FULL[month - 1]} ${year} — click any day to see its employees`} />
+              {(() => {
+                const run = runs.find((r) => r.month === month && r.year === year);
+                if (run?.status === "Draft") {
+                  return (
+                    <button onClick={() => { setActiveRun({ id: run.id, period: run.period, totalEmployees: run.totalEmployees || employees.length }); setShowConfirm(true); }}
+                      style={{ fontSize: 12, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", border: "1px solid var(--primary)", borderRadius: "var(--radius-sm)", padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", marginBottom: "14px", whiteSpace: "nowrap" }}>
+                      <Play size={13} /> Run Payroll
+                    </button>
+                  );
+                }
+                if (run?.status === "Processing" && canApprove) {
+                  return (
+                    <button onClick={() => setApproveRun(run)}
+                      style={{ fontSize: 12, fontWeight: 700, color: "var(--amber)", background: "var(--amber-light)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", marginBottom: "14px", whiteSpace: "nowrap" }}>
+                      <CheckCircle2 size={13} /> Approve & Pay
+                    </button>
+                  );
+                }
+                if (run?.status === "Processing") {
+                  return <StatusBadge label="Awaiting approval" color="#d97706" bg="#fffbeb" />;
+                }
+                if (run?.status === "Paid") {
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+                      <StatusBadge label="Paid" color="#16a34a" bg="#f0fdf4" />
+                    </div>
+                  );
+                }
+                if (!run) {
+                  return (
+                    <button onClick={() => { setActiveRun({ id: null, period: `${MONTHS_FULL[month - 1]} ${year}`, totalEmployees: employees.length }); setShowConfirm(true); }}
+                      style={{ fontSize: 12, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", border: "1px solid var(--primary)", borderRadius: "var(--radius-sm)", padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", marginBottom: "14px", whiteSpace: "nowrap" }}>
+                      <Play size={13} /> Run Payroll
+                    </button>
+                  );
+                }
+                return null;
+              })()}
+            </div>
 
             <MonthYearToolbar
               month={month} year={year} onMonth={setMonth} onYear={setYear} years={YEARS}
@@ -845,8 +923,16 @@ export default function Payroll() {
                       <div>
                         <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)" }}>{slip.period}</h3>
                         <p style={{ fontSize: "12.5px", color: "var(--subtext)", marginTop: "2px" }}>
-                          Paid on {new Date(slip.paidOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} · {slip.paymentMode}
+                          {slip.paidOn
+                            ? `Paid on ${new Date(slip.paidOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
+                            : "Paid"}{slip.paymentMode ? ` · ${slip.paymentMode}` : ""}
                         </p>
+                        {slip.leaveDeduction > 0 && (
+                          <p style={{ fontSize: "12.5px", color: "var(--amber)", marginTop: "2px" }}>
+                            Leave without pay: {slip.attendance?.unpaidLeaveDays ?? 0} day{(slip.attendance?.unpaidLeaveDays ?? 0) === 1 ? "" : "s"} —
+                            ₹{new Intl.NumberFormat("en-IN").format(slip.leaveDeduction)} deducted from your full monthly gross of ₹{new Intl.NumberFormat("en-IN").format(slip.gross)}.
+                          </p>
+                        )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                         <div style={{ textAlign: "right" }}>
@@ -858,12 +944,6 @@ export default function Payroll() {
                           style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "7px 14px", background: "var(--card)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
                         >
                           <Eye size={13} /> Preview
-                        </button>
-                        <button
-                          onClick={() => handleDownloadPayslip(slip.id)}
-                          style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "7px 14px", background: "var(--primary-light)", color: "var(--primary)", border: "1px solid var(--border-focus)", borderRadius: "var(--radius-sm)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
-                        >
-                          <FileText size={13} /> View Payslip (PDF)
                         </button>
                       </div>
                     </div>
@@ -897,7 +977,7 @@ export default function Payroll() {
         {/* ═══ Payslip Distribution ═══ */}
         {effectiveTab === "distribution" && <PayslipDistributionPanel />}
 
-        {/* ═══ Payslip Designer ═══ */}
+        {/* ═══ Nesting Manager ═══ */}
         {effectiveTab === "designer" && <PayslipDesignerPanel />}
 
         {/* ═══ Payslip Branding ═══ */}
@@ -944,16 +1024,29 @@ function EmployeeSummary({ employeeId, month, year }) {
       .finally(() => setLoading(false));
   }, [employeeId, month, year]);
 
-  const deductionRows = [
-    { key: "providentFund", label: "Provident Fund" },
-    { key: "professionalTax", label: "Professional Tax" },
-    { key: "incomeTax", label: "Income Tax" },
-    { key: "healthInsurance", label: "Health Insurance" },
-  ];
-
   if (loading) return <Spinner />;
   if (error) return <p style={{ fontSize: "13px", color: "var(--red)", fontWeight: 600 }}>{error}</p>;
   if (!summary) return <EmptyState title="No payroll data" subtitle="No summary found for this employee & period." />;
+
+  const earningGroups = summary.earningGroups && summary.earningGroups.length
+    ? summary.earningGroups
+    : [{ id: null, name: "Earnings", kind: "earning", rows: [] }];
+  const deductionGroups = summary.deductionGroups && summary.deductionGroups.length
+    ? summary.deductionGroups
+    : [{ id: null, name: "Deductions", kind: "deduction", rows: [] }];
+
+  // Flat rows derived from the raw amounts, used when a group has no mapped
+  // rows so individual items (PF, PT, IT, HI; basic, HRA…) always render.
+  const flatRows = (obj) =>
+    Object.entries(obj || {})
+      .filter(([k, v]) => k !== "total" && k !== "leaveDeduction" && Number(v) > 0)
+      .map(([label, amount]) => ({ label: label.replace(/([A-Z])/g, " $1").trim(), amount: Number(amount) }));
+  const fallbackEarnings = flatRows(summary.earnings);
+  const fallbackDeductions = flatRows(summary.deductions);
+
+  const earnedTotal = earningGroups.some((g) => g.rows.length)
+    ? earningGroups.reduce((s, g) => s + g.rows.reduce((a, r) => a + r.amount, 0), 0)
+    : fallbackEarnings.reduce((s, r) => s + r.amount, 0);
 
   return (
     <>
@@ -970,30 +1063,50 @@ function EmployeeSummary({ employeeId, month, year }) {
         <Stat label="Net Payroll" value={fmt(summary.netPay)} color="var(--green)" />
       </div>
 
-      <p style={{ fontSize: "12px", color: "var(--subtext)", marginBottom: "12px" }}>
+      <p style={{ fontSize: "12px", color: "var(--subtext)", marginBottom: "16px" }}>
         {summary.leaveDays > 0
           ? `${summary.leaveDays} unpaid leave day${summary.leaveDays === 1 ? "" : "s"} (out of ${summary.workingDays} working days) deducted ₹${new Intl.NumberFormat("en-IN").format(summary.leaveDeduction)}.`
           : `No unpaid leave in this period — ${summary.workingDays} working days, full month salary applies.`}
       </p>
 
-      <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "16px" }}>
-        <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: "12px" }}>Deductions</p>
-        {deductionRows.filter((row) => (summary.deductions[row.key] ?? 0) > 0).map((row) => (
-          <div key={row.key} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-            <span style={{ fontSize: "12.5px", color: "var(--label)" }}>{row.label}</span>
-            <span style={{ fontSize: "12.5px", fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{fmt(summary.deductions[row.key])}</span>
+      {/* Earnings / Deductions grouped by the payslip blueprint's nesting */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        {[
+          { label: "Earnings", groups: earningGroups, color: "var(--green)", isDeduction: false, total: earnedTotal, totalLabel: "Total Earnings", fallback: fallbackEarnings },
+          { label: "Deductions", groups: deductionGroups, color: "var(--red)", isDeduction: true, total: summary.deductions.total, totalLabel: "Total Deductions", fallback: fallbackDeductions },
+        ].map(({ label, groups, color, isDeduction, total, totalLabel, fallback }) => (
+          <div key={label} style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "16px" }}>
+            <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: "12px" }}>{label}</p>
+            {groups.map((g, gi) => {
+              const rows = g.rows.length ? g.rows : fallback;
+              return (
+                <div key={g.id || g.name} style={gi > 0 ? { marginTop: "14px" } : undefined}>
+                  <p style={{ fontSize: "11.5px", fontWeight: 700, color: "var(--text)", opacity: 0.85, marginBottom: "6px" }}>{g.name}</p>
+                  {rows.length === 0 ? (
+                    <p style={{ fontSize: "12px", color: "var(--subtext)" }}>No {label.toLowerCase()} in this period.</p>
+                  ) : (
+                    rows.map((row) => (
+                      <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                        <span style={{ fontSize: "12.5px", color: "var(--label)" }}>{row.label}</span>
+                        <span style={{ fontSize: "12.5px", fontWeight: 500, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{fmt(row.amount)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              );
+            })}
+            {isDeduction && summary.leaveDeduction > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "10px" }}>
+                <span style={{ fontSize: "12.5px", color: "var(--label)" }}>Leave Deduction (unpaid days)</span>
+                <span style={{ fontSize: "12.5px", fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{fmt(summary.leaveDeduction)}</span>
+              </div>
+            )}
+            <div style={{ borderTop: "1px solid var(--border)", marginTop: "10px", paddingTop: "8px", display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>{totalLabel}</span>
+              <span style={{ fontSize: "13px", fontWeight: 700, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{fmt(total)}</span>
+            </div>
           </div>
         ))}
-        {summary.leaveDeduction > 0 && (
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-            <span style={{ fontSize: "12.5px", color: "var(--label)" }}>Leave Deduction</span>
-            <span style={{ fontSize: "12.5px", fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{fmt(summary.leaveDeduction)}</span>
-          </div>
-        )}
-        <div style={{ borderTop: "1px solid var(--border)", marginTop: "8px", paddingTop: "8px", display: "flex", justifyContent: "space-between" }}>
-          <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>Total Deductions</span>
-          <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--red)", fontFamily: "monospace" }}>−{fmt(summary.deductions.total)}</span>
-        </div>
       </div>
     </>
   );

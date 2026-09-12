@@ -10,7 +10,7 @@ import { useEffect, useState, useCallback } from "react";
 import { History } from "lucide-react";
 import {
   Mail, Globe, MessageSquare, Send, RotateCcw, Download,
-  Users, CheckCircle2, XCircle, Clock, Wallet,
+  Users, CheckCircle2, XCircle, Clock, Wallet, Play, Plus,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -19,11 +19,16 @@ import EmptyState from "../../components/shared/EmptyState.jsx";
 import {
   getPayrollRuns, getRunPayslips, startDistribution, getDistributionStatus,
   retryDistribution, downloadDistributionReport, getDistributionHistory,
+  runPayroll, approvePayrollRun, createPayrollRun,
 } from "../../services/payrollService.js";
 import { listPayslipTemplates } from "../../services/payslipDesignerService.js";
 import { useToast } from "../../context/ToastContext.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("en-IN").format(n || 0);
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const RANGE_YEARS = (() => { const y = new Date().getFullYear(); return [y + 1, y, y - 1, y - 2, y - 3]; })();
 
 function Toggle({ checked, onChange, disabled }) {
   return (
@@ -82,6 +87,8 @@ const CHANNEL_ICONS = { email: Mail, portal: Globe, sms: MessageSquare };
 
 export function PayslipDistributionPanel() {
   const toast = useToast();
+  const { permissions } = useAuth();
+  const canApprove = Array.isArray(permissions) && permissions.includes("payroll:approve");
   const [runs, setRuns] = useState([]);
   const [runId, setRunId] = useState("");
   const [candidates, setCandidates] = useState([]);   // { employeeId, employeeName } from run payslips
@@ -98,15 +105,39 @@ export function PayslipDistributionPanel() {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [sending, setSending] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [processingRun, setProcessingRun] = useState(false);
+  const [approvingRun, setApprovingRun] = useState(false);
+  const [creatingRun, setCreatingRun] = useState(false);
+  const [newMonth, setNewMonth] = useState(new Date().getMonth() + 1);
+  const [newYear, setNewYear] = useState(new Date().getFullYear());
   const [msg, setMsg] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
 
   const setChannel = (name, patch) => setChannels((prev) => ({ ...prev, [name]: { ...prev[name], ...patch } }));
 
   // Load runs; pick the newest processed run.
+  const loadRuns = useCallback(async () => {
+    setLoadingRuns(true);
+    try {
+      const res = await getPayrollRuns();
+      const list = res.data || [];
+      setRuns(list);
+      setRunId((cur) => (cur && list.some((r) => r.id === cur) ? cur : list[0]?.id || ""));
+      return list;
+    } catch {
+      setMsg({ ok: false, text: "Could not load payroll runs" });
+      return [];
+    } finally {
+      setLoadingRuns(false);
+    }
+  }, []);
+
   useEffect(() => {
     setLoadingRuns(true);
-    Promise.all([getPayrollRuns(), listPayslipTemplates()])
+    Promise.all([
+      getPayrollRuns().catch(() => ({ data: [] })),
+      listPayslipTemplates().catch(() => ({ data: [] })),
+    ])
       .then(([runRes, tmplRes]) => {
         const list = runRes.data || [];
         setRuns(list);
@@ -114,10 +145,20 @@ export function PayslipDistributionPanel() {
         // Flexible: keep the current selection when it still exists, otherwise
         // default to the newest run (data-driven).
         setRunId((cur) => (cur && list.some((r) => r.id === cur) ? cur : list[0]?.id || ""));
+        const latest = list[0];
+        const now = new Date();
+        setNewMonth(latest?.month ?? now.getMonth() + 1);
+        setNewYear(latest?.year ?? now.getFullYear());
       })
       .catch(() => setMsg({ ok: false, text: "Could not load payroll runs or payslip templates" }))
       .finally(() => setLoadingRuns(false));
   }, []);
+
+  // Keep the "create run for a month" widget in step with the selected run.
+  useEffect(() => {
+    const selected = runs.find((r) => r.id === runId);
+    if (selected) { setNewMonth(selected.month); setNewYear(selected.year); }
+  }, [runId, runs]);
 
   // Load status + candidate employees whenever the selected run changes.
   useEffect(() => {
@@ -173,6 +214,61 @@ export function PayslipDistributionPanel() {
     }
   }, [runId]);
 
+  const run = runs.find((r) => r.id === runId);
+
+  const handleCreateRun = async () => {
+    if (creatingRun) return;
+    setCreatingRun(true);
+    setMsg(null);
+    try {
+      const res = await createPayrollRun(newMonth, newYear);
+      const created = res.data;
+      await loadRuns();
+      setRunId(created.id);
+      setStatus({ started: false });
+      setMsg({ ok: true, text: `Draft payroll run created for ${created.period}. Process it to generate payslips.` });
+      toast(`Created payroll run ${created.period}`);
+    } catch (e) {
+      setMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not create the payroll run" });
+    } finally {
+      setCreatingRun(false);
+    }
+  };
+
+  const handleRunPayroll = async () => {
+    if (!run || processingRun) return;
+    setProcessingRun(true);
+    setMsg(null);
+    try {
+      await runPayroll(run.id);
+      await loadRuns();
+      setMsg({ ok: true, text: `Payroll run ${run.period} processed — payslips generated. Awaiting approval.` });
+      toast(`Payroll processed for ${run.period}`);
+      await refreshStatus();
+    } catch (e) {
+      setMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not process the payroll run" });
+    } finally {
+      setProcessingRun(false);
+    }
+  };
+
+  const handleApproveRun = async () => {
+    if (!run || approvingRun) return;
+    setApprovingRun(true);
+    setMsg(null);
+    try {
+      await approvePayrollRun(run.id);
+      await loadRuns();
+      setMsg({ ok: true, text: `Payroll run ${run.period} approved & paid. Ready to distribute.` });
+      toast(`Payroll approved & paid for ${run.period}`);
+      await refreshStatus();
+    } catch (e) {
+      setMsg({ ok: false, text: e.response?.data?.message || e.message || "Could not approve the payroll run" });
+    } finally {
+      setApprovingRun(false);
+    }
+  };
+
   const handleSend = async () => {
     if (!runId) return;
     if (selected.size === 0) { setMsg({ ok: false, text: "Select at least one employee to distribute to." }); return; }
@@ -223,7 +319,6 @@ export function PayslipDistributionPanel() {
     }
   };
 
-  const run = runs.find((r) => r.id === runId);
   const progress = status?.total ? Math.round(((status.delivered ?? 0) / status.total) * 100) : 0;
   const started = status?.started === true;
 
@@ -255,6 +350,65 @@ export function PayslipDistributionPanel() {
             </span>
           </div>
           {run && <p style={{ fontSize: 12, color: "var(--subtext)", margin: 0 }}>Status: <strong>{run.status}</strong> · Net payroll: {fmt(run.netPayroll)}</p>}
+
+          {/* Run lifecycle: create → process → approve → distribute from the same screen */}
+          {run && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+              {run.status === "Draft" && (
+                <button
+                  onClick={handleRunPayroll}
+                  disabled={processingRun}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: processingRun ? "not-allowed" : "pointer", opacity: processingRun ? 0.6 : 1 }}
+                >
+                  {processingRun ? <Spinner size={13} /> : <Play size={13} />} {processingRun ? "Processing…" : "Run Payroll"}
+                </button>
+              )}
+              {run.status === "Processing" && canApprove && (
+                <button
+                  onClick={handleApproveRun}
+                  disabled={approvingRun}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "var(--amber-light, #fffbeb)", color: "var(--amber, #d97706)", border: "1px solid var(--amber, #d97706)", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: approvingRun ? "not-allowed" : "pointer", opacity: approvingRun ? 0.6 : 1 }}
+                >
+                  {approvingRun ? <Spinner size={13} /> : <CheckCircle2 size={13} />} {approvingRun ? "Approving…" : "Approve & Pay"}
+                </button>
+              )}
+              {run.status === "Processing" && !canApprove && (
+                <span style={{ fontSize: 12, color: "var(--amber, #d97706)" }}>Awaiting approval by a payroll approver.</span>
+              )}
+              {run.status === "Draft" && (
+                <span style={{ fontSize: 12, color: "var(--subtext)" }}>Run payroll to generate payslips before distributing.</span>
+              )}
+              {run.status === "Paid" && (
+                <span style={{ fontSize: 12, color: "var(--green, #16a34a)" }}>Paid — payslips are ready to distribute.</span>
+              )}
+            </div>
+          )}
+
+          {/* Create a Draft run for any month that has none */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+            <span style={{ fontSize: 12.5, color: "var(--subtext)" }}>No run for a month? Create one:</span>
+            <select
+              value={newMonth}
+              onChange={(e) => setNewMonth(Number(e.target.value))}
+              style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13, background: "var(--card)", outline: "none", cursor: "pointer" }}
+            >
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+            <select
+              value={newYear}
+              onChange={(e) => setNewYear(Number(e.target.value))}
+              style={{ height: 34, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 13, background: "var(--card)", outline: "none", cursor: "pointer" }}
+            >
+              {RANGE_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <button
+              onClick={handleCreateRun}
+              disabled={creatingRun || runs.some((r) => r.month === newMonth && r.year === newYear)}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "var(--primary-light, #f0fdff)", color: "var(--primary)", border: "1px solid var(--border-focus, var(--primary))", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+            >
+              {creatingRun ? <Spinner size={13} /> : <Plus size={13} />} Create Draft Run
+            </button>
+          </div>
         </section>
 
         {/* Employees & payslip template */}

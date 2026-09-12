@@ -99,12 +99,14 @@ export interface CreateEmployeeInput {
   dateOfJoining?: string;
   managerId?: string;
   gender?: string;
+  skillType?: string;
   dob?: string;
   password?: string;
   state?: string;
   country?: string;
   annualSalary?: number;
   photoUrl?: string;
+  status?: string;
 }
 
 export interface CreateEmployeeOptions {
@@ -269,6 +271,7 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
       personalMobile: input.phone ?? null,
       dateOfBirth: toOptionalDate(input.dob),
       gender: input.gender ?? null,
+      skillType: input.skillType ?? null,
       designationId: designationId,
       departmentId: departmentId,
       locationId: locationId,
@@ -450,22 +453,59 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
 
   const { designationId, departmentId, locationId } = await resolveOrgRefs(input);
 
+  let reportingManagerId: string | null | undefined = undefined;
+  if (input.managerId !== undefined) {
+    reportingManagerId = null;
+    const managerRef = String(input.managerId).trim();
+    if (managerRef) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(managerRef);
+      const manager = isUuid
+        ? await prisma.employee.findUnique({ where: { id: managerRef }, select: { id: true } })
+        : await prisma.employee.findUnique({ where: { employeeCode: managerRef }, select: { id: true } });
+      if (!manager) throw AppError.badRequest(`Reporting manager "${managerRef}" not found`);
+      reportingManagerId = manager.id;
+    }
+  }
+
   const data: Prisma.EmployeeUpdateInput = {
     firstName: input.firstName ?? undefined,
     lastName: input.lastName ?? undefined,
     personalMobile: input.phone ?? undefined,
     dateOfBirth: toOptionalDate(input.dob) ?? undefined,
     gender: input.gender ?? undefined,
+    skillType: input.skillType ?? undefined,
     designation: designationId ? { connect: { id: designationId } } : undefined,
     department: departmentId ? { connect: { id: departmentId } } : undefined,
     location: locationId ? { connect: { id: locationId } } : undefined,
-    reportingManager: input.managerId ? { connect: { id: input.managerId } } : undefined,
+    reportingManager:
+      reportingManagerId === undefined
+        ? undefined
+        : reportingManagerId
+          ? { connect: { id: reportingManagerId } }
+          : { disconnect: true },
     employmentType: input.employmentType ?? undefined,
     dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
     state: input.state ?? undefined,
     country: input.country ?? undefined,
     annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : undefined,
+    status: input.status ?? undefined,
   };
+
+  if (input.email !== undefined) {
+    const email = input.email.trim().toLowerCase();
+    if (email) {
+      const owner = await prisma.user.findUnique({ where: { email } });
+      if (owner && owner.id !== existing.userId) {
+        throw AppError.badRequest(`Email "${email}" is already in use`);
+      }
+      if (existing.userId) {
+        await prisma.user.update({ where: { id: existing.userId }, data: { email } });
+      }
+      data.personalEmail = email;
+    } else {
+      data.personalEmail = null;
+    }
+  }
 
   const updated = await prisma.employee.update({
     where: { id },
@@ -496,18 +536,50 @@ export async function deleteEmployee(id: string) {
   const existing = await prisma.employee.findUnique({ where: { id }, include: { user: true } });
   if (!existing) throw AppError.notFound("Employee not found");
 
-  // Soft-delete: set status Inactive, remove auth access.
-  await prisma.employee.update({ where: { id }, data: { status: "Inactive" } });
-  if (existing.userId) {
-    await prisma.user.update({ where: { id: existing.userId }, data: { isActive: false } });
-  }
+  // Hard delete — the employee and all their dependent records are removed
+  // permanently. Most child rows (attendance, leave, balances, salary
+  // structures, reviews, etc.) cascade from the Employee row itself; the
+  // models below use ON DELETE RESTRICT against `employees`, so their rows
+  // must be removed explicitly before the cascade fires.
+  await prisma.$transaction([
+    prisma.helpdeskComment.deleteMany({ where: { authorId: id } }),
+    prisma.helpdeskTicket.deleteMany({ where: { requesterId: id } }),
+    prisma.interviewScorecard.deleteMany({ where: { interviewerId: id } }),
+    prisma.interviewPanel.deleteMany({ where: { interviewerId: id } }),
+    prisma.performanceReview.deleteMany({ where: { reviewerId: id } }),
+    prisma.performanceOneOnOne.deleteMany({ where: { managerId: id } }),
+    prisma.taskTimeEntry.deleteMany({ where: { employeeId: id } }),
+    prisma.task.deleteMany({ where: { assigneeId: id } }),
+    prisma.alumni.deleteMany({ where: { employeeId: id } }),
+    prisma.separation.deleteMany({ where: { employeeId: id } }),
+    prisma.workflowInstance.deleteMany({ where: { requesterId: id } }),
+    prisma.assetRequest.deleteMany({ where: { employeeId: id } }),
+  ]);
+
+  // Payslips carry a RESTRICT FK to SalaryStructure too, so they go before
+  // the employee cascade removes the structures. Any payroll run left with
+  // zero payslips is cleaned up as well.
+  await prisma.$transaction(async (tx) => {
+    await tx.payslip.deleteMany({ where: { employeeId: id } });
+    const orphanedRuns = await tx.payrollRun.findMany({
+      where: { payslips: { none: {} } },
+      select: { id: true },
+    });
+    if (orphanedRuns.length) {
+      await tx.payrollRun.deleteMany({ where: { id: { in: orphanedRuns.map((r) => r.id) } } });
+    }
+    await tx.employee.delete({ where: { id } });
+    if (existing.userId) {
+      await tx.user.delete({ where: { id: existing.userId } });
+    }
+  });
 
   writeAuditLog({
     action: "DELETE",
     entityType: "Employee",
     entityId: existing.id,
-    oldValue: { employeeCode: existing.employeeCode },
-    newValue: { status: "Inactive" },
+    oldValue: { employeeCode: existing.employeeCode, status: existing.status, userId: existing.userId },
+    newValue: { deleted: true },
   });
 
   return { data: { id: existing.employeeCode, deleted: true } };

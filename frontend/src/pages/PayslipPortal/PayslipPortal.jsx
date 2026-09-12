@@ -6,10 +6,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Printer, FileText, ArrowLeft, Lock } from "lucide-react";
+import { Printer, ArrowLeft, Lock } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import { getPayslipStatement } from "../../services/payslipStatementService.js";
-import { downloadPayslipPdf, markPayslipViewed } from "../../services/payrollService.js";
+import { markPayslipViewed } from "../../services/payrollService.js";
 import PayslipTemplate from "../../components/payslip/PayslipTemplate.jsx";
 import "../../components/payslip/PayslipTemplate.css";
 
@@ -18,7 +18,6 @@ export default function PayslipPortal() {
   const navigate = useNavigate();
   const [statement, setStatement] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -34,26 +33,6 @@ export default function PayslipPortal() {
   }, [id]);
 
   const handlePrint = () => window.print();
-
-  const handleDownload = async () => {
-    setBusy(true);
-    try {
-      const { blob, filename } = await downloadPayslipPdf(id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
-      setStatus("PDF downloaded.");
-    } catch (e) {
-      setError(e.message || "Could not download the payslip PDF");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <MainLayout>
@@ -74,13 +53,6 @@ export default function PayslipPortal() {
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
             >
               <Printer size={14} /> Print
-            </button>
-            <button
-              onClick={handleDownload}
-              disabled={busy}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#1f2937", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
-            >
-              <FileText size={14} /> {busy ? "Generating…" : "Download PDF"}
             </button>
           </div>
         </div>

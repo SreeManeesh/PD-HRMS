@@ -40,7 +40,7 @@ export function serializePayrollRunList(runs: RunWithRelations[]) {
 }
 
 type SlipWithRelations = Payslip & {
-  employee?: { employeeCode: string; firstName: string; lastName: string } | null;
+  employee?: { employeeCode: string; firstName: string; lastName: string; annualSalary?: unknown } | null;
   payrollRun?: PayrollRun | null;
 };
 
@@ -49,12 +49,19 @@ export function serializePayslip(slip: SlipWithRelations) {
   const earnings = (slip.earnings ?? {}) as Record<string, unknown>;
   const deductions = (slip.deductions ?? {}) as Record<string, unknown>;
 
+  const earnedTotal = toNumber(earnings.total);
+  const annual = toNumber(slip.employee?.annualSalary);
+  const gross = annual > 0 ? Math.round(annual / 12) : earnedTotal;
+  const leaveDeduction = Math.max(gross - earnedTotal, 0);
+
   return {
     id: `PS-${slip.payrollRun?.year ?? 0}-${String(slip.payrollRun?.month ?? 0).padStart(2, "0")}-${slip.employee?.employeeCode ?? ""}`,
     payrollRunId: slip.payrollRun ? runPublicId(slip.payrollRun) : "",
     employeeId: slip.employee?.employeeCode ?? "",
     employeeName: slip.employee ? `${slip.employee.firstName} ${slip.employee.lastName}` : "",
     period: slip.payrollRun ? periodLabel(slip.payrollRun) : slip.period,
+    gross,
+    leaveDeduction,
     earnings: {
       basicSalary: toNumber(earnings.basicSalary),
       hra: toNumber(earnings.hra),
@@ -62,7 +69,8 @@ export function serializePayslip(slip: SlipWithRelations) {
       medicalAllowance: toNumber(earnings.medicalAllowance),
       performanceBonus: toNumber(earnings.performanceBonus),
       otherAllowances: toNumber(earnings.otherAllowances),
-      total: toNumber(earnings.total),
+      overtime: toNumber(earnings.overtime),
+      total: earnedTotal,
     },
     deductions: {
       providentFund: toNumber(deductions.providentFund),

@@ -94,6 +94,7 @@ export interface Blueprint {
   settings?: {
     companyName?: string;
     companyEmployeeCount?: number;
+    skillType?: string;
     tags?: string[];
   };
 }

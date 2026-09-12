@@ -28,6 +28,15 @@ export const listRequests = asyncHandler(async (req: Request, res: Response) => 
   sendSuccess(res, result.data, result.total);
 });
 
+export const attendanceDigest = asyncHandler(async (req: Request, res: Response) => {
+  const q = req.query as Record<string, string | undefined>;
+  const result = await leaveService.getAttendanceDigest({
+    month: q.month ? Number(q.month) : undefined,
+    year: q.year ? Number(q.year) : undefined,
+  }, req.auth);
+  sendSuccess(res, result.data);
+});
+
 export const apply = asyncHandler(async (req: Request, res: Response) => {
   const result = await leaveService.applyLeave(req.body, req.auth);
   sendSuccess(res, result.data, undefined, 201);
@@ -47,6 +56,12 @@ export const approve = asyncHandler(async (req: Request, res: Response) => {
 export const reject = asyncHandler(async (req: Request, res: Response) => {
   const approverId = await resolveApprover(req);
   const result = await leaveService.rejectLeave(req.params.id, approverId, req.body.comments);
+  sendSuccess(res, result.data);
+});
+
+export const decideAbsent = asyncHandler(async (req: Request, res: Response) => {
+  const approverId = await resolveApprover(req);
+  const result = await leaveService.decideAbsentLeave(req.body, approverId);
   sendSuccess(res, result.data);
 });
 

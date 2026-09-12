@@ -40,7 +40,53 @@ model Company {
   locations     Location[]
   businessUnits BusinessUnit[]
 
+  companyConfig CompanyConfig?
+
   @@map("companies")
+}
+
+// ── Company-level payroll & attendance configuration ───────────────────────
+// Single optional row per company. When absent every reader falls back to the
+// built-in DEFAULTS in lib/companyConfig.ts so the system works out of the box
+// while staying fully editable/admin-configurable (shift window, statutory
+// employer rates, overtime factor and the synthesized salary breakdown used
+// for employees registered with only a yearly salary package).
+model CompanyConfig {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String   @unique @map("company_id") @db.Uuid
+
+  // Working-week / shift window (minutes past midnight, 0..1439).
+  shiftStartMinutes   Int      @default(540) @map("shift_start_minutes")
+  shiftEndMinutes     Int      @default(1080) @map("shift_end_minutes")
+  // Overrides Company.weeklyOffDays when non-empty (0=Sunday .. 6=Saturday).
+  weeklyOffDays       Json     @default("[]") @map("weekly_off_days")
+
+  // Statutory / overtime factors used by payslip computation.
+  epfEmployerRate     Decimal  @default(0.13) @map("epf_employer_rate") @db.Decimal(6, 4)
+  esiEmployerRate     Decimal  @default(0.0325) @map("esi_employer_rate") @db.Decimal(6, 4)
+  esiGrossCeiling     Decimal  @default(21000) @map("esi_gross_ceiling") @db.Decimal(12, 2)
+  gratuityRate        Decimal  @default(0.0481) @map("gratuity_rate") @db.Decimal(6, 4)
+  overtimeMultiplier  Decimal  @default(1.5) @map("overtime_multiplier") @db.Decimal(5, 3)
+
+  // Salary-breakdown factors used when an employee has only a yearly package
+  // (mirrors the previous hardcoded allocation in lib/salaryStructure.ts).
+  basicSalaryFactor   Decimal  @default(0.5) @map("basic_salary_factor") @db.Decimal(6, 4)
+  hraFactor           Decimal  @default(0.2) @map("hra_factor") @db.Decimal(6, 4)
+  conveyanceAllowance Decimal  @default(400) @map("conveyance_allowance") @db.Decimal(12, 2)
+  medicalAllowance    Decimal  @default(250) @map("medical_allowance") @db.Decimal(12, 2)
+  providentFundRate   Decimal  @default(0.12) @map("provident_fund_rate") @db.Decimal(6, 4)
+  professionalTax     Decimal  @default(200) @map("professional_tax") @db.Decimal(12, 2)
+  incomeTaxRate       Decimal  @default(0.05) @map("income_tax_rate") @db.Decimal(6, 4)
+  healthInsurance     Decimal  @default(180) @map("health_insurance") @db.Decimal(12, 2)
+
+  defaultTaxRegime    String   @default("NEW") @map("default_tax_regime") @db.VarChar(10)
+  updatedByUserId     String?  @map("updated_by_user_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_configs")
 }
 
 model Department {
@@ -215,6 +261,7 @@ model Employee {
   lastName           String    @map("last_name") @db.VarChar(80)
   dateOfBirth        DateTime? @map("date_of_birth") @db.Date
   gender             String?   @db.VarChar(20)
+  skillType          String?   @map("skill_type") @db.VarChar(30)
   personalEmail      String?   @map("personal_email") @db.VarChar(150)
   personalMobile     String?   @map("personal_mobile") @db.VarChar(20)
   address            String?
@@ -597,7 +644,7 @@ model Payslip {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   payrollRunId      String    @map("payroll_run_id") @db.Uuid
   employeeId        String    @map("employee_id") @db.Uuid
-  salaryStructureId String    @map("salary_structure_id") @db.Uuid
+  salaryStructureId String?   @map("salary_structure_id") @db.Uuid
   period            String    @db.VarChar(20)
   earnings          Json      @db.JsonB
   deductions        Json      @db.JsonB
@@ -614,7 +661,7 @@ model Payslip {
 
   payrollRun      PayrollRun      @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
   employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  salaryStructure SalaryStructure @relation(fields: [salaryStructureId], references: [id], onDelete: Restrict)
+  salaryStructure SalaryStructure? @relation(fields: [salaryStructureId], references: [id], onDelete: SetNull)
 
   distributionRecords PayslipDistributionRecord[]
 

@@ -30,15 +30,17 @@ const createBodySchema = z.object({
   designation: z.string().optional(),
   department: z.string().optional(),
   location: z.string().optional(),
-  managerId: optionalUuid,
+  managerId: z.string().optional(),
   employmentType: z.string().optional(),
   dateOfJoining: z.string().optional(),
   gender: z.string().optional(),
+  skillType: z.string().optional(),
   dob: z.string().optional(),
   password: z.string().min(8).optional(),
   state: z.string().optional(),
   country: z.string().optional(),
   annualSalary: z.coerce.number().nonnegative().optional(),
+  status: z.enum(["Active", "On Leave", "Inactive", "Terminated"]).optional(),
 });
 
 const updateBodySchema = createBodySchema.partial();

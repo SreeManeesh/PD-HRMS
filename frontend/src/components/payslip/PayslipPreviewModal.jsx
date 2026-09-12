@@ -4,16 +4,14 @@
  * sheet (visibility rules in PayslipTemplate.css).
  */
 import { useEffect, useState } from "react";
-import { X, Printer, FileText, Loader2 } from "lucide-react";
+import { X, Printer } from "lucide-react";
 import { getPayslipStatement } from "../../services/payslipStatementService.js";
-import { downloadPayslipPdf } from "../../services/payrollService.js";
 import PayslipTemplate from "./PayslipTemplate.jsx";
 import "./PayslipTemplate.css";
 
 export default function PayslipPreviewModal({ payslipId, onClose }) {
   const [statement, setStatement] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -24,25 +22,6 @@ export default function PayslipPreviewModal({ payslipId, onClose }) {
   }, [payslipId]);
 
   const handlePrint = () => window.print();
-
-  const handleDownload = async () => {
-    setBusy(true);
-    try {
-      const { blob, filename } = await downloadPayslipPdf(payslipId);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) {
-      setError(e.message || "Could not download the payslip PDF");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div
@@ -57,13 +36,6 @@ export default function PayslipPreviewModal({ payslipId, onClose }) {
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
         >
           <Printer size={15} /> Print
-        </button>
-        <button
-          onClick={handleDownload}
-          disabled={busy}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", background: "#1f2937", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-        >
-          {busy ? <Loader2 size={15} /> : <FileText size={15} />} {busy ? "Generating…" : "Download PDF"}
         </button>
         <button
           onClick={onClose}

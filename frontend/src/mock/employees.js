@@ -289,3 +289,5 @@ export const locations = [
 
 export const employmentTypes = ["Full-Time", "Part-Time", "Contract", "Intern"];
 export const statuses = ["Active", "On Leave", "Inactive", "Terminated"];
+export const skillTypes = ["Skilled", "Semi Skilled", "Unskilled"];
+export const genders = ["Male", "Female", "Other"];
