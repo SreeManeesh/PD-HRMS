@@ -28,8 +28,11 @@ const TEMPLATE_INCLUDE = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function serializeTemplate(t: any, withBlueprint = false) {
   const latest = Array.isArray(t.versions) ? t.versions[0] : null;
+  const bp = (latest?.blueprint || {}) as Record<string, any>;
+  const skillType = bp.settings?.skillType ?? null;
   return {
     id: t.id,
     name: t.name,
@@ -39,6 +42,7 @@ function serializeTemplate(t: any, withBlueprint = false) {
     financialYear: t.financialYear,
     status: t.status,
     isActive: t.isActive,
+    skillType,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
     createdBy: t.creator ? `${t.creator.firstName} ${t.creator.lastName}` : null,
@@ -47,7 +51,178 @@ function serializeTemplate(t: any, withBlueprint = false) {
   };
 }
 
+/**
+ * Ensures production-ready nesting templates for each skill category
+ * (Skilled, Semi Skilled, Unskilled) are seeded and published.
+ */
+export async function ensureDefaultSkillTemplates() {
+  const existing = await prisma.payslipTemplate.findMany({
+    include: { versions: { orderBy: { version: "desc" }, take: 1 } },
+  });
+  const existingSkills = new Set<string>();
+  for (const t of existing) {
+    const bp = t.versions?.[0]?.blueprint as unknown as Blueprint | undefined;
+    const sk = bp?.settings?.skillType;
+    if (sk) existingSkills.add(sk);
+  }
+
+  const createDefault = async (name: string, description: string, blueprint: Blueprint) => {
+    return prisma.$transaction(async (tx) => {
+      const t = await tx.payslipTemplate.create({
+        data: {
+          name,
+          description,
+          country: blueprint.country,
+          state: blueprint.state,
+          financialYear: blueprint.financialYear,
+          status: "Published",
+          isActive: true,
+        },
+      });
+      await tx.payslipTemplateVersion.create({
+        data: {
+          templateId: t.id,
+          version: 1,
+          blueprint: asJson(blueprint),
+          status: "Published",
+          isActive: true,
+          changeSummary: "System default nesting template",
+        },
+      });
+      return t;
+    });
+  };
+
+  // 1. Skilled Nesting Template
+  if (!existingSkills.has("Skilled")) {
+    const skilledBp: Blueprint = {
+      name: "Skilled Pay Structure",
+      country: "India",
+      state: "Maharashtra",
+      financialYear: 2026,
+      theme: {
+        primaryColor: "#0f766e",
+        secondaryColor: "#0d1b2a",
+        accentColor: "#0891b2",
+        font: "Helvetica",
+        pageSize: "A4",
+        orientation: "portrait",
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+      },
+      nests: [
+        { id: "fixed_pay", name: "Fixed Pay", displayOrder: 10, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "variable_pay", name: "Variable Pay", displayOrder: 20, expandByDefault: false, systemDefault: true, autoAssign: true },
+        { id: "benefits", name: "Benefits & Reimbursements", displayOrder: 30, expandByDefault: false, systemDefault: true, autoAssign: true },
+        { id: "statutory_deductions", name: "Statutory Deductions", displayOrder: 40, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "employer_contributions", name: "Employer Contributions", displayOrder: 50, expandByDefault: false, systemDefault: true, autoAssign: true },
+      ],
+      components: autoArrangeLayout([
+        { id: "basic", label: "Basic Salary", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "ctc", pct: 50, calculationPriority: 1, isBalancing: false }, ui: { x: 20, y: 10, w: 60, h: 24 }, visible: true },
+        { id: "hra", label: "HRA", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "basic", pct: 50, calculationPriority: 2, isBalancing: false }, ui: { x: 20, y: 40, w: 60, h: 24 }, visible: true },
+        { id: "conveyance", label: "Conveyance Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "fixed", value: 1600, calculationPriority: 3, isBalancing: false }, ui: { x: 20, y: 70, w: 60, h: 24 }, visible: true },
+        { id: "medical", label: "Medical Allowance", kind: "earning", nestId: "benefits", logic: { type: "fixed", value: 1250, calculationPriority: 4, isBalancing: false }, ui: { x: 20, y: 100, w: 60, h: 24 }, visible: true },
+        { id: "performance_bonus", label: "Performance Bonus", kind: "earning", nestId: "variable_pay", logic: { type: "fixed", value: 2500, calculationPriority: 5, isBalancing: false }, ui: { x: 20, y: 130, w: 60, h: 24 }, visible: true },
+        { id: "special_allowance", label: "Special Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "fixed", value: 0, calculationPriority: 10, isBalancing: true }, ui: { x: 20, y: 160, w: 60, h: 24 }, visible: true },
+        { id: "provident_fund", label: "Provident Fund (EPF)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "basic", pct: 12, calculationPriority: 40, isBalancing: false }, ui: { x: 20, y: 190, w: 60, h: 24 }, visible: true },
+        { id: "professional_tax", label: "Professional Tax", kind: "deduction", nestId: "statutory_deductions", logic: { type: "fixed", value: 200, calculationPriority: 41, isBalancing: false }, ui: { x: 20, y: 220, w: 60, h: 24 }, visible: true },
+        { id: "income_tax", label: "Income Tax (TDS)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "ctc", pct: 5, calculationPriority: 42, isBalancing: false }, ui: { x: 20, y: 250, w: 60, h: 24 }, visible: true },
+        { id: "epf_employer", label: "EPF (Employer)", kind: "employer", nestId: "employer_contributions", logic: { type: "percentage", sourceField: "basic", pct: 13, calculationPriority: 50, isBalancing: false }, ui: { x: 20, y: 280, w: 60, h: 24 }, visible: true },
+        { id: "gratuity", label: "Gratuity", kind: "employer", nestId: "employer_contributions", logic: { type: "formula", formula: "basic * 0.0481", calculationPriority: 51, isBalancing: false }, ui: { x: 20, y: 310, w: 60, h: 24 }, visible: true },
+      ]),
+      taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+      settings: { companyName: "Proteccio HRMS", skillType: "Skilled" },
+    };
+    await createDefault("Skilled Nesting Template", "Nesting template for skilled professional and technical staff", skilledBp);
+  }
+
+  // 2. Semi-Skilled Nesting Template
+  if (!existingSkills.has("Semi Skilled")) {
+    const semiBp: Blueprint = {
+      name: "Semi-Skilled Pay Structure",
+      country: "India",
+      state: "Maharashtra",
+      financialYear: 2026,
+      theme: {
+        primaryColor: "#2563eb",
+        secondaryColor: "#1e293b",
+        accentColor: "#38bdf8",
+        font: "Helvetica",
+        pageSize: "A4",
+        orientation: "portrait",
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+      },
+      nests: [
+        { id: "fixed_pay", name: "Fixed Pay", displayOrder: 10, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "variable_pay", name: "Attendance & Variable", displayOrder: 20, expandByDefault: false, systemDefault: true, autoAssign: true },
+        { id: "benefits", name: "Perks & Allowances", displayOrder: 30, expandByDefault: false, systemDefault: true, autoAssign: true },
+        { id: "statutory_deductions", name: "Statutory Deductions", displayOrder: 40, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "facility_deductions", name: "Facility Deductions", displayOrder: 45, expandByDefault: true, systemDefault: false, autoAssign: true },
+        { id: "employer_contributions", name: "Employer Contributions", displayOrder: 50, expandByDefault: false, systemDefault: true, autoAssign: true },
+      ],
+      components: autoArrangeLayout([
+        { id: "basic", label: "Basic Salary", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "ctc", pct: 55, calculationPriority: 1, isBalancing: false }, ui: { x: 20, y: 10, w: 60, h: 24 }, visible: true },
+        { id: "hra", label: "HRA", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "basic", pct: 40, calculationPriority: 2, isBalancing: false }, ui: { x: 20, y: 40, w: 60, h: 24 }, visible: true },
+        { id: "conveyance", label: "Transport Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "fixed", value: 1000, calculationPriority: 3, isBalancing: false }, ui: { x: 20, y: 70, w: 60, h: 24 }, visible: true },
+        { id: "attendance_allowance", label: "Attendance Incentive", kind: "earning", nestId: "variable_pay", logic: { type: "fixed", value: 1500, calculationPriority: 4, isBalancing: false }, ui: { x: 20, y: 100, w: 60, h: 24 }, visible: true },
+        { id: "uniform_allowance", label: "Uniform & Laundry Allowance", kind: "earning", nestId: "benefits", logic: { type: "fixed", value: 500, calculationPriority: 5, isBalancing: false }, ui: { x: 20, y: 130, w: 60, h: 24 }, visible: true },
+        { id: "other_allowances", label: "Special Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "fixed", value: 0, calculationPriority: 10, isBalancing: true }, ui: { x: 20, y: 160, w: 60, h: 24 }, visible: true },
+        { id: "provident_fund", label: "Provident Fund (EPF)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "basic", pct: 12, calculationPriority: 40, isBalancing: false }, ui: { x: 20, y: 190, w: 60, h: 24 }, visible: true },
+        { id: "health_insurance", label: "ESI (Employee)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "ctc", pct: 0.75, calculationPriority: 41, isBalancing: false }, ui: { x: 20, y: 220, w: 60, h: 24 }, visible: true },
+        { id: "professional_tax", label: "Professional Tax", kind: "deduction", nestId: "statutory_deductions", logic: { type: "fixed", value: 150, calculationPriority: 42, isBalancing: false }, ui: { x: 20, y: 250, w: 60, h: 24 }, visible: true },
+        { id: "canteen_deduction", label: "Canteen & Meals Deduction", kind: "deduction", nestId: "facility_deductions", logic: { type: "fixed", value: 600, calculationPriority: 45, isBalancing: false }, ui: { x: 20, y: 280, w: 60, h: 24 }, visible: true },
+        { id: "epf_employer", label: "EPF (Employer)", kind: "employer", nestId: "employer_contributions", logic: { type: "percentage", sourceField: "basic", pct: 13, calculationPriority: 50, isBalancing: false }, ui: { x: 20, y: 310, w: 60, h: 24 }, visible: true },
+        { id: "esi_employer", label: "ESI (Employer)", kind: "employer", nestId: "employer_contributions", logic: { type: "percentage", sourceField: "ctc", pct: 3.25, calculationPriority: 51, isBalancing: false }, ui: { x: 20, y: 340, w: 60, h: 24 }, visible: true },
+      ]),
+      taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+      settings: { companyName: "Proteccio HRMS", skillType: "Semi Skilled" },
+    };
+    await createDefault("Semi-Skilled Nesting Template", "Nesting template for semi-skilled and operational employees", semiBp);
+  }
+
+  // 3. Unskilled Nesting Template
+  if (!existingSkills.has("Unskilled")) {
+    const unskilledBp: Blueprint = {
+      name: "Unskilled Pay Structure",
+      country: "India",
+      state: "Maharashtra",
+      financialYear: 2026,
+      theme: {
+        primaryColor: "#d97706",
+        secondaryColor: "#1c1917",
+        accentColor: "#f59e0b",
+        font: "Helvetica",
+        pageSize: "A4",
+        orientation: "portrait",
+        margins: { top: 40, right: 40, bottom: 40, left: 40 },
+      },
+      nests: [
+        { id: "fixed_pay", name: "Fixed Wages", displayOrder: 10, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "variable_pay", name: "Overtime & Variable", displayOrder: 20, expandByDefault: false, systemDefault: true, autoAssign: true },
+        { id: "statutory_deductions", name: "Statutory Deductions", displayOrder: 40, expandByDefault: true, systemDefault: true, autoAssign: true },
+        { id: "welfare_deductions", name: "Safety & Welfare Deductions", displayOrder: 45, expandByDefault: true, systemDefault: false, autoAssign: true },
+        { id: "employer_contributions", name: "Employer Contributions", displayOrder: 50, expandByDefault: false, systemDefault: true, autoAssign: true },
+      ],
+      components: autoArrangeLayout([
+        { id: "basic", label: "Basic Wage", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "ctc", pct: 65, calculationPriority: 1, isBalancing: false }, ui: { x: 20, y: 10, w: 60, h: 24 }, visible: true },
+        { id: "hra", label: "Living Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "percentage", sourceField: "basic", pct: 30, calculationPriority: 2, isBalancing: false }, ui: { x: 20, y: 40, w: 60, h: 24 }, visible: true },
+        { id: "other_allowances", label: "Daily Allowance", kind: "earning", nestId: "fixed_pay", logic: { type: "fixed", value: 0, calculationPriority: 3, isBalancing: true }, ui: { x: 20, y: 70, w: 60, h: 24 }, visible: true },
+        { id: "overtime", label: "Overtime Pay", kind: "earning", nestId: "variable_pay", logic: { type: "fixed", value: 0, calculationPriority: 4, isBalancing: false }, ui: { x: 20, y: 100, w: 60, h: 24 }, visible: true },
+        { id: "provident_fund", label: "Provident Fund (EPF)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "basic", pct: 12, calculationPriority: 40, isBalancing: false }, ui: { x: 20, y: 130, w: 60, h: 24 }, visible: true },
+        { id: "health_insurance", label: "ESI (Employee)", kind: "deduction", nestId: "statutory_deductions", logic: { type: "percentage", sourceField: "ctc", pct: 0.75, calculationPriority: 41, isBalancing: false }, ui: { x: 20, y: 160, w: 60, h: 24 }, visible: true },
+        { id: "safety_gear_deduction", label: "Tool & Safety Gear Maintenance", kind: "deduction", nestId: "welfare_deductions", logic: { type: "fixed", value: 250, calculationPriority: 45, isBalancing: false }, ui: { x: 20, y: 190, w: 60, h: 24 }, visible: true },
+        { id: "labour_welfare_fund", label: "Labour Welfare Fund (LWF)", kind: "deduction", nestId: "welfare_deductions", logic: { type: "fixed", value: 50, calculationPriority: 46, isBalancing: false }, ui: { x: 20, y: 220, w: 60, h: 24 }, visible: true },
+        { id: "epf_employer", label: "EPF (Employer)", kind: "employer", nestId: "employer_contributions", logic: { type: "percentage", sourceField: "basic", pct: 13, calculationPriority: 50, isBalancing: false }, ui: { x: 20, y: 250, w: 60, h: 24 }, visible: true },
+        { id: "esi_employer", label: "ESI (Employer)", kind: "employer", nestId: "employer_contributions", logic: { type: "percentage", sourceField: "ctc", pct: 3.25, calculationPriority: 51, isBalancing: false }, ui: { x: 20, y: 280, w: 60, h: 24 }, visible: true },
+      ]),
+      taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+      settings: { companyName: "Proteccio HRMS", skillType: "Unskilled" },
+    };
+    await createDefault("Unskilled Nesting Template", "Nesting template for unskilled field, site and warehouse workers", unskilledBp);
+  }
+}
+
 export async function listTemplates() {
+  await ensureDefaultSkillTemplates();
   const rows = await prisma.payslipTemplate.findMany({
     include: TEMPLATE_INCLUDE,
     orderBy: { updatedAt: "desc" },
@@ -65,7 +240,7 @@ export async function getTemplate(id: string) {
 }
 
 export async function createTemplate(
-  input: { name: string; description?: string; country?: string; state?: string; financialYear?: number },
+  input: { name: string; description?: string; country?: string; state?: string; financialYear?: number; skillType?: string },
   actorEmployeeId?: string
 ) {
   const defaultBlueprint: Blueprint = {
@@ -85,7 +260,7 @@ export async function createTemplate(
     nests: [...DEFAULT_NESTS],
     components: [],
     taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
-    settings: { companyName: "Proteccio HRMS" },
+    settings: { companyName: "Proteccio HRMS", skillType: input.skillType || "" },
   };
 
   const template = await prisma.$transaction(async (tx) => {
@@ -106,13 +281,13 @@ export async function createTemplate(
         blueprint: asJson(defaultBlueprint),
         status: "Draft",
         createdById: actorEmployeeId ?? null,
-        changeSummary: "Template created",
+        changeSummary: input.skillType ? `Template created for ${input.skillType}` : "Template created",
       },
     });
     return t;
   });
 
-  writeAuditLog({ action: "CREATE", entityType: "PayslipTemplate", entityId: template.id, newValue: { name: input.name } });
+  writeAuditLog({ action: "CREATE", entityType: "PayslipTemplate", entityId: template.id, newValue: { name: input.name, skillType: input.skillType } });
   return { data: serializeTemplate({ ...template, versions: [] }) };
 }
 

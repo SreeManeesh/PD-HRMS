@@ -40,21 +40,24 @@ interface Token {
 
 /** Tokenize a formula. Throws on any disallowed character. */
 function tokenize(expr: string): Token[] {
-  const chars = expr.replace(/\s+/g, "");
   const tokens: Token[] = [];
   let i = 0;
-  while (i < chars.length) {
-    const ch = chars[i];
-    const two = chars.slice(i, i + 2);
+  while (i < expr.length) {
+    const ch = expr[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    const two = expr.slice(i, i + 2);
     if (/[0-9.]/.test(ch)) {
       let j = i;
-      while (j < chars.length && /[0-9.]/.test(chars[j])) j += 1;
-      tokens.push({ type: "num", value: chars.slice(i, j) });
+      while (j < expr.length && /[0-9.]/.test(expr[j])) j += 1;
+      tokens.push({ type: "num", value: expr.slice(i, j) });
       i = j;
     } else if (/[A-Za-z_]/.test(ch)) {
       let j = i;
-      while (j < chars.length && /[A-Za-z0-9_.]/.test(chars[j])) j += 1;
-      const word = chars.slice(i, j);
+      while (j < expr.length && /[A-Za-z0-9_.]/.test(expr[j])) j += 1;
+      const word = expr.slice(i, j);
       tokens.push({ type: word.toUpperCase() in FN_WHITELIST ? "fn" : "ident", value: word });
       i = j;
     } else if (two === ">=" || two === "<=" || two === "==" || two === "!=") {

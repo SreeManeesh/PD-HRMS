@@ -27,7 +27,9 @@ import { useToast } from "../../context/ToastContext.jsx";
 import { inr } from "./format.js";
 import { skillTypes } from "../../mock/employees.js";
 import { getEmployees } from "../../services/employeeService.js";
-import { getEmployeePayrollSummary } from "../../services/payrollService.js";
+import EmployeeSearchBox from "../../components/shared/EmployeeSearchBox.jsx";
+import EmployeeSalaryBreakdown from "../../components/payroll/EmployeeSalaryBreakdown.jsx";
+import { getSkillMeta } from "../../utils/payrollFormatters.js";
 import "./PayslipDesigner.css";
 
 const DEFAULT_THEME = {
@@ -97,11 +99,20 @@ export function PayslipDesignerPanel() {
   const [employees, setEmployees] = useState([]);
   const [empQuery, setEmpQuery] = useState("");
   const [calcEmp, setCalcEmp] = useState(null);
+  const [skillFilter, setSkillFilter] = useState("All");
 
   // ── New nesting template (asks for a skill type) ──
   const [showNewTemplate, setShowNewTemplate] = useState(false);
   const [ntName, setNtName] = useState("");
   const [ntSkillType, setNtSkillType] = useState("");
+
+  const filteredTemplates = useMemo(() => {
+    if (skillFilter === "All") return templates;
+    return templates.filter((t) => {
+      const st = (t.skillType || t.latestBlueprint?.settings?.skillType || "").toLowerCase();
+      return st.includes(skillFilter.toLowerCase());
+    });
+  }, [templates, skillFilter]);
 
   const load = useCallback(async (id) => {
     setBusy(true);
@@ -435,6 +446,59 @@ export function PayslipDesignerPanel() {
           </div>
         )}
 
+        {/* Skill Type Quick Filter & Current Blueprint Status */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+              Skill Category:
+            </span>
+            {["All", "Skilled", "Semi Skilled", "Unskilled"].map((sf) => (
+              <button
+                key={sf}
+                type="button"
+                onClick={() => setSkillFilter(sf)}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 99,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: skillFilter === sf ? "1px solid var(--primary)" : "1px solid var(--border)",
+                  background: skillFilter === sf ? "var(--primary-light)" : "var(--card)",
+                  color: skillFilter === sf ? "var(--primary)" : "var(--subtext)",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {sf}
+              </button>
+            ))}
+          </div>
+
+          {blueprint?.settings?.skillType && (() => {
+            const sm = getSkillMeta(blueprint.settings.skillType);
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    padding: "3px 10px",
+                    borderRadius: 99,
+                    color: sm.color,
+                    background: sm.bg,
+                    border: `1px solid ${sm.border}`,
+                  }}
+                >
+                  {sm.label} Blueprint
+                </span>
+                <span style={{ fontSize: 12, color: "var(--subtext)" }}>
+                  {matchedEmployees.length} matching employee{matchedEmployees.length === 1 ? "" : "s"}
+                </span>
+              </div>
+            );
+          })()}
+        </div>
+
         <div className="pd-tabs">
           {[
             { id: "nest", label: "Nesting", icon: FolderTree },
@@ -455,7 +519,11 @@ export function PayslipDesignerPanel() {
               onChange={(e) => setTemplateId(e.target.value)}
               style={{ height: 32, padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", outline: "none", cursor: "pointer" }}
             >
-              {templates.map((t) => <option key={t.id} value={t.id}>{t.name} (v{t.latestVersion}){t.isActive && t.status === "Published" ? " — Active" : ""}</option>)}
+              {(filteredTemplates.length ? filteredTemplates : templates).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} (v{t.latestVersion}){t.isActive && t.status === "Published" ? " — Active" : ""}
+                </option>
+              ))}
             </select>
             <button className="pd-btn" onClick={() => setActiveView("nest")}>
               <FolderTree size={15} /> Nesting Manager
@@ -650,7 +718,9 @@ export function PayslipDesignerPanel() {
                 employees={employees}
                 value={empQuery}
                 onChange={setEmpQuery}
-                onSelect={(emp) => { setCalcEmp(emp); setEmpQuery(""); }}
+                onSelect={(empId, emp) => { setCalcEmp(emp || { id: empId }); setEmpQuery(""); }}
+                placeholder="Search employee by name, ID or skill…"
+                compact={true}
               />
             </div>
             {calcResult && (
@@ -751,7 +821,14 @@ export function PayslipDesignerPanel() {
         )}
       </div>
 
-      {calcEmp && <EmployeeSalaryModal employee={calcEmp} onClose={() => setCalcEmp(null)} />}
+      {calcEmp && (
+        <EmployeeSalaryBreakdown
+          employeeId={calcEmp.id}
+          isModal={true}
+          onClose={() => setCalcEmp(null)}
+          employeeMeta={calcEmp}
+        />
+      )}
 
       {showNewTemplate && (
         <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -786,189 +863,7 @@ export default function PayslipDesigner() {
   return <MainLayout><PayslipDesignerPanel /></MainLayout>;
 }
 
-/* ── Sub-components ──────────────────────────────────────────── */
 
-/** Employee search bar with dropdown — same interaction as the
- *  Employee Payroll picker; selecting an employee opens their salary popup. */
-function EmployeeSearchBox({ employees, value, onChange, onSelect }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const q = value.trim().toLowerCase();
-  const matches = (employees || []).filter((emp) =>
-    !q || (emp.id || "").toLowerCase().includes(q) || `${emp.firstName} ${emp.lastName}`.toLowerCase().includes(q)
-  ).slice(0, 50);
-
-  return (
-    <div ref={boxRef} style={{ position: "relative", flex: "1 1 220px", maxWidth: 300 }}>
-      <Search size={15} style={{ color: "var(--subtext)", position: "absolute", left: 12, top: 9, pointerEvents: "none" }} />
-      <input
-        value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        placeholder="Search employee by name or ID…"
-        style={{ width: "100%", height: 32, padding: "0 30px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, color: "var(--text)", background: "var(--card)", outline: "none" }}
-      />
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-label="Toggle employee list"
-        style={{ position: "absolute", right: 4, top: 2, width: 28, height: 28, background: "none", border: "none", borderRadius: "var(--radius-sm)", cursor: "pointer", color: "var(--subtext)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <ChevronDown size={15} />
-      </button>
-      {open && (
-        <div style={{ position: "absolute", top: 38, left: 0, right: 0, zIndex: 30, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)", maxHeight: 300, overflowY: "auto" }}>
-          {matches.length === 0 ? (
-            <div style={{ padding: "14px 16px", fontSize: 12.5, color: "var(--subtext)" }}>No employee found.</div>
-          ) : (
-            matches.map((emp) => (
-              <button key={emp.id} type="button" onClick={() => { onSelect(emp); setOpen(false); }}
-                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 16px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "var(--text)" }}>
-                <span style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--primary-light)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11.5, fontWeight: 700, flexShrink: 0 }}>
-                  {(emp.firstName?.[0] || "?")}{(emp.lastName?.[0] || "")}
-                </span>
-                <span style={{ fontWeight: 600, flex: 1 }}>{emp.firstName} {emp.lastName}</span>
-                <span style={{ color: "var(--subtext)", fontFamily: "monospace", fontSize: 11.5 }}>{emp.id}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Salary popup shown when an employee is selected in the Calculation Order
- *  card — gross, annual package, leave deduction, total deductions, net
- *  payroll plus earnings/deductions breakdown, same as Employee Payroll. */
-function EmployeeSalaryModal({ employee, onClose }) {
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    setError("");
-    setSummary(null);
-    getEmployeePayrollSummary(employee.id, month, year)
-      .then((res) => setSummary(res.data))
-      .catch((err) => setError(err.message || "Could not load payroll summary"))
-      .finally(() => setLoading(false));
-  }, [employee.id, month, year]);
-
-  const statusColor = { Draft: "#64748b", Processing: "#d97706", Approved: "#0284c7", Paid: "#16a34a", Failed: "#dc2626" };
-  const statusBg = { Draft: "#f8fafc", Processing: "#fffbeb", Approved: "#f0f9ff", Paid: "#f0fdf4", Failed: "#fef2f2" };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22, width: "100%", maxWidth: 720, maxHeight: "86vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
-          <h3 style={{ fontWeight: 800, fontSize: 16, margin: 0 }}>
-            {employee.firstName} {employee.lastName} <span style={{ color: "var(--subtext)", fontWeight: 500, fontSize: 13 }}>({employee.id})</span>
-          </h3>
-          <button onClick={onClose} className="pd-btn small">Close</button>
-        </div>
-
-        {loading ? (
-          <Spinner />
-        ) : error ? (
-          <p style={{ fontSize: 13, color: "var(--red)", fontWeight: 600 }}>{error}</p>
-        ) : !summary ? (
-          <p style={{ fontSize: 13, color: "var(--subtext)" }}>No summary found for this employee & period.</p>
-        ) : (
-          (() => {
-            const { earnings, deductions } = summary;
-            const earningGroups = summary.earningGroups?.length ? summary.earningGroups : [{ id: null, name: "Earnings", kind: "earning", rows: [] }];
-            const deductionGroups = summary.deductionGroups?.length ? summary.deductionGroups : [{ id: null, name: "Deductions", kind: "deduction", rows: [] }];
-            const flatRows = (obj) => Object.entries(obj || {})
-              .filter(([k, v]) => k !== "total" && k !== "leaveDeduction" && Number(v) > 0)
-              .map(([label, amount]) => ({ label: label.replace(/([A-Z])/g, " $1").trim(), amount: Number(amount) }));
-            const fallbackEarnings = flatRows(earnings);
-            const fallbackDeductions = flatRows(deductions);
-            const earnedTotal = earningGroups.some((g) => g.rows.length)
-              ? earningGroups.reduce((s, g) => s + g.rows.reduce((a, r) => a + r.amount, 0), 0)
-              : fallbackEarnings.reduce((s, r) => s + r.amount, 0);
-            const stat = (label, value, color = "var(--text)") => (
-              <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "12px 14px", flex: "1 1 130px" }}>
-                <p style={{ fontSize: 10.5, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 6 }}>{label}</p>
-                <p style={{ fontSize: 17, fontWeight: 800, color, fontFamily: "monospace", lineHeight: 1.2 }}>{value}</p>
-              </div>
-            );
-            const detail = (label, entries, color, isDeduction, total, totalLabel, fallback) => {
-              return (
-                <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "14px 16px" }}>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 10 }}>{label}</p>
-                  {entryGroups(label, entries, color, isDeduction, fallback)}
-                  {isDeduction && summary.leaveDeduction > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-                      <span style={{ fontSize: 12.5, color: "var(--label)" }}>Leave Deduction (unpaid days)</span>
-                      <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{inr(summary.leaveDeduction)}</span>
-                    </div>
-                  )}
-                  <div style={{ borderTop: "1px solid var(--border)", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{totalLabel}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{inr(total)}</span>
-                  </div>
-                </div>
-              );
-            };
-            const entryGroups = (label, entries, color, isDeduction, fallback) => {
-              const groups = label === "Earnings" ? earningGroups : deductionGroups;
-              return groups.map((g, gi) => {
-                const rows = g.rows.length ? g.rows : fallback;
-                return (
-                  <div key={g.id || g.name} style={gi > 0 ? { marginTop: 10 } : undefined}>
-                    {groups.length > 1 && <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", opacity: 0.85, marginBottom: 6 }}>{g.name}</p>}
-                    {rows.length === 0 ? (
-                      <p style={{ fontSize: 12, color: "var(--subtext)" }}>No {label.toLowerCase()} in this period.</p>
-                    ) : (
-                      rows.map((row) => (
-                        <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                          <span style={{ fontSize: 12.5, color: "var(--label)" }}>{row.label}</span>
-                          <span style={{ fontSize: 12.5, fontWeight: 500, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{inr(row.amount)}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                );
-              });
-            };
-            return (
-              <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-                  <span style={{ fontSize: 12.5, color: "var(--subtext)" }}>Payroll · {MONTHS_FULL_PD[month - 1]} {year}</span>
-                  {summary.status && (
-                    <span style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, fontWeight: 700, color: statusColor[summary.status] || "#64748b", background: statusBg[summary.status] || "#f8fafc" }}>{summary.status}</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-                  {stat("Gross", inr(summary.gross))}
-                  {stat("Annual Package", summary.annualSalary ? inr(summary.annualSalary) : "—", "var(--primary)")}
-                  {stat("Leave Deduction", summary.leaveDeduction > 0 ? `−${inr(summary.leaveDeduction)}` : "—", summary.leaveDeduction > 0 ? "var(--amber)" : "var(--subtext)")}
-                  {stat("Total Deductions", `−${inr((deductions || {}).total)}`, "var(--red)")}
-                  {stat("Net Payroll", inr(summary.netPay), "var(--green)")}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  {detail("Earnings", earnings, "var(--green)", false, earnedTotal, "Total Earnings", fallbackEarnings)}
-                  {detail("Deductions", deductions, "var(--red)", true, (deductions || {}).total, "Total Deductions", fallbackDeductions)}
-                </div>
-              </>
-            );
-          })()
-        )}
-      </div>
-    </div>
-  );
-}
-
-const MONTHS_FULL_PD = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 function NestCard({ nest, comps, catalog, allComponents, onChangeNest, onRemoveNest, onDropComp, onAddToNest, onUnassignComp, onDeleteComp, onUpdateComp }) {
   const [open, setOpen] = useState(nest.expandByDefault !== false);

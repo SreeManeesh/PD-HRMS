@@ -28,24 +28,19 @@ import { getMyAttendance } from "../../services/attendanceService.js";
 import { getEmployees } from "../../services/employeeService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-
-const payrollStatusMeta = {
-  Draft: { label: "Draft", color: "#64748b", bg: "#f8fafc" },
-  Processing: { label: "Processing", color: "#d97706", bg: "#fffbeb" },
-  Approved: { label: "Approved", color: "#0284c7", bg: "#f0f9ff" },
-  Paid: { label: "Paid", color: "#16a34a", bg: "#f0fdf4" },
-  Failed: { label: "Failed", color: "#dc2626", bg: "#fef2f2" },
-};
-
-const fmt = (n) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
-
-const pad2 = (n) => String(n).padStart(2, "0");
-const isoDate = (y, m, d) => `${y}-${pad2(m)}-${pad2(d)}`;
+import EmployeeSearchBox from "../../components/shared/EmployeeSearchBox.jsx";
+import EmployeeSalaryBreakdown from "../../components/payroll/EmployeeSalaryBreakdown.jsx";
+import {
+  MONTHS,
+  MONTHS_FULL,
+  WEEKDAYS,
+  fmt,
+  inr,
+  payrollStatusMeta,
+  getSkillMeta,
+  pad2,
+  isoDate,
+} from "../../utils/payrollFormatters.js";
 
 function SlideTabs({ tabs, active, onChange }) {
   return (
@@ -126,57 +121,7 @@ function MonthYearToolbar({ month, year, onMonth, onYear, years, search, onSearc
   );
 }
 
-function EmployeeSearchBox({ employees, value, onChange, onSelect }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const q = value.trim().toLowerCase();
-  const matches = employees.filter((emp) =>
-    !q || (emp.id || "").toLowerCase().includes(q) || `${emp.firstName} ${emp.lastName}`.toLowerCase().includes(q)
-  );
-
-  return (
-    <div ref={boxRef} style={{ position: "relative", flex: 1 }}>
-      <Search size={15} style={{ color: "var(--subtext)", position: "absolute", left: "12px", top: "12px", pointerEvents: "none" }} />
-      <input
-        value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        placeholder="Search employee by name or ID…"
-        style={{ width: "100%", height: "38px", padding: "0 40px 0 34px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", background: "var(--card)", outline: "none" }}
-      />
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-label="Toggle employee list"
-        style={{ position: "absolute", right: "4px", top: "4px", width: "30px", height: "30px", background: "none", border: "none", borderRadius: "var(--radius-sm)", cursor: "pointer", color: "var(--subtext)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <ChevronDown size={16} />
-      </button>
-      {open && (
-        <div style={{ position: "absolute", top: "44px", left: 0, right: 0, zIndex: 30, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-sm)", maxHeight: "300px", overflowY: "auto" }}>
-          {matches.length === 0 ? (
-            <div style={{ padding: "14px 16px", fontSize: "13px", color: "var(--subtext)" }}>No employee found.</div>
-          ) : (
-            matches.map((emp) => (
-              <button key={emp.id} type="button" onClick={() => { onSelect(emp.id); onChange(""); setOpen(false); }}
-                style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "10px 16px", background: emp.id === value ? "var(--primary-light)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontSize: "13.5px", color: "var(--text)" }}>
-                <span style={{ width: "28px", height: "28px", borderRadius: "50%", background: "var(--primary-light)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, flexShrink: 0 }}>
-                  {(emp.firstName?.[0] || "?")}{(emp.lastName?.[0] || "")}
-                </span>
-                <span style={{ fontWeight: 600, flex: 1 }}>{emp.firstName} {emp.lastName}</span>
-                <span style={{ color: "var(--subtext)", fontFamily: "monospace", fontSize: "12px" }}>{emp.id} · {emp.designation || "—"}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function Payroll() {
   const { user, permissions } = useAuth();
@@ -668,7 +613,33 @@ export default function Payroll() {
                       <tbody>
                         {annualEmpVisible.map((row, idx) => (
                           <tr key={row.employeeId} style={{ borderBottom: idx < annualEmpVisible.length - 1 ? "1px solid var(--border)" : "none" }}>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>{row.employeeName} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({row.employeeId})</span></td>
+                            <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                <span>{row.employeeName}</span>
+                                <span style={{ color: "var(--subtext)", fontWeight: 500, fontSize: "12px" }}>({row.employeeId})</span>
+                                {(() => {
+                                  const emp = employees.find((e) => e.id === row.employeeId || e.employeeCode === row.employeeId);
+                                  const skill = row.skillType || emp?.skillType;
+                                  if (!skill) return null;
+                                  const sm = getSkillMeta(skill);
+                                  return (
+                                    <span
+                                      style={{
+                                        fontSize: "10.5px",
+                                        fontWeight: 700,
+                                        padding: "1px 7px",
+                                        borderRadius: "99px",
+                                        color: sm.color,
+                                        background: sm.bg,
+                                        border: `1px solid ${sm.border}`,
+                                      }}
+                                    >
+                                      {sm.label}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            </td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.workingDays ?? "—"}</td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.presentDays ?? "—"}</td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.leaveDays > 0 ? "var(--amber)" : "var(--subtext)" }}>{row.leaveDays ?? 0}</td>
@@ -1013,105 +984,5 @@ export default function Payroll() {
 }
 
 function EmployeeSummary({ employeeId, month, year }) {
-  const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    setError("");
-    setSummary(null);
-    getEmployeePayrollSummary(employeeId, month, year)
-      .then((res) => setSummary(res.data))
-      .catch((err) => { setError(err.message || "Could not load payroll summary"); setSummary(null); })
-      .finally(() => setLoading(false));
-  }, [employeeId, month, year]);
-
-  if (loading) return <Spinner />;
-  if (error) return <p style={{ fontSize: "13px", color: "var(--red)", fontWeight: 600 }}>{error}</p>;
-  if (!summary) return <EmptyState title="No payroll data" subtitle="No summary found for this employee & period." />;
-
-  const earningGroups = summary.earningGroups && summary.earningGroups.length
-    ? summary.earningGroups
-    : [{ id: null, name: "Earnings", kind: "earning", rows: [] }];
-  const deductionGroups = summary.deductionGroups && summary.deductionGroups.length
-    ? summary.deductionGroups
-    : [{ id: null, name: "Deductions", kind: "deduction", rows: [] }];
-
-  // Flat rows derived from the raw amounts, used when a group has no mapped
-  // rows so individual items (PF, PT, IT, HI; basic, HRA…) always render.
-  const flatRows = (obj) =>
-    Object.entries(obj || {})
-      .filter(([k, v]) => k !== "total" && k !== "leaveDeduction" && Number(v) > 0)
-      .map(([label, amount]) => ({ label: label.replace(/([A-Z])/g, " $1").trim(), amount: Number(amount) }));
-  const fallbackEarnings = flatRows(summary.earnings);
-  const fallbackDeductions = flatRows(summary.deductions);
-
-  const earnedTotal = earningGroups.some((g) => g.rows.length)
-    ? earningGroups.reduce((s, g) => s + g.rows.reduce((a, r) => a + r.amount, 0), 0)
-    : fallbackEarnings.reduce((s, r) => s + r.amount, 0);
-
-  return (
-    <>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
-        <h3 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text)" }}>{summary.employeeName} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({summary.employeeId})</span></h3>
-        <StatusBadge {...(payrollStatusMeta[summary.status] || { label: summary.status, color: "#64748b", bg: "#f8fafc" })} />
-      </div>
-
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "18px" }}>
-        <Stat label="Gross" value={fmt(summary.gross)} />
-        <Stat label="Annual Package" value={summary.annualSalary ? fmt(summary.annualSalary) : "—"} color="var(--primary)" />
-        <Stat label="Present Days" value={`${summary.presentDays ?? 0} / ${summary.workingDays ?? "—"}`} color="var(--green)" />
-        <Stat label="Leave Deduction" value={summary.leaveDeduction > 0 ? `−${fmt(summary.leaveDeduction)}` : "—"} color={summary.leaveDeduction > 0 ? "var(--amber)" : "var(--subtext)"} />
-        <Stat label="Total Deductions" value={`−${fmt(summary.deductions.total)}`} color="var(--red)" />
-        <Stat label="Net Payroll" value={fmt(summary.netPay)} color="var(--green)" />
-      </div>
-
-      <p style={{ fontSize: "12px", color: "var(--subtext)", marginBottom: "16px" }}>
-        {summary.presentDays > 0 || summary.paidLeaveDays > 0
-          ? `${summary.presentDays ?? 0} present + ${summary.paidLeaveDays ?? 0} paid leave of ${summary.workingDays ?? 0} working days were paid this period${summary.leaveDays > 0 ? ` — ${summary.leaveDays} unpaid (LOP) day${summary.leaveDays === 1 ? "" : "s"} deducted ₹${new Intl.NumberFormat("en-IN").format(summary.leaveDeduction)}` : "."}`
-          : `No attendance recorded this period — ${summary.workingDays ?? 0} working days, full month salary applies.`}
-      </p>
-
-      {/* Earnings / Deductions grouped by the payslip blueprint's nesting */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-        {[
-          { label: "Earnings", groups: earningGroups, color: "var(--green)", isDeduction: false, total: earnedTotal, totalLabel: "Total Earnings", fallback: fallbackEarnings },
-          { label: "Deductions", groups: deductionGroups, color: "var(--red)", isDeduction: true, total: summary.deductions.total, totalLabel: "Total Deductions", fallback: fallbackDeductions },
-        ].map(({ label, groups, color, isDeduction, total, totalLabel, fallback }) => (
-          <div key={label} style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "16px" }}>
-            <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: "12px" }}>{label}</p>
-            {groups.map((g, gi) => {
-              const rows = g.rows.length ? g.rows : fallback;
-              return (
-                <div key={g.id || g.name} style={gi > 0 ? { marginTop: "14px" } : undefined}>
-                  <p style={{ fontSize: "11.5px", fontWeight: 700, color: "var(--text)", opacity: 0.85, marginBottom: "6px" }}>{g.name}</p>
-                  {rows.length === 0 ? (
-                    <p style={{ fontSize: "12px", color: "var(--subtext)" }}>No {label.toLowerCase()} in this period.</p>
-                  ) : (
-                    rows.map((row) => (
-                      <div key={row.label} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                        <span style={{ fontSize: "12.5px", color: "var(--label)" }}>{row.label}</span>
-                        <span style={{ fontSize: "12.5px", fontWeight: 500, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{fmt(row.amount)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              );
-            })}
-            {isDeduction && summary.leaveDeduction > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "10px" }}>
-                <span style={{ fontSize: "12.5px", color: "var(--label)" }}>Leave Deduction (unpaid days)</span>
-                <span style={{ fontSize: "12.5px", fontWeight: 500, color: "var(--red)", fontFamily: "monospace" }}>−{fmt(summary.leaveDeduction)}</span>
-              </div>
-            )}
-            <div style={{ borderTop: "1px solid var(--border)", marginTop: "10px", paddingTop: "8px", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>{totalLabel}</span>
-              <span style={{ fontSize: "13px", fontWeight: 700, color, fontFamily: "monospace" }}>{isDeduction ? "−" : ""}{fmt(total)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </>
-  );
+  return <EmployeeSalaryBreakdown employeeId={employeeId} month={month} year={year} />;
 }
