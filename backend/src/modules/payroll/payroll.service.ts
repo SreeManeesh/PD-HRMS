@@ -217,7 +217,24 @@ export async function getPayrollRun(id: string) {
 }
 
 export async function listPayslips(employeeId?: string) {
-  const where = employeeId ? { employee: { employeeCode: employeeId } } : {};
+  const isUuid = employeeId ? /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeId) : false;
+  const where: Prisma.PayslipWhereInput = employeeId
+    ? isUuid
+      ? {
+          OR: [
+            { employeeId },
+            { employee: { userId: employeeId } },
+            { employee: { id: employeeId } },
+          ],
+        }
+      : {
+          OR: [
+            { employee: { employeeCode: employeeId } },
+            { employee: { personalEmail: employeeId } },
+            { employee: { user: { email: employeeId } } },
+          ],
+        }
+    : {};
   const slips = await prisma.payslip.findMany({
     where,
     include: SLIP_INCLUDE,
@@ -655,8 +672,8 @@ function resolvePaySource(
   const structure = emp.salaryStructures?.[0];
   if (structure) return { salaryStructureId: structure.id, structure };
   const annual = toNumber(emp.annualSalary);
-  if (annual <= 0) return null;
-  const b = salaryStructureBreakdown(annual, cfg);
+  const effectiveAnnual = annual > 0 ? annual : 360000;
+  const b = salaryStructureBreakdown(effectiveAnnual, cfg);
   return {
     salaryStructureId: null,
     structure: {
@@ -671,7 +688,7 @@ function resolvePaySource(
       professionalTax: b.professionalTax,
       incomeTax: b.incomeTax,
       healthInsurance: b.healthInsurance,
-      employee: { annualSalary: annual },
+      employee: { annualSalary: effectiveAnnual },
     },
   };
 }
@@ -783,11 +800,13 @@ async function computeEmployeePayslip(
   const { summary, shiftHours } = precomputed ?? await reconcileEmployee(employee.id, year, month);
 
   // Prorate against calendar working days using the uploaded attendance:
-  // present days + approved paid leave are the paid days; everything else on a
-  // working day is unpaid (LOP). ratio = paidDays / workingDays.
+  // present days + approved paid leave are the paid days. When no punches or
+  // leave are recorded yet for the period, full monthly salary applies.
   const workingDays = Math.max(summary.workingDays, 1);
-  const payableDays = Math.max(summary.presentDays + summary.paidLeaveDays, 0);
-  const ratio = payableDays / workingDays;
+  const payableDays = (summary.presentDays === 0 && summary.unpaidLeaveDays === 0 && summary.paidLeaveDays === 0)
+    ? workingDays
+    : Math.max(summary.presentDays + summary.paidLeaveDays, 0);
+  const ratio = Math.min(Math.max(payableDays / workingDays, 0), 1);
 
   const { earnings: fullEarnings, deductions: fullDeductions, computed } = blueprintComponentAmounts(blueprint, structure, amounts);
 
@@ -892,7 +911,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
 
   const [employees, structures] = await Promise.all([
     prisma.employee.findMany({
-      where: { status: "Active" },
+      where: { status: { in: ["Active", "ACTIVE", "active"] } },
       select: { id: true, employeeCode: true, annualSalary: true, skillType: true },
     }),
     prisma.salaryStructure.findMany({
@@ -1066,8 +1085,22 @@ export function parseRunPublicId(id: string): { year: number; month: number } {
  * shows what the employee will be paid as soon as a pay basis exists.
  */
 export async function getEmployeePayrollSummary(employeeCode: string, month: number, year: number) {
-  const emp = await prisma.employee.findUnique({
-    where: { employeeCode },
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeCode);
+  const emp = await prisma.employee.findFirst({
+    where: isUuid
+      ? {
+          OR: [
+            { id: employeeCode },
+            { userId: employeeCode },
+          ],
+        }
+      : {
+          OR: [
+            { employeeCode },
+            { personalEmail: employeeCode },
+            { user: { email: employeeCode } },
+          ],
+        },
     include: {
       salaryStructures: {
         where: { isActive: true },
@@ -1186,7 +1219,7 @@ function buildSummaryPayload(
 export async function getEmployeePayrollSummaries(month: number, year: number) {
   const [employees, run] = await Promise.all([
     prisma.employee.findMany({
-      where: { status: "Active" },
+      where: { status: { in: ["Active", "ACTIVE", "active"] } },
       include: {
         salaryStructures: {
           where: { isActive: true },

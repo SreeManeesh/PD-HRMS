@@ -60,8 +60,14 @@ router.get("/:id", authenticate, requirePermission("employees:read|dashboard:rea
 // POST /api/employees — employees:write
 router.post("/", authenticate, requirePermission("employees:write"), validate({ body: createBodySchema }), employeeController.create);
 
-// POST /api/employees/bulk — employees:write (spreadsheet import, skips invalid rows)
+// POST /api/employees/bulk/preview — employees:write (parse & preview spreadsheet rows)
+router.post("/bulk/preview", authenticate, requirePermission("employees:write"), attendanceUpload.single("file"), employeeController.bulkPreview);
+
+// POST /api/employees/bulk — employees:write (spreadsheet import, skips duplicates & invalid rows)
 router.post("/bulk", authenticate, requirePermission("employees:write"), attendanceUpload.single("file"), employeeController.bulk);
+
+// POST /api/employees/bulk/undo — employees:write (undo recent bulk import batch)
+router.post("/bulk/undo", authenticate, requirePermission("employees:write"), employeeController.bulkUndo);
 
 // POST /api/employees/:id/photo — employees:write (profile photo upload)
 router.post("/:id/photo", authenticate, requirePermission("employees:write"), companyBrandingUpload.single("photo"), employeeController.uploadPhoto);

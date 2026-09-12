@@ -8,7 +8,7 @@ import * as authController from "./auth.controller";
 const router = Router();
 
 const loginSchema = z.object({
-  email: z.string().email("A valid email is required"),
+  email: z.string().min(1, "Email or username is required"),
   password: z.string().min(1, "Password is required"),
 });
 

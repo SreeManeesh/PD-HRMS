@@ -1,4 +1,4 @@
-﻿// Sign-in page — supports both email/password and role-based quick access.
+// Sign-in page — supports both email/password and role-based quick access.
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth, DEMO_ACCOUNTS } from "../../context/AuthContext.jsx";
@@ -188,16 +188,17 @@ export default function Login() {
             {/* Form */}
             <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
-              {/* Email */}
+              {/* Email / Username */}
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 <label style={{ fontSize: "12.5px", fontWeight: 700, color: "#3d5a70", letterSpacing: "0.1px" }}>
-                  Work Email
+                  Work Email or Username
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
+                  placeholder="you@company.com or admin"
+                  autoComplete="username"
                   required
                   style={inputStyle}
                   onFocus={(e) => applyFocus(e)}

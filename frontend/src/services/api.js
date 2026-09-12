@@ -13,8 +13,13 @@
 
 import axios from "axios";
 
+let rawBaseUrl = import.meta.env.VITE_API_URL || "/api";
+if (rawBaseUrl.includes("localhost:4000")) {
+  rawBaseUrl = rawBaseUrl.replace("localhost:4000", "localhost:4001");
+}
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "/api",
+  baseURL: rawBaseUrl,
   timeout: 15000,
   // headers: { "Content-Type": "application/json" },
 });
@@ -68,6 +73,18 @@ api.interceptors.response.use(
         if (window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
+      }
+    }
+
+    // Auto-retry on fallback backend port if connection was refused
+    if ((error.code === "ERR_NETWORK" || !error.response) && original && !original._networkRetried) {
+      original._networkRetried = true;
+      if (original.baseURL && original.baseURL.includes("4000")) {
+        original.baseURL = original.baseURL.replace("4000", "4001");
+        return api(original);
+      } else if (original.baseURL && original.baseURL !== "/api") {
+        original.baseURL = "/api";
+        return api(original);
       }
     }
 
