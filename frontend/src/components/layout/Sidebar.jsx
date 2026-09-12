@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, UserCheck, CalendarDays, Wallet, TrendingUp,
   GraduationCap, Laptop, CheckSquare, Receipt, Plane, Home, Headphones,
   FileText, LogOut, Building2, GitBranch, BarChart3, Bell, Shield, UserPlus,
-  ClipboardList,
+  ClipboardList, SlidersHorizontal,
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -58,6 +58,7 @@ const NAV_GROUPS = [
       { icon: Bell,      title: "Notifications", href: "/notifications",  permission: "notifications" },
       { icon: Shield,    title: "Compliance",    href: "/compliance",     permission: "compliance"    },
       { icon: Shield,    title: "Security",      href: "/security",       permission: "security"      },
+      { icon: SlidersHorizontal, title: "Payslip Settings", href: "/settings/payroll", permission: "payroll" },
     ],
   },
 ];

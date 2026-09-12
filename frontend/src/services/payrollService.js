@@ -115,3 +115,15 @@ export const markPayslipViewed = async (payslipId) => {
   const res = await api.post(`/payroll/payslips/${payslipId}/view`);
   return res.data;
 };
+
+/** Company-level pay config (rates used to build payslips). */
+export const getPayrollConfig = async () => {
+  const res = await api.get("/company/payroll-config");
+  return res.data; // { data }
+};
+
+/** Update company-level pay config. */
+export const updatePayrollConfig = async (payload) => {
+  const res = await api.put("/company/payroll-config", payload);
+  return res.data; // { data }
+};

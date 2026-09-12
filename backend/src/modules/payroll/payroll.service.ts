@@ -677,9 +677,97 @@ function resolvePaySource(
 }
 
 /**
+ * Full-month earnings/deductions per stored key, driven by the employee's
+ * skill-type nesting blueprint where it defines the component (fixed value,
+ * % of CTC, formula), falling back to the salary-package breakdown for any
+ * key the blueprint does not cover. The calculation engine runs over the
+ * salary package so designer components like "Basic Salary" (fixed, pulls
+ * from ctx) or "HRA = 50% of ctc" resolve to real amounts.
+ */
+function blueprintComponentAmounts(
+  blueprint: Blueprint | null,
+  structure: PaySourceStructure,
+  amounts: ReturnType<typeof buildPayslipAmounts>,
+): { earnings: Record<string, number>; deductions: Record<string, number>; computed: { results?: Record<string, { final: number }> } | null } {
+  const fullEarnings: Record<string, number> = {
+    basicSalary: amounts.earnings.basicSalary,
+    hra: amounts.earnings.hra,
+    conveyanceAllowance: amounts.earnings.conveyanceAllowance,
+    medicalAllowance: amounts.earnings.medicalAllowance,
+    performanceBonus: amounts.earnings.performanceBonus,
+    otherAllowances: amounts.earnings.otherAllowances,
+  };
+  const fullDeductions: Record<string, number> = {
+    providentFund: amounts.deductions.providentFund,
+    professionalTax: amounts.deductions.professionalTax,
+    incomeTax: amounts.deductions.incomeTax,
+    healthInsurance: amounts.deductions.healthInsurance,
+  };
+  const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
+  if (!visible.length) {
+    return {
+      earnings: fullEarnings,
+      deductions: fullDeductions,
+      computed: null,
+    };
+  }
+
+  const monthlyCtc = toNumber(structure.employee?.annualSalary) / 12;
+  const engineBase: Record<string, number> = {
+    basic: toNumber(structure.basicSalary),
+    hra: toNumber(structure.hra),
+    conveyance: toNumber(structure.conveyanceAllowance),
+    medical: toNumber(structure.medicalAllowance),
+    performance_bonus: toNumber(structure.performanceBonus),
+    other_allowances: toNumber(structure.otherAllowances),
+    ctc: monthlyCtc,
+    annual: toNumber(structure.employee?.annualSalary),
+  };
+  const computed = computePayroll({ ...blueprint!, components: visible }, engineBase, {});
+
+  const componentForStoredKey = (key: string) => {
+    const cands = new Set([key, ...(STORED_SYNONYMS[key] ?? [])].map(normalizeCompId));
+    return visible.find((c) => cands.has(normalizeCompId(c.id)));
+  };
+  const applyBlueprint = (obj: Record<string, number>, key: string) => {
+    const comp = componentForStoredKey(key);
+    if (!comp) return;
+    const v = computed.results?.[comp.id.toLowerCase()]?.final;
+    if (v !== undefined) obj[key] = v;
+  };
+
+  for (const key of Object.keys(fullEarnings)) applyBlueprint(fullEarnings, key);
+  for (const key of Object.keys(fullDeductions)) applyBlueprint(fullDeductions, key);
+  return { earnings: fullEarnings, deductions: fullDeductions, computed };
+}
+
+/** Employer statutory costs from the blueprint's employer-kind components
+ *  when the template defines them (13% of ctc via `epf_employer`, etc.),
+ *  otherwise the fallback statutory calculation on prorated basic wages. */
+function employerBlueprintAmounts(
+  blueprint: Blueprint | null,
+  computed: { results?: Record<string, { final: number }> } | null,
+  fallback: { providentFund: number; esi: number; gratuity: number },
+): { providentFund: number; esi: number; gratuity: number } {
+  const employers = (blueprint?.components ?? []).filter((c) => c.kind === "employer");
+  if (!employers.length || !computed) return fallback;
+  const out = { ...fallback };
+  for (const c of employers) {
+    const v = computed.results?.[c.id.toLowerCase()]?.final;
+    if (v === undefined) continue;
+    if (c.id.toLowerCase() === "epf_employer") out.providentFund = v;
+    else if (c.id.toLowerCase() === "esi_employer") out.esi = v;
+    else if (c.id.toLowerCase() === "gratuity") out.gratuity = v;
+  }
+  return out;
+}
+
+/**
  * Compute one employee's payslip from their salary structure + reconciliation.
  * When `precomputed` is supplied the (expensive) reconcile step is skipped,
  * enabling N employees to share a single batched reconcileEmployees call.
+ * When `blueprint` is supplied (skill-type nesting template), component amounts
+ * are computed per the template; otherwise the salary-package breakdown is used.
  */
 async function computeEmployeePayslip(
   employee: { id: string },
@@ -688,39 +776,51 @@ async function computeEmployeePayslip(
   month: number,
   precomputed?: EmployeeReconciliation,
   cfg?: CompanyConfigSnapshot,
+  blueprint: Blueprint | null = null,
 ) {
   const c = cfg ?? (await getCompanyConfig());
   const amounts = buildPayslipAmounts(structure as unknown as SalaryStructure);
   const { summary, shiftHours } = precomputed ?? await reconcileEmployee(employee.id, year, month);
 
-  // Prorate against calendar working days: LOP / unpaid days reduce pay.
+  // Prorate against calendar working days using the uploaded attendance:
+  // present days + approved paid leave are the paid days; everything else on a
+  // working day is unpaid (LOP). ratio = paidDays / workingDays.
   const workingDays = Math.max(summary.workingDays, 1);
-  const payableDays = Math.max(workingDays - summary.unpaidLeaveDays, 0);
+  const payableDays = Math.max(summary.presentDays + summary.paidLeaveDays, 0);
   const ratio = payableDays / workingDays;
 
+  const { earnings: fullEarnings, deductions: fullDeductions, computed } = blueprintComponentAmounts(blueprint, structure, amounts);
+
+  const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
+  const isOvertimeId = (id: string) => ["overtime", "ot"].map(normalizeCompId).includes(normalizeCompId(id));
+  const overtimeComp = visible.find((c) => isOvertimeId(c.id));
+  const overtimeBlueprintAmount = overtimeComp ? computed?.results?.[overtimeComp.id.toLowerCase()]?.final ?? 0 : 0;
+
   const earnings: Record<string, number> = {
-    basicSalary: round2(amounts.earnings.basicSalary * ratio),
-    hra: round2(amounts.earnings.hra * ratio),
-    conveyanceAllowance: round2(amounts.earnings.conveyanceAllowance * ratio),
-    medicalAllowance: round2(amounts.earnings.medicalAllowance * ratio),
-    performanceBonus: round2(amounts.earnings.performanceBonus * ratio),
-    otherAllowances: round2(amounts.earnings.otherAllowances * ratio),
+    basicSalary: round2(fullEarnings.basicSalary * ratio),
+    hra: round2(fullEarnings.hra * ratio),
+    conveyanceAllowance: round2(fullEarnings.conveyanceAllowance * ratio),
+    medicalAllowance: round2(fullEarnings.medicalAllowance * ratio),
+    performanceBonus: round2(fullEarnings.performanceBonus * ratio),
+    otherAllowances: round2(fullEarnings.otherAllowances * ratio),
     total: 0,
   };
   // Overtime at the configured multiplier of the basic hourly rate (not
   // LOP-prorated — it is genuinely extra time worked beyond the scheduled
-  // shift end).
+  // shift end). A blueprint-defined overtime component wins over the default.
   const shiftDayHours = Math.max(shiftHours || 9, 1);
   const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
-  earnings.overtime = round2(summary.overtimeHours * hourlyBasic * c.overtimeMultiplier);
+  earnings.overtime = round2(
+    overtimeComp ? overtimeBlueprintAmount * ratio : summary.overtimeHours * hourlyBasic * c.overtimeMultiplier
+  );
   earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
 
   // PF scales with prorated earnings; statutory flat items stay monthly-fixed.
   const withholding: Record<string, number> = {
-    providentFund: round2(amounts.deductions.providentFund * ratio),
-    professionalTax: amounts.deductions.professionalTax,
-    incomeTax: amounts.deductions.incomeTax,
-    healthInsurance: amounts.deductions.healthInsurance,
+    providentFund: round2(fullDeductions.providentFund * ratio),
+    professionalTax: fullDeductions.professionalTax,
+    incomeTax: fullDeductions.incomeTax,
+    healthInsurance: fullDeductions.healthInsurance,
     total: 0,
   };
   withholding.total = Math.round(
@@ -745,13 +845,23 @@ async function computeEmployeePayslip(
 
   // Employer-side statutory costs (PF, ESI, gratuity) — tracked on the slip
   // for reporting (Form 12A, PF/ESI returns) but not subtracted from net pay.
+  // A blueprint that defines employer-kind components (e.g. `epf_employer`
+  // = 13% of ctc) drives these amounts; otherwise the statutory fallback uses
+  // the configured rates over prorated wages. Employer costs scale with the
+  // paid days (ratio) just like earnings.
   const monthlySalary = toNumber(structure.employee?.annualSalary) / 12;
   const proratedBasic = Number(earnings.basicSalary ?? 0);
   const esiEligible = monthlySalary > 0 && monthlySalary <= c.esiGrossCeiling;
-  const employerContributions: Record<string, number> = {
+  const fallbackEmployer = {
     providentFund: round2(proratedBasic * c.epfEmployerRate),
     esi: esiEligible ? round2(earnings.total * c.esiEmployerRate) : 0,
     gratuity: round2(proratedBasic * c.gratuityRate),
+  };
+  const blueprintEmployer = employerBlueprintAmounts(blueprint, computed, fallbackEmployer);
+  const employerContributions: Record<string, number> = {
+    providentFund: round2(blueprintEmployer.providentFund * ratio),
+    esi: blueprintEmployer.esi > 0 ? round2(blueprintEmployer.esi * ratio) : 0,
+    gratuity: round2(blueprintEmployer.gratuity * ratio),
   };
 
   return {
@@ -783,7 +893,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
   const [employees, structures] = await Promise.all([
     prisma.employee.findMany({
       where: { status: "Active" },
-      select: { id: true, employeeCode: true, annualSalary: true },
+      select: { id: true, employeeCode: true, annualSalary: true, skillType: true },
     }),
     prisma.salaryStructure.findMany({
       where: { isActive: true },
@@ -802,6 +912,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
   // use pure-memory payslip computation that reuses the precomputed summaries.
   const eligible = employees.filter((emp) => structureByEmployee.has(emp.id) || toNumber(emp.annualSalary) > 0);
   const cfg = await getCompanyConfig();
+  const templates = await loadBlueprintsBySkillType();
   const reconciliations = await reconcileEmployees(eligible.map((e) => e.id), parsed.year, parsed.month);
   const reconciliationById = new Map(reconciliations.map((r) => [r.employeeId, r]));
 
@@ -823,7 +934,15 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     const source = structure
       ? { salaryStructureId: structure.id, structure: structure as unknown as PaySourceStructure }
       : resolvePaySource(emp, cfg)!;
-    const comp = await computeEmployeePayslip(emp, source.structure, parsed.year, parsed.month, reconciliationById.get(emp.id), cfg);
+    const comp = await computeEmployeePayslip(
+      emp,
+      source.structure,
+      parsed.year,
+      parsed.month,
+      reconciliationById.get(emp.id),
+      cfg,
+      blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType),
+    );
 
     gross += comp.earnings.total;
     deductions += comp.deductions.total;
@@ -972,7 +1091,7 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
   // package) — show a clean zero summary rather than synthesizing amounts.
   if (!source) return { data: zeroSummaryPayload(emp, run, month, year) };
 
-  const comp = await computeEmployeePayslip(emp, source.structure, year, month, undefined, cfg);
+  const comp = await computeEmployeePayslip(emp, source.structure, year, month, undefined, cfg, blueprint);
   return { data: buildSummaryPayload(emp, run!, comp, month, year, blueprint) };
 }
 
@@ -994,6 +1113,9 @@ function zeroSummaryPayload(
     annualSalary: 0,
     leaveDays: 0,
     workingDays: 0,
+    presentDays: 0,
+    paidLeaveDays: 0,
+    attendanceRatio: 0,
     leaveDeduction: 0,
     noSalaryStructure: true,
     deductions: {
@@ -1034,6 +1156,9 @@ function buildSummaryPayload(
     annualSalary: Math.round(annualSalary),
     leaveDays: comp.summary.unpaidLeaveDays,
     workingDays: comp.summary.workingDays,
+    presentDays: comp.summary.presentDays,
+    paidLeaveDays: comp.summary.paidLeaveDays,
+    attendanceRatio: Math.round(comp.ratio * 100) / 100,
     leaveDeduction,
     deductions: {
       providentFund: comp.deductions.providentFund,
@@ -1074,24 +1199,27 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
     prisma.payrollRun.findUnique({ where: { month_year: { month, year } } }),
   ]);
 
-  const isProcessed = !!run && run.status !== "Draft";
   const cfg = await getCompanyConfig();
   const withPaySource = employees.filter((e) => !!resolvePaySource(e, cfg));
-  const reconciliations = isProcessed && withPaySource.length > 0
+  const reconciliations = withPaySource.length > 0
     ? await reconcileEmployees(withPaySource.map((e) => e.id), year, month)
     : [];
   const recById = new Map(reconciliations.map((r) => [r.employeeId, r]));
 
-  const [templates, comps] = await Promise.all([
-    loadBlueprintsBySkillType(),
-    Promise.all(
-      withPaySource.map((emp) =>
-        isProcessed
-          ? computeEmployeePayslip(emp, resolvePaySource(emp, cfg)!.structure, year, month, recById.get(emp.id), cfg)
-          : Promise.resolve(null),
+  const templates = await loadBlueprintsBySkillType();
+  const comps = await Promise.all(
+    withPaySource.map((emp) =>
+      computeEmployeePayslip(
+        emp,
+        resolvePaySource(emp, cfg)!.structure,
+        year,
+        month,
+        recById.get(emp.id),
+        cfg,
+        blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType),
       ),
     ),
-  ]);
+  );
 
   const compById = new Map<string, Awaited<ReturnType<typeof computeEmployeePayslip>>>();
   withPaySource.forEach((emp, i) => {

@@ -658,7 +658,7 @@ export default function Payroll() {
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                          {["Employee","Working Days","Leave Days","Gross","Deductions","Net Pay","Status"].map((h) => (
+                          {["Employee","Working Days","Present Days","Leave Days","Gross","Deductions","Net Pay","Status"].map((h) => (
                             <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
                           ))}
                         </tr>
@@ -668,6 +668,7 @@ export default function Payroll() {
                           <tr key={row.employeeId} style={{ borderBottom: idx < annualEmpVisible.length - 1 ? "1px solid var(--border)" : "none" }}>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>{row.employeeName} <span style={{ color: "var(--subtext)", fontWeight: 500 }}>({row.employeeId})</span></td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.workingDays ?? "—"}</td>
+                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.presentDays ?? "—"}</td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.leaveDays > 0 ? "var(--amber)" : "var(--subtext)" }}>{row.leaveDays ?? 0}</td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontFamily: "monospace" }}>{fmt(row.gross)}</td>
                             <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--red)", fontFamily: "monospace" }}>−{fmt(row.deductions?.total)}</td>
@@ -1058,15 +1059,16 @@ function EmployeeSummary({ employeeId, month, year }) {
       <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "18px" }}>
         <Stat label="Gross" value={fmt(summary.gross)} />
         <Stat label="Annual Package" value={summary.annualSalary ? fmt(summary.annualSalary) : "—"} color="var(--primary)" />
+        <Stat label="Present Days" value={`${summary.presentDays ?? 0} / ${summary.workingDays ?? "—"}`} color="var(--green)" />
         <Stat label="Leave Deduction" value={summary.leaveDeduction > 0 ? `−${fmt(summary.leaveDeduction)}` : "—"} color={summary.leaveDeduction > 0 ? "var(--amber)" : "var(--subtext)"} />
         <Stat label="Total Deductions" value={`−${fmt(summary.deductions.total)}`} color="var(--red)" />
         <Stat label="Net Payroll" value={fmt(summary.netPay)} color="var(--green)" />
       </div>
 
       <p style={{ fontSize: "12px", color: "var(--subtext)", marginBottom: "16px" }}>
-        {summary.leaveDays > 0
-          ? `${summary.leaveDays} unpaid leave day${summary.leaveDays === 1 ? "" : "s"} (out of ${summary.workingDays} working days) deducted ₹${new Intl.NumberFormat("en-IN").format(summary.leaveDeduction)}.`
-          : `No unpaid leave in this period — ${summary.workingDays} working days, full month salary applies.`}
+        {summary.presentDays > 0 || summary.paidLeaveDays > 0
+          ? `${summary.presentDays ?? 0} present + ${summary.paidLeaveDays ?? 0} paid leave of ${summary.workingDays ?? 0} working days were paid this period${summary.leaveDays > 0 ? ` — ${summary.leaveDays} unpaid (LOP) day${summary.leaveDays === 1 ? "" : "s"} deducted ₹${new Intl.NumberFormat("en-IN").format(summary.leaveDeduction)}` : "."}`
+          : `No attendance recorded this period — ${summary.workingDays ?? 0} working days, full month salary applies.`}
       </p>
 
       {/* Earnings / Deductions grouped by the payslip blueprint's nesting */}

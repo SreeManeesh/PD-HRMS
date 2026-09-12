@@ -19,8 +19,20 @@ const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 // Uploaded rows are cached locally so the preview survives navigating to other
-// tabs (and coming back) until the user clears them.
+// tabs (and coming back) until the user clears them. The selected year / month
+// / day is persisted too, so returning to the page lands back on the uploaded
+// data instead of resetting to "today".
 const UPLOAD_STORAGE_KEY = "hrms_uploaded_attendance";
+const PERIOD_STORAGE_KEY = "hrms_attendance_period";
+
+const readStorage = (key) => {
+  try {
+    const s = localStorage.getItem(key);
+    return s ? JSON.parse(s) : null;
+  } catch {
+    return null;
+  }
+};
 
 const formatFullDate = (iso) => {
   if (!iso) return "—";
@@ -46,14 +58,18 @@ function StatCard({ icon: Icon, label, value, color, bg }) {
 export default function Attendance() {
   const { user } = useAuth();
   const now = new Date();
-  const [month, setMonth]     = useState(0);
-  const [day, setDay]         = useState(0);
-  const [year, setYear]       = useState(now.getFullYear());
+  const storedPeriod = readStorage(PERIOD_STORAGE_KEY) || {};
+  const [month, setMonth]     = useState(Number.isInteger(storedPeriod.month) ? storedPeriod.month : 0);
+  const [day, setDay]         = useState(Number.isInteger(storedPeriod.day) ? storedPeriod.day : 0);
+  const [year, setYear]       = useState(Number.isInteger(storedPeriod.year) ? storedPeriod.year : now.getFullYear());
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [checkedIn, setCheckedIn] = useState(false);
-  const [uploadedRecords, setUploadedRecords] = useState([]);
+  const [uploadedRecords, setUploadedRecords] = useState(() => {
+    const stored = readStorage(UPLOAD_STORAGE_KEY);
+    return Array.isArray(stored) ? stored : [];
+  });
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState(null);
   const [page, setPage] = useState(1);
@@ -84,18 +100,16 @@ export default function Attendance() {
     loadDashboard();
   }, [loadDashboard]);
 
-  // Rehydrate the uploaded-records overlay after tab navigation / reload.
+  // Persist the selected period so the records the user was viewing are
+  // restored when they come back to this tab (uploads from other months stay
+  // visible until cleared).
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(UPLOAD_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) setUploadedRecords(parsed);
-      }
+      localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ month, day, year }));
     } catch {
-      // Storage unavailable — the backend still reloads records on visit.
+      // Ignore storage write failures.
     }
-  }, []);
+  }, [month, day, year]);
 
   // Keep the overlay cached so it is not lost when switching tabs.
   useEffect(() => {
@@ -148,10 +162,13 @@ export default function Attendance() {
       const imported = result?.imported ?? rows.length;
       const skipped = result?.skipped ?? 0;
       const errors = Array.isArray(result?.errors) ? result.errors : [];
+      const unknownEmployees = Array.isArray(result?.unknownEmployees) ? result.unknownEmployees : [];
       await loadDashboard();
       setUploadMsg({
         ok: true,
-        text: `Imported ${imported} record${imported === 1 ? "" : "s"}${skipped ? `, ${skipped} skipped` : ""}${errors.length ? ` — ${errors[0]}` : ""}`,
+        text: `Imported ${imported} record${imported === 1 ? "" : "s"}${skipped ? `, ${skipped} row${skipped === 1 ? "" : "s"} skipped` : ""}${errors.length ? ` — see details below` : ""}`,
+        errors: skipped > 0 ? errors : [],
+        unknownEmployees,
       });
     } catch (err) {
       setUploadMsg({ ok: false, text: err.message || "Upload failed" });
@@ -271,6 +288,36 @@ export default function Attendance() {
             }}
           >
             {uploadMsg.text}
+            {Array.isArray(uploadMsg.unknownEmployees) && uploadMsg.unknownEmployees.length > 0 && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(0,0,0,0.12)" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                  These employees don't exist in the system yet ({uploadMsg.unknownEmployees.length} unique — add them under Employees, then re-upload):
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, fontWeight: 500, lineHeight: 1.7, maxHeight: 160, overflowY: "auto" }}>
+                  {uploadMsg.unknownEmployees.slice(0, 20).map((u, i) => (
+                    <li key={i}>{u.id} — {u.name} ({u.rows} row{u.rows === 1 ? "" : "s"})</li>
+                  ))}
+                  {uploadMsg.unknownEmployees.length > 20 && (
+                    <li>… and {uploadMsg.unknownEmployees.length - 20} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(uploadMsg.errors) && uploadMsg.errors.length > 0 && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(0,0,0,0.12)" }}>
+                <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                  Skipped rows — fix and re-upload:
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, fontWeight: 500, lineHeight: 1.7, maxHeight: 160, overflowY: "auto" }}>
+                  {uploadMsg.errors.slice(0, 12).map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                  {uploadMsg.errors.length > 12 && (
+                    <li>… and {uploadMsg.errors.length - 12} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

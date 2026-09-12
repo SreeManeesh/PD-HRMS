@@ -387,6 +387,23 @@ function parseTimeParts(value: string): { hours: number; minutes: number } | nul
   return { hours, minutes };
 }
 
+/**
+ * True when a cell is an explicit "no value" placeholder. Real-world exports
+ * print "-", "–", "N/A" etc. into empty login/logout cells (almost always on
+ * leave/absent days). Such cells mean "no time" — NOT an invalid-time error.
+ */
+function isTimePlaceholder(value: string): boolean {
+  return /^(?:-{1,3}|–|—|n\/?a|null|nil|none|×|\s*)$/i.test((value ?? "").trim());
+}
+
+/** Normalise an employee ID so padded codes (`EMP0001`) always hit `EMP001`. */
+function normalizeEmpCode(raw: string): string {
+  const id = (raw ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  const m = /^EMP0*(\d+)$/.exec(id);
+  if (m) return `EMP${String(parseInt(m[1], 10)).padStart(3, "0")}`;
+  return id;
+}
+
 /** Strict calendar check: rejects 2023-02-30, 2021-04-31, 0/13 months, etc. */
 function isValidCalendarDate(y: number, m: number, d: number): boolean {
   if (m < 1 || m > 12 || d < 1 || d > 31) return false;
@@ -398,10 +415,28 @@ function rowCell(cells: string[], index: number): string {
   return index >= 0 && index < cells.length ? cells[index].trim() : "";
 }
 
+/**
+ * Read an explicit day Status value ("Present" / "Absent" / "On Leave" /
+ * "Late" / "WFH", with optional leading tokens like "Approved Leave") and map
+ * it to the punch status the rest of the system understands. Returns null when
+ * the cell is empty, a generic value, or a non-attendance label (e.g. a week
+ * off or holiday, which the reconciliation layer already decides on its own).
+ */
+function classifyAttendanceStatus(value: string): string | null {
+  const v = (value ?? "").trim();
+  if (!v) return null;
+  if (/(^|\s)(on\s*[- ]?leave|leave|lwp|leave\s*without\s*pay)(\s|$|\\r|\\)/i.test(v)) return "Leave";
+  if (/(^|\s)(wfh|work\s*from\s*home|remote|home\s*office)(\s|$|\\r|\\)/i.test(v)) return "WFH";
+  if (/(^|\s)(present|in\s*office|office)(\s|$|\\r|\\)/i.test(v)) return "Present";
+  if (/(^|\s)(late|delayed|delayed\s*in)(\s|$|\\r|\\)/i.test(v)) return "Late";
+  if (/(^|\s)(absent|absence|no\s*show|na|missing)(\s|$|\\r|\\)/i.test(v)) return "Absent";
+  return null;
+}
+
 /** Resolve an employee by id (EMP001 / 001 / code) and, if needed, by name. */
 async function resolveUploadEmployee(idValue: string, nameValue: string) {
   const select = { id: true as const, employeeCode: true as const, firstName: true as const, lastName: true as const };
-  const id = idValue.trim().toUpperCase().replace(/\s+/g, "");
+  const id = normalizeEmpCode(idValue);
 
   if (/^EMP\d+$/.test(id)) {
     return prisma.employee.findUnique({ where: { employeeCode: id }, select });
@@ -434,6 +469,7 @@ export interface AttendanceUploadResult {
   totalImported: number;
   skipped: number;
   errors: string[];
+  unknownEmployees: Array<{ id: string; name: string; rows: number }>;
   data: ReturnType<typeof serializeAttendanceList>;
 }
 
@@ -448,7 +484,7 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
   // "No of Days" isn't swallowed by the "date" regex, etc.
   const knownKeys = [
     "name", "id", "login", "logout",
-    "leaveType", "days", "approvalStatus", "approvedBy",
+    "status", "leaveType", "days", "approvalStatus", "approvedBy",
     "date", "leave",
   ] as const;
   const headerRegex: Record<(typeof knownKeys)[number], RegExp> = {
@@ -457,11 +493,15 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     date: /^date$|^date\s|date\b/i,
     login: /login|check\s?in|\bin($|\s)/i,
     logout: /logout|check\s?out|\bout($|\s)|punch\s?out/i,
+    // an explicit day/attendance Status column ("Present / Absent"/"On Leave")
+    // — kept ahead of approvalStatus so a plain "Status" header is read as the
+    // classifer, while "Approval Status" still binds to approvalStatus.
+    status: /^(attendance|day|punch|overall)?\s*(status|result)$/i,
     // attendance "Leave" flag (Yes/No) vs leave-type/status columns
     leave: /^leave$|^on\s*leave$|^leave\s*flag$|^is\s*leave$/i,
     leaveType: /leave\s*type|type\s*of\s*leave|leave\s*category|^type$/i,
     days: /no\.?\s*of\s*days|^days$|^no\s*days$|^days\s*count$/i,
-    approvalStatus: /approv\w*\s*status|^approval$|^approval\s*status$|^status$|pending|^decision$/i,
+    approvalStatus: /approv\w*\s*status|^approval$|^approval\s*status$|pending|^decision$/i,
     approvedBy: /approv\w*\s*by|^by\s*|^approver$|^approved\s*by$/i,
   };
 
@@ -544,8 +584,10 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     byName.set(`${e.firstName.toLowerCase()} ${e.lastName.toLowerCase()}`.trim(), e);
   }
   const resolve = (idValue: string, nameValue: string): (typeof employeeRows)[number] | null => {
-    const id = (idValue || "").trim().toLowerCase();
+    const id = normalizeEmpCode(idValue).toLowerCase();
     if (id && byCode.has(id)) return byCode.get(id)!;
+    const raw = (idValue || "").trim().toLowerCase();
+    if (raw && byCode.has(raw)) return byCode.get(raw)!;
     const n = (nameValue || "").trim().toLowerCase();
     if (n && byName.has(n)) return byName.get(n)!;
     return null;
@@ -564,6 +606,7 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
   const MAX_INVALID_ROWS = 5000;
   let skipped = 0;
   const errors: string[] = [];
+  const unknownEmployees = new Map<string, { id: string; name: string; rows: number }>();
   const recordError = (message: string) => {
     skipped += 1;
     if (errors.length < MAX_ERROR_REPORT) errors.push(message);
@@ -581,6 +624,7 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     const dateValue = rowCell(cells, colIndex("date"));
     const loginValue = rowCell(cells, colIndex("login"));
     const logoutValue = rowCell(cells, colIndex("logout"));
+    const statusValue = rowCell(cells, colIndex("status"));
     const leaveValue = rowCell(cells, colIndex("leave"));
     const leaveTypeValue = rowCell(cells, colIndex("leaveType"));
     const approvalValue = rowCell(cells, colIndex("approvalStatus"));
@@ -598,31 +642,52 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     const employee = resolve(idValue, name);
     if (!employee) {
       recordError(`Row ${rowNo + 1}: no employee found for id "${idValue}" / name "${name}"`);
+      const key = `${normalizeEmpCode(idValue)}|${name.trim().toLowerCase()}`;
+      const tally = unknownEmployees.get(key) ?? { id: idValue, name: name.trim() || idValue, rows: 0 };
+      tally.rows += 1;
+      unknownEmployees.set(key, tally);
       continue;
     }
 
     // Strict time validation — a non-empty login/logout that can't be parsed is
     // a data error, not an excuse to silently classify the day as "Absent".
-    const login = loginValue ? parseTimeParts(loginValue) : null;
-    if (loginValue !== "" && loginValue?.trim() !== "" && login === null) {
+    // Explicit placeholders ("-", "–", "N/A", …) signify a day with no times —
+    // overwhelmingly leave/absent days in real exports — and are treated as the
+    // absence of a time instead of an error.
+    const hasLogin = !!loginValue && !isTimePlaceholder(loginValue);
+    const hasLogout = !!logoutValue && !isTimePlaceholder(logoutValue);
+    const login = hasLogin ? parseTimeParts(loginValue) : null;
+    if (hasLogin && login === null) {
       recordError(`Row ${rowNo + 1}: invalid login time "${loginValue}" (expected HH:MM)`);
       continue;
     }
-    const logout = logoutValue ? parseTimeParts(logoutValue) : null;
-    if (logoutValue !== "" && logoutValue?.trim() !== "" && logout === null) {
+    const logout = hasLogout ? parseTimeParts(logoutValue) : null;
+    if (hasLogout && logout === null) {
       recordError(`Row ${rowNo + 1}: invalid logout time "${logoutValue}" (expected HH:MM)`);
       continue;
     }
 
     // Present is the default. A row is ONLY on leave when the leave column
-    // itself says yes (with approval deciding), so filler in a leave-type
-    // column ("-") can never turn a present day into a leave request.
+    // itself says yes — filler in a leave-type column ("-") can never turn a
+    // present day into a leave request. An explicit day/Status column
+    // ("Present" / "Absent" / "On Leave" / "WFH" / "Late") takes precedence
+    // over the inference so real-world exports mark days exactly as requested.
+    // An explicitly marked leave reads as Leave (auto-approvable on import) so
+    // it shows up in the Leave module; only an explicit rejection downgrades
+    // it (Absent when no check-in/out — they were expected to work; Present
+    // when times exist).
     const leaveIndicated =
       /^(y|yes|1|true|on\s*leave|leave|lwp)$/i.test(leaveValue) ||
       /^(from|start)/i.test(leaveValue);
-    const approvedLeave = leaveIndicated && /approv/i.test(approvalValue) && !/pending|reject/i.test(approvalValue);
+    const leaveRejected = leaveIndicated && /reject|denied/i.test(approvalValue);
 
-    const status = login || logout ? "Present" : approvedLeave ? "Leave" : "Absent";
+    const declaredStatus = classifyAttendanceStatus(statusValue);
+    const status = declaredStatus ??
+      (leaveIndicated && !leaveRejected
+        ? "Leave"
+        : login || logout
+          ? "Present"
+          : "Absent");
 
     const isoDate = `${dateParts.y}-${String(dateParts.m).padStart(2, "0")}-${String(dateParts.d).padStart(2, "0")}`;
     // Dedupe by (employee, date) — a later row for the same pair wins.
@@ -737,6 +802,7 @@ export async function importAttendanceFromCsv(file: { originalname: string; buff
     totalImported: toInsert.length + toUpdate.length,
     skipped,
     errors,
+    unknownEmployees: [...unknownEmployees.values()].sort((a, b) => b.rows - a.rows),
     data: imported,
   };
 }

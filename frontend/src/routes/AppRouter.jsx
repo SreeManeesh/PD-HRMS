@@ -44,6 +44,7 @@ const Reports             = lazy(() => import("../pages/Reports/Reports"));
 const Notifications       = lazy(() => import("../pages/Notifications/Notifications"));
 const Compliance          = lazy(() => import("../pages/Compliance/Compliance"));
 const SecurityAdmin       = lazy(() => import("../pages/SecurityAdmin/SecurityAdmin"));
+const PayrollSettings     = lazy(() => import("../pages/Settings/PayrollSettings"));
 const CandidatePortal     = lazy(() => import("../pages/CandidatePortal/CandidatePortal"));
 
 
@@ -110,6 +111,7 @@ export default function AppRouter() {
           <Route path="/notifications" element={<RequireAuth permission="notifications:read"><Notifications /></RequireAuth>} />
           <Route path="/compliance" element={<RequireAuth><Compliance /></RequireAuth>} />
           <Route path="/security" element={<RequireAuth><SecurityAdmin /></RequireAuth>} />
+          <Route path="/settings/payroll" element={<RequireAuth><PayrollSettings /></RequireAuth>} />
 
           {/* Fallback — redirect unknown routes to dashboard */}
           <Route path="*" element={<Navigate to="/" replace />} />
