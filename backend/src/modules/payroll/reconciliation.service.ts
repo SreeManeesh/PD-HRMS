@@ -84,6 +84,8 @@ export function reconcile(
   let overtimeMinutes = 0;
   const daily: Array<{ date: string; weekday: number; status: string }> = [];
 
+  const hasRecordedPunches = punches.length > 0;
+
   for (const day of holidays) {
     const punch = punchByDate.get(day.dateKey);
     const onLeave = leaveDaySet.has(day.dateKey);
@@ -110,6 +112,9 @@ export function reconcile(
         unpaidLeaveDays += 1;
       }
       if (punch.status === "Late") lateDays += 1;
+    } else if (!hasRecordedPunches) {
+      // Period has no attendance punch records logged yet — full monthly salary applies without LOP penalty
+      status = hired ? "Scheduled" : "Not Hired";
     } else {
       // Working day, no punch, not on leave -> LOP (skip if not yet hired)
       status = hired ? "LOP" : "Not Hired";
@@ -119,9 +124,12 @@ export function reconcile(
     daily.push({ date: day.dateKey, weekday: day.weekday, status });
   }
 
+  const workingDaysCount = holidays.filter((d) => d.isWorkingDay).length;
+  const hiredWorkingDaysCount = holidays.filter((d) => d.isWorkingDay && (joiningDate ? new Date(d.date) >= joiningDate : true)).length;
+
   const summary: AttendanceSummary = {
-    workingDays: holidays.filter((d) => d.isWorkingDay).length,
-    presentDays,
+    workingDays: workingDaysCount,
+    presentDays: hasRecordedPunches ? presentDays : hiredWorkingDaysCount,
     lateDays,
     paidLeaveDays,
     unpaidLeaveDays,

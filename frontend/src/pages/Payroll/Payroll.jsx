@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Payroll Page — Module 7
  * Slide-button sections: Annual Payroll, Monthly Payroll, Employee Payroll, My Payslips.
  *
@@ -244,13 +244,15 @@ export default function Payroll() {
         setEmployees(empList);
         const first = runRes.data?.[0];
         if (first) { setMonth(first.month); setYear(first.year); }
-        // Employees always see their OWN payroll; staff default to their manager.
+        // Employees always see their OWN payroll; staff default to their employee or manager.
+        const me = empList.find((e) => e.id === user.id || e.email === user.email);
         if (!isStaff) {
-          setActiveEmpId((cur) => cur || user.id);
+          const myEmpId = me ? me.id : user.id;
+          setActiveEmpId((cur) => cur || myEmpId);
         } else {
-          const me = empList.find((e) => e.id === user.id);
-          const managerId = (me && me.managerId) || user.id;
-          setActiveEmpId((cur) => cur || managerId);
+          const managerId = me && me.managerId;
+          const defaultStaffEmp = managerId ? empList.find((e) => e.id === managerId)?.id : (me?.id || empList[0]?.id || user.id);
+          setActiveEmpId((cur) => cur || defaultStaffEmp);
         }
       })
       .finally(() => setLoading(false));
@@ -388,7 +390,7 @@ export default function Payroll() {
           employeeId: summary.employeeId,
         }));
         const byCode = Object.fromEntries(rows.map((r) => [r.employeeId, r]));
-        const aligned = employees.map((emp) => byCode[emp.id] || {
+        const aligned = employees.map((emp) => byCode[emp.id] || byCode[emp.employeeCode] || {
           employeeId: emp.id,
           employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
           workingDays: 0,
@@ -428,7 +430,7 @@ export default function Payroll() {
         const map = {};
         const payMap = {};
         employees.forEach((emp, i) => {
-          const pay = payByCode[emp.id];
+          const pay = payByCode[emp.id] || payByCode[emp.employeeCode];
           if (pay) payMap[emp.id] = pay;
           (attByEmp[i] || []).forEach((r) => {
             const date = String(r.date).slice(0, 10);

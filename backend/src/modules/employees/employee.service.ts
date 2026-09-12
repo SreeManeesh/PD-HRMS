@@ -115,6 +115,7 @@ export interface CreateEmployeeOptions {
 }
 
 export interface BulkEmployeeRow {
+  employeeCode?: string;
   firstName?: string;
   lastName?: string;
   email?: string;
@@ -127,6 +128,22 @@ export interface BulkEmployeeRow {
   annualSalary?: number;
   employmentType?: string;
   dateOfJoining?: string;
+}
+
+export interface BulkPreviewRow extends BulkEmployeeRow {
+  rowNo: number;
+  fullName: string;
+  status: "ready" | "duplicate" | "invalid";
+  reason?: string;
+}
+
+export interface BulkPreviewResult {
+  rows: BulkPreviewRow[];
+  totalCount: number;
+  readyCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  isAllDuplicates: boolean;
 }
 
 function toOptionalDate(value?: string): Date | null {
@@ -297,45 +314,235 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
   // in payroll (summary + runs) with a computed salary breakdown.
   await ensureActiveSalaryStructure(emp.id, input.annualSalary);
 
-  return { data: serializeEmployeeList([emp])[0] };
+  return { data: serializeEmployeeList([emp])[0], employeePk: emp.id };
+}
+
+interface ImportBatchRecord {
+  employeeIds: string[];
+  userIds: string[];
+  createdAt: number;
+}
+
+const recentImportBatches = new Map<string, ImportBatchRecord>();
+
+function cleanExpiredBatches() {
+  const now = Date.now();
+  for (const [id, batch] of recentImportBatches.entries()) {
+    if (now - batch.createdAt > 10 * 60 * 1000) {
+      recentImportBatches.delete(id);
+    }
+  }
 }
 
 /**
- * Create many employees from parsed spreadsheet rows. Rows that miss their
- * mandatory fields (first name, last name, designation, department) or fail
- * validation are skipped and reported instead of aborting the import.
+ * Preview employee spreadsheet rows, validate fields, and identify duplicates
+ * against existing database records and within the uploaded file itself.
  */
-export async function createEmployeesBulk(rows: BulkEmployeeRow[]) {
-  const created: Array<{ id: string; name: string }> = [];
-  const skipped: Array<{ row: number; reason: string }> = [];
-  const seenEmails = new Set<string>();
+export async function previewEmployeesBulk(rows: BulkEmployeeRow[]): Promise<BulkPreviewResult> {
+  const [existingUsers, existingEmployees] = await Promise.all([
+    prisma.user.findMany({ select: { email: true } }),
+    prisma.employee.findMany({
+      select: {
+        employeeCode: true,
+        personalEmail: true,
+        firstName: true,
+        lastName: true,
+        department: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const dbEmails = new Set<string>();
+  for (const u of existingUsers) {
+    if (u.email) dbEmails.add(u.email.toLowerCase().trim());
+  }
+  for (const e of existingEmployees) {
+    if (e.personalEmail) dbEmails.add(e.personalEmail.toLowerCase().trim());
+  }
+
+  const dbCodes = new Set<string>();
+  for (const e of existingEmployees) {
+    if (e.employeeCode) dbCodes.add(e.employeeCode.toUpperCase().trim());
+  }
+
+  const dbNameDept = new Set<string>();
+  for (const e of existingEmployees) {
+    const key = `${e.firstName.toLowerCase().trim()}|${e.lastName.toLowerCase().trim()}|${(e.department?.name || "").toLowerCase().trim()}`;
+    dbNameDept.add(key);
+  }
+
+  const seenFileEmails = new Set<string>();
+  const seenFileCodes = new Set<string>();
+  const seenFileNameDept = new Set<string>();
+
+  const previewRows: BulkPreviewRow[] = [];
+  let readyCount = 0;
+  let duplicateCount = 0;
+  let invalidCount = 0;
 
   for (const [index, row] of rows.entries()) {
-    const rowNo = index + 2; // 1-based, +1 for the header row
+    const rowNo = index + 2; // Header is row 1
+    const firstName = (row.firstName ?? "").trim();
+    const lastName = (row.lastName ?? "").trim();
+    const designation = (row.designation ?? "").trim();
+    const department = (row.department ?? "").trim();
+    const email = (row.email ?? "").trim().toLowerCase();
+    const employeeCode = (row.employeeCode ?? "").trim().toUpperCase();
+    const fullName = `${firstName} ${lastName}`.trim();
+    const nameDeptKey = `${firstName.toLowerCase()}|${lastName.toLowerCase()}|${department.toLowerCase()}`;
+
+    // 1. Mandatory field checks
+    if (!firstName || !lastName || !designation || !department) {
+      invalidCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName: fullName || "Unnamed",
+        status: "invalid",
+        reason: "Missing mandatory fields (first name, last name, designation, department)",
+      });
+      continue;
+    }
+
+    // 2. Email format check
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      invalidCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "invalid",
+        reason: `Invalid email format "${email}"`,
+      });
+      continue;
+    }
+
+    // 3. Check existing records in database
+    if (email && dbEmails.has(email)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Employee with email "${email}" is already present in the system`,
+      });
+      continue;
+    }
+
+    if (employeeCode && dbCodes.has(employeeCode)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Employee code "${employeeCode}" is already present in the system`,
+      });
+      continue;
+    }
+
+    if (!email && dbNameDept.has(nameDeptKey)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Employee "${fullName}" in department "${department}" is already present in the system`,
+      });
+      continue;
+    }
+
+    // 4. Check duplicates within the file itself
+    if (email && seenFileEmails.has(email)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Duplicate email "${email}" repeated within this file`,
+      });
+      continue;
+    }
+
+    if (employeeCode && seenFileCodes.has(employeeCode)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Duplicate employee code "${employeeCode}" repeated within this file`,
+      });
+      continue;
+    }
+
+    if (!email && seenFileNameDept.has(nameDeptKey)) {
+      duplicateCount++;
+      previewRows.push({
+        ...row,
+        rowNo,
+        fullName,
+        status: "duplicate",
+        reason: `Duplicate employee "${fullName}" (${department}) repeated within this file`,
+      });
+      continue;
+    }
+
+    // 5. Valid unique record ready for import
+    if (email) seenFileEmails.add(email);
+    if (employeeCode) seenFileCodes.add(employeeCode);
+    seenFileNameDept.add(nameDeptKey);
+    readyCount++;
+
+    previewRows.push({
+      ...row,
+      rowNo,
+      fullName,
+      status: "ready",
+      reason: undefined,
+    });
+  }
+
+  const isAllDuplicates = rows.length > 0 && readyCount === 0 && duplicateCount > 0;
+
+  return {
+    rows: previewRows,
+    totalCount: rows.length,
+    readyCount,
+    duplicateCount,
+    invalidCount,
+    isAllDuplicates,
+  };
+}
+
+/**
+ * Create employees from validated spreadsheet rows. Automatically skips duplicates
+ * and invalid rows, tracks the created batch, and supports undo within 15-30 seconds.
+ */
+export async function createEmployeesBulk(rows: BulkEmployeeRow[]) {
+  const preview = await previewEmployeesBulk(rows);
+  const readyRows = preview.rows.filter((r) => r.status === "ready");
+
+  const batchId = randomUUID();
+  const createdEmployeeIds: string[] = [];
+  const createdUserIds: string[] = [];
+  const createdNames: Array<{ id: string; name: string }> = [];
+  const skipped: Array<{ row: number; reason: string }> = [];
+
+  // Add preview-detected skips
+  for (const r of preview.rows) {
+    if (r.status !== "ready") {
+      skipped.push({ row: r.rowNo, reason: r.reason || "Skipped (duplicate or invalid)" });
+    }
+  }
+
+  for (const row of readyRows) {
     try {
-      const firstName = (row.firstName ?? "").trim();
-      const lastName = (row.lastName ?? "").trim();
-      const designation = (row.designation ?? "").trim();
-      const department = (row.department ?? "").trim();
-
-      if (!firstName || !lastName || !designation || !department) {
-        skipped.push({ row: rowNo, reason: "Missing mandatory fields (first name, last name, designation, department)" });
-        continue;
-      }
-
       const email = (row.email ?? "").trim().toLowerCase();
-      if (email) {
-        if (seenEmails.has(email)) {
-          skipped.push({ row: rowNo, reason: `Duplicate email "${email}" within the file` });
-          continue;
-        }
-        // A valid-email check: reject obviously broken emails instead of failing later.
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          skipped.push({ row: rowNo, reason: `Invalid email "${email}"` });
-          continue;
-        }
-        seenEmails.add(email);
-      }
+      const existingUser = email ? await prisma.user.findUnique({ where: { email } }) : null;
 
       const annualSalaryRaw = row.annualSalary;
       const annualSalary =
@@ -347,12 +554,12 @@ export async function createEmployeesBulk(rows: BulkEmployeeRow[]) {
 
       const result = await createEmployee(
         {
-          firstName,
-          lastName,
+          firstName: row.firstName!,
+          lastName: row.lastName!,
           email: email || undefined,
           phone: row.phone ? String(row.phone).trim() : undefined,
-          designation,
-          department,
+          designation: row.designation!,
+          department: row.department!,
           location: row.location ? String(row.location).trim() : undefined,
           state: row.state ? String(row.state).trim() : undefined,
           country: row.country ? String(row.country).trim() : undefined,
@@ -363,19 +570,78 @@ export async function createEmployeesBulk(rows: BulkEmployeeRow[]) {
         { autoCreateRefs: true }
       );
 
-      created.push({ id: result.data.id, name: `${result.data.firstName} ${result.data.lastName}` });
+      createdEmployeeIds.push(result.employeePk || result.data.id);
+      createdNames.push({ id: result.data.id, name: `${result.data.firstName} ${result.data.lastName}` });
+
+      if (email && !existingUser) {
+        const newUser = await prisma.user.findUnique({ where: { email } });
+        if (newUser) createdUserIds.push(newUser.id);
+      }
     } catch (err: unknown) {
       const message = (err as { message?: string })?.message ?? "Failed to create employee";
-      skipped.push({ row: rowNo, reason: message.replace(/^Error:\s*/i, "") });
+      skipped.push({ row: row.rowNo, reason: message.replace(/^Error:\s*/i, "") });
     }
   }
 
+  cleanExpiredBatches();
+  recentImportBatches.set(batchId, {
+    employeeIds: createdEmployeeIds,
+    userIds: createdUserIds,
+    createdAt: Date.now(),
+  });
+
   return {
-    createdCount: created.length,
+    batchId,
+    createdCount: createdEmployeeIds.length,
     skippedCount: skipped.length,
+    skippedDuplicatesCount: preview.duplicateCount,
+    skippedInvalidCount: preview.invalidCount,
     skipped: skipped.slice(0, 200),
-    created: created.slice(0, 50),
+    created: createdNames.slice(0, 50),
+    isAllDuplicates: preview.isAllDuplicates,
   };
+}
+
+/**
+ * Undo a recent bulk employee import batch within the undo window.
+ * Safely removes the employees, their salary structures, and created users.
+ */
+export async function undoEmployeesBulk(batchId: string) {
+  cleanExpiredBatches();
+  const batch = recentImportBatches.get(batchId);
+  if (!batch) {
+    throw AppError.badRequest("Undo window has expired or this import batch was not found.");
+  }
+
+  const { employeeIds, userIds } = batch;
+  let undoneCount = 0;
+
+  for (const empId of employeeIds) {
+    try {
+      await deleteEmployee(empId);
+      undoneCount++;
+    } catch (err) {
+      // Continue cleanup on remaining employees
+    }
+  }
+
+  for (const uid of userIds) {
+    try {
+      await prisma.user.deleteMany({ where: { id: uid, employee: null } });
+    } catch {
+      // User may already be deleted or attached elsewhere
+    }
+  }
+
+  recentImportBatches.delete(batchId);
+
+  writeAuditLog({
+    action: "DELETE",
+    entityType: "Employee",
+    newValue: { bulkUndo: true, batchId, undoneCount },
+  });
+
+  return { success: true, undoneCount, batchId };
 }
 
 /** Persist an employee profile photo (MinIO first, local-disk fallback). */
@@ -448,93 +714,94 @@ async function ensureActiveSalaryStructure(employeeId: string, annualSalary?: nu
 }
 
 export async function updateEmployee(id: string, input: Partial<CreateEmployeeInput>) {
-  const existing = await prisma.employee.findUnique({ where: { id }, include: { user: true } });
+  const existing = await prisma.employee.findUnique({ where: { id }, include: EMPLOYEE_INCLUDE });
   if (!existing) throw AppError.notFound("Employee not found");
 
-  const { designationId, departmentId, locationId } = await resolveOrgRefs(input);
+  const cache: Record<string, string> = {};
+  const { designationId, departmentId, locationId } = await resolveOrgRefs(
+    {
+      designation: input.designation,
+      designationId: input.designationId,
+      department: input.department,
+      departmentId: input.departmentId,
+      location: input.location,
+      locationId: input.locationId,
+    },
+    true,
+    cache
+  );
 
-  let reportingManagerId: string | null | undefined = undefined;
-  if (input.managerId !== undefined) {
-    reportingManagerId = null;
-    const managerRef = String(input.managerId).trim();
-    if (managerRef) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(managerRef);
-      const manager = isUuid
-        ? await prisma.employee.findUnique({ where: { id: managerRef }, select: { id: true } })
-        : await prisma.employee.findUnique({ where: { employeeCode: managerRef }, select: { id: true } });
-      if (!manager) throw AppError.badRequest(`Reporting manager "${managerRef}" not found`);
-      reportingManagerId = manager.id;
+  const email = input.email !== undefined ? (input.email ? input.email.toLowerCase() : null) : undefined;
+  if (email !== undefined && email !== existing.personalEmail && email !== existing.user?.email) {
+    if (email) {
+      const clash = await prisma.user.findFirst({ where: { email, NOT: { id: existing.userId ?? undefined } } });
+      if (clash) throw AppError.conflict("An account with that email already exists");
     }
   }
 
-  const data: Prisma.EmployeeUpdateInput = {
-    firstName: input.firstName ?? undefined,
-    lastName: input.lastName ?? undefined,
-    personalMobile: input.phone ?? undefined,
-    dateOfBirth: toOptionalDate(input.dob) ?? undefined,
-    gender: input.gender ?? undefined,
-    skillType: input.skillType ?? undefined,
-    designation: designationId ? { connect: { id: designationId } } : undefined,
-    department: departmentId ? { connect: { id: departmentId } } : undefined,
-    location: locationId ? { connect: { id: locationId } } : undefined,
-    reportingManager:
-      reportingManagerId === undefined
-        ? undefined
-        : reportingManagerId
-          ? { connect: { id: reportingManagerId } }
-          : { disconnect: true },
-    employmentType: input.employmentType ?? undefined,
-    dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
-    state: input.state ?? undefined,
-    country: input.country ?? undefined,
-    annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : undefined,
-    status: input.status ?? undefined,
-  };
-
-  if (input.email !== undefined) {
-    const email = input.email.trim().toLowerCase();
-    if (email) {
-      const owner = await prisma.user.findUnique({ where: { email } });
-      if (owner && owner.id !== existing.userId) {
-        throw AppError.badRequest(`Email "${email}" is already in use`);
-      }
-      if (existing.userId) {
-        await prisma.user.update({ where: { id: existing.userId }, data: { email } });
-      }
-      data.personalEmail = email;
+  let finalUserId = existing.userId;
+  if (email !== undefined && email !== null) {
+    if (!existing.userId) {
+      const user = await prisma.user.create({
+        data: {
+          email,
+          passwordHash: await hashPassword("Welcome@123"),
+          role: { connect: { name: "EMPLOYEE" } },
+        },
+      });
+      finalUserId = user.id;
     } else {
-      data.personalEmail = null;
+      await prisma.user.update({ where: { id: existing.userId }, data: { email } });
     }
   }
 
   const updated = await prisma.employee.update({
     where: { id },
-    data,
+    data: {
+      userId: finalUserId,
+      firstName: input.firstName ?? undefined,
+      lastName: input.lastName ?? undefined,
+      personalEmail: email !== undefined ? email : undefined,
+      personalMobile: input.phone !== undefined ? input.phone || null : undefined,
+      dateOfBirth: input.dob !== undefined ? toOptionalDate(input.dob) : undefined,
+      gender: input.gender !== undefined ? input.gender || null : undefined,
+      skillType: input.skillType !== undefined ? input.skillType || null : undefined,
+      designationId: designationId !== undefined ? designationId : undefined,
+      departmentId: departmentId !== undefined ? departmentId : undefined,
+      locationId: locationId !== undefined ? locationId : undefined,
+      reportingManagerId: input.managerId !== undefined ? input.managerId || null : undefined,
+      dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
+      employmentType: input.employmentType ?? undefined,
+      status: input.status ?? undefined,
+      state: input.state !== undefined ? input.state || null : undefined,
+      country: input.country !== undefined ? input.country || null : undefined,
+      annualSalary: input.annualSalary !== undefined ? (typeof input.annualSalary === "number" ? input.annualSalary : null) : undefined,
+      photoUrl: input.photoUrl !== undefined ? input.photoUrl || null : undefined,
+    },
     include: EMPLOYEE_INCLUDE,
   });
+
+  if (input.annualSalary !== undefined) {
+    await ensureActiveSalaryStructure(updated.id, input.annualSalary, true);
+  }
 
   writeAuditLog({
     action: "UPDATE",
     entityType: "Employee",
     entityId: updated.id,
-    oldValue: { employeeCode: existing.employeeCode },
     newValue: { employeeCode: updated.employeeCode, firstName: updated.firstName, lastName: updated.lastName },
   });
-
-  // Create a salary structure on first payroll setup (and sync it when the
-  // yearly salary package changes) so gross always tracks annualSalary.
-  await ensureActiveSalaryStructure(
-    updated.id,
-    input.annualSalary ?? (existing.annualSalary ? Number(existing.annualSalary) : undefined),
-    input.annualSalary !== undefined
-  );
 
   return { data: serializeEmployeeList([updated])[0] };
 }
 
 export async function deleteEmployee(id: string) {
-  const existing = await prisma.employee.findUnique({ where: { id }, include: { user: true } });
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const where: Prisma.EmployeeWhereUniqueInput = isUuid ? { id } : { employeeCode: id };
+  const existing = await prisma.employee.findUnique({ where, include: { user: true } });
   if (!existing) throw AppError.notFound("Employee not found");
+
+  const pk = existing.id;
 
   // Hard delete — the employee and all their dependent records are removed
   // permanently. Most child rows (attendance, leave, balances, salary
@@ -542,25 +809,25 @@ export async function deleteEmployee(id: string) {
   // models below use ON DELETE RESTRICT against `employees`, so their rows
   // must be removed explicitly before the cascade fires.
   await prisma.$transaction([
-    prisma.helpdeskComment.deleteMany({ where: { authorId: id } }),
-    prisma.helpdeskTicket.deleteMany({ where: { requesterId: id } }),
-    prisma.interviewScorecard.deleteMany({ where: { interviewerId: id } }),
-    prisma.interviewPanel.deleteMany({ where: { interviewerId: id } }),
-    prisma.performanceReview.deleteMany({ where: { reviewerId: id } }),
-    prisma.performanceOneOnOne.deleteMany({ where: { managerId: id } }),
-    prisma.taskTimeEntry.deleteMany({ where: { employeeId: id } }),
-    prisma.task.deleteMany({ where: { assigneeId: id } }),
-    prisma.alumni.deleteMany({ where: { employeeId: id } }),
-    prisma.separation.deleteMany({ where: { employeeId: id } }),
-    prisma.workflowInstance.deleteMany({ where: { requesterId: id } }),
-    prisma.assetRequest.deleteMany({ where: { employeeId: id } }),
+    prisma.helpdeskComment.deleteMany({ where: { authorId: pk } }),
+    prisma.helpdeskTicket.deleteMany({ where: { requesterId: pk } }),
+    prisma.interviewScorecard.deleteMany({ where: { interviewerId: pk } }),
+    prisma.interviewPanel.deleteMany({ where: { interviewerId: pk } }),
+    prisma.performanceReview.deleteMany({ where: { reviewerId: pk } }),
+    prisma.performanceOneOnOne.deleteMany({ where: { managerId: pk } }),
+    prisma.taskTimeEntry.deleteMany({ where: { employeeId: pk } }),
+    prisma.task.deleteMany({ where: { assigneeId: pk } }),
+    prisma.alumni.deleteMany({ where: { employeeId: pk } }),
+    prisma.separation.deleteMany({ where: { employeeId: pk } }),
+    prisma.workflowInstance.deleteMany({ where: { requesterId: pk } }),
+    prisma.assetRequest.deleteMany({ where: { employeeId: pk } }),
   ]);
 
   // Payslips carry a RESTRICT FK to SalaryStructure too, so they go before
   // the employee cascade removes the structures. Any payroll run left with
   // zero payslips is cleaned up as well.
   await prisma.$transaction(async (tx) => {
-    await tx.payslip.deleteMany({ where: { employeeId: id } });
+    await tx.payslip.deleteMany({ where: { employeeId: pk } });
     const orphanedRuns = await tx.payrollRun.findMany({
       where: { payslips: { none: {} } },
       select: { id: true },
@@ -568,7 +835,7 @@ export async function deleteEmployee(id: string) {
     if (orphanedRuns.length) {
       await tx.payrollRun.deleteMany({ where: { id: { in: orphanedRuns.map((r) => r.id) } } });
     }
-    await tx.employee.delete({ where: { id } });
+    await tx.employee.delete({ where: { id: pk } });
     if (existing.userId) {
       await tx.user.delete({ where: { id: existing.userId } });
     }

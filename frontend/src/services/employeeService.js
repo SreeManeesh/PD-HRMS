@@ -40,11 +40,24 @@ export const uploadEmployeePhoto = async (id, formData) => {
   return res.data;
 };
 
+export const previewBulkEmployees = async (formData) => {
+  const res = await api.post("/employees/bulk/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 60000,
+  });
+  return res.data;
+};
+
 export const bulkUploadEmployees = async (formData) => {
   const res = await api.post("/employees/bulk", formData, {
     headers: { "Content-Type": "multipart/form-data" },
     timeout: 300000,
   });
+  return res.data;
+};
+
+export const undoBulkEmployees = async (batchId) => {
+  const res = await api.post("/employees/bulk/undo", { batchId });
   return res.data;
 };
 

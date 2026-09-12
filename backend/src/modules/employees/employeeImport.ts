@@ -118,6 +118,7 @@ export function parseEmployeeFile(file: Express.Multer.File): BulkEmployeeRow[] 
     }
 
     result.push({
+      employeeCode: !hasHeader ? "" : rowCell(cells, colIndex("employeeCode")),
       firstName: first,
       lastName: last,
       email: !hasHeader ? "" : rowCell(cells, colIndex("email")),

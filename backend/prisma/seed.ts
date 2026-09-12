@@ -1,15 +1,23 @@
 /// <reference types="node" />
-import { PrismaClient, Prisma } from "@prisma/client";
+import "dotenv/config";
+import {
+  PrismaClient,
+  Prisma,
+  CourseStatus,
+  CourseContentType,
+  EnrollmentStatus,
+  AssetStatus,
+  AssetRequestStatus,
+} from "@prisma/client";
 import { hashPassword } from "../src/lib/password";
+import { salaryStructureBreakdown } from "../src/lib/salaryStructure";
 
 const prisma = new PrismaClient();
 
 // Seed static demo records (org master, employees, attendance, payroll, leave,
-// recruitment, compliance, helpdesk, LMS, assets…) only when SEED_DEMO_DATA=true.
-// OFF by default so the app starts empty and is driven entirely by data you create
-// or upload. RBAC roles/permissions, leave types, holidays, the general shift and a
-// single bootstrap admin are always seeded.
-const SEED_DEMO_DATA = process.env.SEED_DEMO_DATA === "true";
+// recruitment, compliance, helpdesk, LMS, assets…) by default.
+// Can be disabled with SEED_DEMO_DATA=false.
+const SEED_DEMO_DATA = process.env.SEED_DEMO_DATA !== "false";
 
 // ── Permissions (mirrors frontend/src/context/AuthContext.jsx ROLE_PERMISSIONS) ──
 
@@ -455,6 +463,14 @@ async function main() {
       },
     });
     empByCode.set(e.code, emp.id);
+    const b = salaryStructureBreakdown(e.salary);
+    await prisma.salaryStructure.create({
+      data: {
+        employeeId: emp.id,
+        effectiveFrom: new Date(`${e.joinDate}T00:00:00Z`),
+        ...b,
+      },
+    });
   }
 
   const seededUsers = await prisma.user.findMany();
@@ -1008,6 +1024,7 @@ async function main() {
       },
     });
     for (const interviewerId of iv.interviewers) {
+      if (!interviewerId) continue;
       await prisma.interviewPanel.create({ data: { interviewId: interview.id, interviewerId } });
     }
     for (const sc of iv.scorecards) {
@@ -1203,14 +1220,28 @@ async function main() {
         isCompliance: cs.isCompliance,
         expiryMonths: cs.expiryMonths,
         passThreshold: cs.passThreshold,
-        status: cs.status,
+        status: cs.status as CourseStatus,
         version: 1,
-        contents: { create: cs.contents.map((c) => ({ moduleName: c.moduleName, title: c.title, type: c.type, content: c.content, fileUrl: c.fileUrl, order: c.order })) },
+        contents: {
+          create: cs.contents.map((c) => ({
+            moduleName: c.moduleName,
+            title: c.title,
+            type: c.type as CourseContentType,
+            content: c.content,
+            fileUrl: c.fileUrl,
+            order: c.order,
+          })),
+        },
         questions: {
           create: cs.questions.map((q) => ({
             question: q.question,
             order: q.order,
-            options: { create: q.options.map(([optionText, isCorrect]) => ({ optionText, isCorrect })) },
+            options: {
+              create: q.options.map(([optionText, isCorrect]) => ({
+                optionText: String(optionText),
+                isCorrect: Boolean(isCorrect),
+              })),
+            },
           })),
         },
       },
@@ -1228,7 +1259,7 @@ async function main() {
         courseId,
         employeeId: empId,
         employeeName: `${es.emp} Employee`,
-        status: es.status,
+        status: es.status as EnrollmentStatus,
         attempts: es.attempts,
         score: es.score,
         certifiedAt: es.certified ? new Date("2026-08-15T00:00:00Z") : null,
@@ -1324,7 +1355,7 @@ async function main() {
         category: a.category,
         make: a.make,
         model: a.model,
-        status: a.status,
+        status: a.status as AssetStatus,
         currentHolderId: a.currentHolderId,
         acknowledged: a.acknowledged,
         seats: a.seats,
@@ -1344,7 +1375,7 @@ async function main() {
         employeeId: empPKByCode.get(r.emp)!,
         category: r.category,
         justification: r.justification,
-        status: r.status,
+        status: r.status as AssetRequestStatus,
         raisedAt: new Date("2026-06-10T00:00:00Z"),
         approvedBy: r.approvedBy,
         approvedAt: r.approvedAt ? new Date(`${r.approvedAt}T00:00:00Z`) : null,

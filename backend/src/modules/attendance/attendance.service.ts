@@ -229,7 +229,7 @@ export async function checkOut(employeeCode: string, actorEmployeeId?: string) {
   return { data: { employeeId: employeeCode, checkOut: serialized.checkOut } };
 }
 
-// ═══ Bulk upload from CSV ═══════════════════════════════════════════════════
+// ═══ Bulk upload/Import from CSV ═══════════════════════════════════════════════════
 
 const MONTH_NAMES: Record<string, number> = {
   jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,

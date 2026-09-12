@@ -38,7 +38,7 @@ export const getOne = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const result = await employeeService.createEmployee(req.body);
+  const result = await employeeService.createEmployee(req.body, { autoCreateRefs: true });
   sendSuccess(res, result.data, undefined, 201);
 });
 
@@ -54,12 +54,33 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
   sendSuccess(res, result.data);
 });
 
-/** POST /api/employees/bulk — spreadsheet import. Rows with missing
- *  mandatory fields are skipped and reported in the response. */
-export const bulk = asyncHandler(async (req: Request, res: Response) => {
+/** POST /api/employees/bulk/preview — parse and preview spreadsheet rows without importing. */
+export const bulkPreview = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) throw AppError.badRequest("A spreadsheet file is required (.xlsx, .csv, .tsv, …)");
   const rows = parseEmployeeFile(req.file);
+  const result = await employeeService.previewEmployeesBulk(rows);
+  sendSuccess(res, result);
+});
+
+/** POST /api/employees/bulk — spreadsheet import. Skips duplicates & invalid rows. */
+export const bulk = asyncHandler(async (req: Request, res: Response) => {
+  let rows: any[] = [];
+  if (req.file) {
+    rows = parseEmployeeFile(req.file);
+  } else if (Array.isArray(req.body?.rows)) {
+    rows = req.body.rows;
+  } else {
+    throw AppError.badRequest("A spreadsheet file or rows payload is required");
+  }
   const result = await employeeService.createEmployeesBulk(rows);
+  sendSuccess(res, result);
+});
+
+/** POST /api/employees/bulk/undo — undo a recent bulk import batch within window. */
+export const bulkUndo = asyncHandler(async (req: Request, res: Response) => {
+  const { batchId } = req.body ?? {};
+  if (!batchId) throw AppError.badRequest("batchId is required for undo");
+  const result = await employeeService.undoEmployeesBulk(String(batchId));
   sendSuccess(res, result);
 });
 
