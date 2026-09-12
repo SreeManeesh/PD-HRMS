@@ -11,7 +11,7 @@ import {
 } from "../../serializers/payroll.serializer";
 import { round2, toNumber } from "../../serializers/helpers";
 import { generatePayslipPdf, buildSections, type ComponentRow } from "../payslip/lib/payslip.pdf";
-import { computePayroll } from "../payslip/payslip.service";
+import { computePayroll, ensureDefaultSkillTemplates } from "../payslip/payslip.service";
 import type { Blueprint, BlueprintComponent } from "../payslip/lib/types";
 import { assignComponentsToNests, type NestTree } from "../payslip/lib/nesting";
 import { reconcileEmployee, reconcileEmployees, type EmployeeReconciliation } from "./reconciliation.service";
@@ -30,17 +30,17 @@ const SLIP_INCLUDE = {
 /** Stored payslip keys → designer component id aliases (kept in sync with the
  *  PDF builder so labels, order and nest grouping never drift between views). */
 const STORED_SYNONYMS: Record<string, string[]> = {
-  basicSalary: ["basic", "basic_salary"],
-  hra: ["hra"],
-  conveyanceAllowance: ["conveyance", "conveyance_allowance"],
+  basicSalary: ["basic", "basic_salary", "basic_wage"],
+  hra: ["hra", "living_allowance"],
+  conveyanceAllowance: ["conveyance", "conveyance_allowance", "transport_allowance"],
   medicalAllowance: ["medical", "medical_allowance", "medical_allowances"],
-  performanceBonus: ["performance_bonus"],
-  otherAllowances: ["other", "other_allowances", "special_allowance"],
+  performanceBonus: ["performance_bonus", "attendance_allowance"],
+  otherAllowances: ["other", "other_allowances", "special_allowance", "daily_allowance", "uniform_allowance"],
   overtime: ["overtime", "ot"],
   providentFund: ["provident_fund", "epf_employee", "pf"],
   professionalTax: ["professional_tax", "pt"],
   incomeTax: ["income_tax", "tds"],
-  healthInsurance: ["health_insurance", "esi_employee"],
+  healthInsurance: ["health_insurance", "esi_employee", "esi"],
 };
 
 /** Case/separator-insensitive component id comparison (income_tax === incomeTax). */
@@ -67,12 +67,13 @@ async function loadActiveBlueprint(): Promise<Blueprint | null> {
  *  plus an overall fallback (highest-priority active template). Payroll
  *  uses the template matching each employee's skill type. */
 async function loadBlueprintsBySkillType(): Promise<{ bySkill: Map<string, Blueprint>; fallback: Blueprint | null }> {
+  await ensureDefaultSkillTemplates();
   const templates = await prisma.payslipTemplate.findMany({
     where: { isActive: true, status: "Published" },
     orderBy: { updatedAt: "desc" },
     include: { versions: { where: { isActive: true }, orderBy: { version: "desc" }, take: 1 } },
   });
-  const fallback = templates[0]?.versions?.[0]?.blueprint as unknown as Blueprint | null ?? null;
+  const fallback = (templates[0]?.versions?.[0]?.blueprint as unknown as Blueprint | null) ?? null;
   const bySkill = new Map<string, Blueprint>();
   for (const t of templates) {
     const bp = t.versions?.[0]?.blueprint as unknown as Blueprint | undefined;
@@ -88,7 +89,15 @@ function blueprintForSkill(
   maps: { bySkill: Map<string, Blueprint>; fallback: Blueprint | null },
   skillType?: string | null,
 ): Blueprint | null {
-  return (skillType && maps.bySkill.get(skillType)) || maps.fallback;
+  if (skillType) {
+    const direct = maps.bySkill.get(skillType);
+    if (direct) return direct;
+    const norm = skillType.toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const [k, v] of maps.bySkill.entries()) {
+      if (k.toLowerCase().replace(/[^a-z0-9]/g, "") === norm) return v;
+    }
+  }
+  return maps.fallback;
 }
 
 /** Group stored earnings/deductions by the blueprint's nesting tree so the
@@ -694,18 +703,21 @@ function resolvePaySource(
 }
 
 /**
- * Full-month earnings/deductions per stored key, driven by the employee's
- * skill-type nesting blueprint where it defines the component (fixed value,
- * % of CTC, formula), falling back to the salary-package breakdown for any
- * key the blueprint does not cover. The calculation engine runs over the
- * salary package so designer components like "Basic Salary" (fixed, pulls
- * from ctx) or "HRA = 50% of ctc" resolve to real amounts.
+ * Full-month earnings/deductions per stored key and custom nesting components,
+ * driven by the employee's skill-type nesting blueprint. Evaluates all
+ * components declared in the template (Fixed, Variable, Benefits, Statutory,
+ * and Custom Nest Deductions).
  */
 function blueprintComponentAmounts(
   blueprint: Blueprint | null,
   structure: PaySourceStructure,
   amounts: ReturnType<typeof buildPayslipAmounts>,
-): { earnings: Record<string, number>; deductions: Record<string, number>; computed: { results?: Record<string, { final: number }> } | null } {
+): {
+  earnings: Record<string, number>;
+  deductions: Record<string, number>;
+  computed: { results?: Record<string, { final: number }> } | null;
+  componentMeta: Map<string, { id: string; label: string; kind: string; isPercentage: boolean; nestId?: string | null }>;
+} {
   const fullEarnings: Record<string, number> = {
     basicSalary: amounts.earnings.basicSalary,
     hra: amounts.earnings.hra,
@@ -720,12 +732,15 @@ function blueprintComponentAmounts(
     incomeTax: amounts.deductions.incomeTax,
     healthInsurance: amounts.deductions.healthInsurance,
   };
+  const componentMeta = new Map<string, { id: string; label: string; kind: string; isPercentage: boolean; nestId?: string | null }>();
+
   const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
   if (!visible.length) {
     return {
       earnings: fullEarnings,
       deductions: fullDeductions,
       computed: null,
+      componentMeta,
     };
   }
 
@@ -746,16 +761,46 @@ function blueprintComponentAmounts(
     const cands = new Set([key, ...(STORED_SYNONYMS[key] ?? [])].map(normalizeCompId));
     return visible.find((c) => cands.has(normalizeCompId(c.id)));
   };
-  const applyBlueprint = (obj: Record<string, number>, key: string) => {
-    const comp = componentForStoredKey(key);
-    if (!comp) return;
-    const v = computed.results?.[comp.id.toLowerCase()]?.final;
-    if (v !== undefined) obj[key] = v;
-  };
 
-  for (const key of Object.keys(fullEarnings)) applyBlueprint(fullEarnings, key);
-  for (const key of Object.keys(fullDeductions)) applyBlueprint(fullDeductions, key);
-  return { earnings: fullEarnings, deductions: fullDeductions, computed };
+  for (const key of Object.keys(fullEarnings)) {
+    const comp = componentForStoredKey(key);
+    if (comp) {
+      const v = computed.results?.[comp.id.toLowerCase()]?.final;
+      if (v !== undefined) fullEarnings[key] = v;
+      componentMeta.set(key, { id: comp.id, label: comp.label, kind: comp.kind, isPercentage: comp.logic?.type === "percentage", nestId: comp.nestId });
+    }
+  }
+
+  for (const key of Object.keys(fullDeductions)) {
+    const comp = componentForStoredKey(key);
+    if (comp) {
+      const v = computed.results?.[comp.id.toLowerCase()]?.final;
+      if (v !== undefined) fullDeductions[key] = v;
+      componentMeta.set(key, { id: comp.id, label: comp.label, kind: comp.kind, isPercentage: comp.logic?.type === "percentage", nestId: comp.nestId });
+    }
+  }
+
+  // Attach all custom earnings and custom nesting deductions from the blueprint
+  const handledIds = new Set<string>();
+  for (const meta of componentMeta.values()) handledIds.add(meta.id.toLowerCase());
+  handledIds.add("overtime");
+  handledIds.add("ot");
+
+  for (const c of visible) {
+    const cid = c.id.toLowerCase();
+    if (handledIds.has(cid)) continue;
+    const finalVal = computed.results?.[cid]?.final ?? 0;
+    const isPct = c.logic?.type === "percentage";
+    if (c.kind === "earning" || c.kind === "reimbursement") {
+      fullEarnings[c.id] = finalVal;
+      componentMeta.set(c.id, { id: c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
+    } else if (c.kind === "deduction") {
+      fullDeductions[c.id] = finalVal;
+      componentMeta.set(c.id, { id: c.label ? c.id : c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
+    }
+  }
+
+  return { earnings: fullEarnings, deductions: fullDeductions, computed, componentMeta };
 }
 
 /** Employer statutory costs from the blueprint's employer-kind components
@@ -781,10 +826,9 @@ function employerBlueprintAmounts(
 
 /**
  * Compute one employee's payslip from their salary structure + reconciliation.
- * When `precomputed` is supplied the (expensive) reconcile step is skipped,
- * enabling N employees to share a single batched reconcileEmployees call.
- * When `blueprint` is supplied (skill-type nesting template), component amounts
- * are computed per the template; otherwise the salary-package breakdown is used.
+ * Dynamically prorates pay by present days + paid leaves, computes leave
+ * deductions for unpaid days (LOP), and applies all deductions configured
+ * in the employee's skill-type nesting template.
  */
 async function computeEmployeePayslip(
   employee: { id: string },
@@ -797,36 +841,34 @@ async function computeEmployeePayslip(
 ) {
   const c = cfg ?? (await getCompanyConfig());
   const amounts = buildPayslipAmounts(structure as unknown as SalaryStructure);
-  const { summary, shiftHours } = precomputed ?? await reconcileEmployee(employee.id, year, month);
+  const { summary, shiftHours } = precomputed ?? (await reconcileEmployee(employee.id, year, month));
 
   // Prorate against calendar working days using the uploaded attendance:
   // present days + approved paid leave are the paid days. When no punches or
   // leave are recorded yet for the period, full monthly salary applies.
   const workingDays = Math.max(summary.workingDays, 1);
-  const payableDays = (summary.presentDays === 0 && summary.unpaidLeaveDays === 0 && summary.paidLeaveDays === 0)
-    ? workingDays
-    : Math.max(summary.presentDays + summary.paidLeaveDays, 0);
+  const payableDays =
+    summary.presentDays === 0 && summary.unpaidLeaveDays === 0 && summary.paidLeaveDays === 0
+      ? workingDays
+      : Math.max(summary.presentDays + summary.paidLeaveDays, 0);
   const ratio = Math.min(Math.max(payableDays / workingDays, 0), 1);
 
-  const { earnings: fullEarnings, deductions: fullDeductions, computed } = blueprintComponentAmounts(blueprint, structure, amounts);
+  const { earnings: fullEarnings, deductions: fullDeductions, computed, componentMeta } =
+    blueprintComponentAmounts(blueprint, structure, amounts);
 
   const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
   const isOvertimeId = (id: string) => ["overtime", "ot"].map(normalizeCompId).includes(normalizeCompId(id));
   const overtimeComp = visible.find((c) => isOvertimeId(c.id));
   const overtimeBlueprintAmount = overtimeComp ? computed?.results?.[overtimeComp.id.toLowerCase()]?.final ?? 0 : 0;
 
-  const earnings: Record<string, number> = {
-    basicSalary: round2(fullEarnings.basicSalary * ratio),
-    hra: round2(fullEarnings.hra * ratio),
-    conveyanceAllowance: round2(fullEarnings.conveyanceAllowance * ratio),
-    medicalAllowance: round2(fullEarnings.medicalAllowance * ratio),
-    performanceBonus: round2(fullEarnings.performanceBonus * ratio),
-    otherAllowances: round2(fullEarnings.otherAllowances * ratio),
-    total: 0,
-  };
-  // Overtime at the configured multiplier of the basic hourly rate (not
-  // LOP-prorated — it is genuinely extra time worked beyond the scheduled
-  // shift end). A blueprint-defined overtime component wins over the default.
+  // Prorate all regular monthly earnings by attendance ratio
+  const earnings: Record<string, number> = {};
+  for (const [key, val] of Object.entries(fullEarnings)) {
+    if (key === "total" || key === "overtime") continue;
+    earnings[key] = round2(val * ratio);
+  }
+
+  // Overtime at the configured multiplier of the basic hourly rate
   const shiftDayHours = Math.max(shiftHours || 9, 1);
   const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
   earnings.overtime = round2(
@@ -834,40 +876,29 @@ async function computeEmployeePayslip(
   );
   earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
 
-  // PF scales with prorated earnings; statutory flat items stay monthly-fixed.
-  const withholding: Record<string, number> = {
-    providentFund: round2(fullDeductions.providentFund * ratio),
-    professionalTax: fullDeductions.professionalTax,
-    incomeTax: fullDeductions.incomeTax,
-    healthInsurance: fullDeductions.healthInsurance,
-    total: 0,
-  };
-  withholding.total = Math.round(
-    withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance
-  );
-  // Never deduct more than the earnings actually earned (net stays >= 0),
-  // e.g. full-month absence yields gross 0 -> take-home 0. When the raw
-  // withholding exceeds what was earned, scale every line item proportionally
-  // so the components always sum to the actual total (no phantom deductions).
+  // Compute deductions from the nesting template:
+  // - Percentage deductions (e.g. EPF, ESI) prorate with earnings
+  // - Fixed deductions (e.g. PT, Canteen, Tool Maintenance, LWF) apply full configured amount
+  const withholding: Record<string, number> = {};
+  for (const [key, val] of Object.entries(fullDeductions)) {
+    if (key === "total" || key === "leaveDeduction") continue;
+    const meta = componentMeta.get(key);
+    const shouldProrate = meta?.isPercentage || key === "providentFund";
+    withholding[key] = shouldProrate ? round2(val * ratio) : round2(val);
+  }
+
+  // Net protection: total deductions cannot exceed gross earnings
   const maxDeductible = Math.max(earnings.total, 0);
-  const rawTotal = withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance;
+  const rawTotal = Object.values(withholding).reduce((s, v) => s + v, 0);
   const scale = rawTotal > maxDeductible && rawTotal > 0 ? maxDeductible / rawTotal : 1;
-  withholding.providentFund = round2(withholding.providentFund * scale);
-  withholding.professionalTax = round2(withholding.professionalTax * scale);
-  withholding.incomeTax = round2(withholding.incomeTax * scale);
-  withholding.healthInsurance = round2(withholding.healthInsurance * scale);
-  withholding.total = Math.round(
-    withholding.providentFund + withholding.professionalTax + withholding.incomeTax + withholding.healthInsurance
-  );
+  for (const key of Object.keys(withholding)) {
+    withholding[key] = round2(withholding[key] * scale);
+  }
+  withholding.total = Math.round(Object.values(withholding).reduce((s, v) => s + v, 0));
 
-  const slipNet = earnings.total - withholding.total;
+  const slipNet = Math.max(earnings.total - withholding.total, 0);
 
-  // Employer-side statutory costs (PF, ESI, gratuity) — tracked on the slip
-  // for reporting (Form 12A, PF/ESI returns) but not subtracted from net pay.
-  // A blueprint that defines employer-kind components (e.g. `epf_employer`
-  // = 13% of ctc) drives these amounts; otherwise the statutory fallback uses
-  // the configured rates over prorated wages. Employer costs scale with the
-  // paid days (ratio) just like earnings.
+  // Employer-side statutory costs (PF, ESI, gratuity)
   const monthlySalary = toNumber(structure.employee?.annualSalary) / 12;
   const proratedBasic = Number(earnings.basicSalary ?? 0);
   const esiEligible = monthlySalary > 0 && monthlySalary <= c.esiGrossCeiling;
@@ -883,12 +914,14 @@ async function computeEmployeePayslip(
     gratuity: round2(blueprintEmployer.gratuity * ratio),
   };
 
+  const unproratedGross = Object.values(fullEarnings).reduce((s, v) => s + v, 0);
+
   return {
     earnings,
     deductions: withholding,
     employerContributions,
     netPay: slipNet,
-    fullGross: amounts.earnings.total,
+    fullGross: Math.round(unproratedGross || amounts.earnings.total),
     summary,
     ratio,
   };

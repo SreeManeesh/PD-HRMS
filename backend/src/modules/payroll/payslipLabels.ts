@@ -12,6 +12,12 @@ const EARNINGS_LABELS: Record<string, string> = {
   performanceBonus: "Performance Bonus",
   otherAllowances: "Other Allowances",
   overtime: "Overtime",
+  attendanceAllowance: "Attendance Allowance",
+  attendance_allowance: "Attendance Allowance",
+  uniformAllowance: "Uniform Allowance",
+  uniform_allowance: "Uniform Allowance",
+  shiftAllowance: "Shift Allowance",
+  shift_allowance: "Shift Allowance",
 };
 
 const DEDUCTION_LABELS: Record<string, string> = {
@@ -23,6 +29,16 @@ const DEDUCTION_LABELS: Record<string, string> = {
   esi_employee: "ESI (Employee)",
   lwf: "LWF",
   esi: "ESI (Employee)",
+  canteenDeduction: "Canteen Deduction",
+  canteen_deduction: "Canteen Deduction",
+  safetyGearDeduction: "Safety Gear Deduction",
+  safety_gear_deduction: "Safety Gear Deduction",
+  labourWelfareFund: "Labour Welfare Fund",
+  labour_welfare_fund: "Labour Welfare Fund",
+  transportDeduction: "Transport Deduction",
+  transport_deduction: "Transport Deduction",
+  lossOfPay: "Loss of Pay (LOP)",
+  lop: "Loss of Pay (LOP)",
 };
 
 const EMPLOYER_LABELS: Record<string, string> = {
@@ -40,8 +56,9 @@ export function labelForStoredKey(key: string, employer = false): string {
 
 export function humanize(key: string): string {
   return key
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (s) => s.toUpperCase())
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (s) => s.toUpperCase())
     .trim();
 }
 

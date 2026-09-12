@@ -13,6 +13,7 @@ const createSchema = z.object({
   country: z.string().optional(),
   state: z.string().optional(),
   financialYear: z.coerce.number().int().min(2000).max(2100).optional(),
+  skillType: z.string().optional(),
 });
 
 const saveSchema = z.object({
