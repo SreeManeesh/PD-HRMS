@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   History,
   ChevronRight,
+  Clock,
+  Trash2,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -21,6 +23,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import ConfirmDialog from "../../components/shared/ConfirmDialog.jsx";
 import {
   getCompany,
   getBusinessUnits,
@@ -40,6 +43,10 @@ import {
   updateReportingManager,
   bulkReassignDepartment,
   getAuditLog,
+  getShifts,
+  createShift,
+  updateShift,
+  deleteShift,
 } from "../../services/Orgmanagementservice.js";
 import { statusMeta } from "../../mock/Orgmanagement.js";
 
@@ -961,6 +968,233 @@ function ReportingStructureTab({ roster, departments, auditLog, onManagerUpdated
   );
 }
 
+/* ---------------------------------- Shifts tab ---------------------------------- */
+
+function shiftTypeMeta(shift) {
+  const isNight = shift.endTime < shift.startTime;
+
+  if (!isNight && shift.startTime === "09:00" && shift.endTime === "18:00") {
+    return { label: "Regular", color: "var(--green)", bg: "var(--green-light)" };
+  }
+
+  return isNight
+    ? { label: "Night", color: "#7c3aed", bg: "#ede9fe" }
+    : { label: "Day", color: "#2563eb", bg: "#dbeafe" };
+}
+
+function fmtDuration(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function ShiftFormModal({ isOpen, title, initial, onClose, onSaved }) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [startTime, setStartTime] = useState(initial?.startTime ?? "09:00");
+  const [endTime, setEndTime] = useState(initial?.endTime ?? "18:00");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    if (!name.trim()) {
+      setError("Shift name is required");
+      return;
+    }
+
+    if (!startTime || !endTime) {
+      setError("Both start time and end time are required");
+      return;
+    }
+
+    if (startTime === endTime) {
+      setError("Start time and end time must be different");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const payload = {
+        name: name.trim(),
+        startTime,
+        endTime,
+      };
+
+      const res = initial
+        ? await updateShift(initial.id, payload)
+        : await createShift(payload);
+
+      onSaved(res.data);
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to save shift");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} title={title} onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+          {fieldLabel("Shift Name *")}
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Morning Shift, Night Shift" style={inputStyle(false)} />
+        </div>
+
+        <div style={{ display: "flex", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px", flex: 1 }}>
+            {fieldLabel("Start Time *")}
+            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={inputStyle(false)} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px", flex: 1 }}>
+            {fieldLabel("End Time *")}
+            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={inputStyle(false)} />
+          </div>
+        </div>
+
+        <p style={{ fontSize: "12px", color: "var(--subtext)", margin: 0 }}>
+          A shift with an end time earlier than its start time is treated as a night shift (crosses midnight).
+        </p>
+
+        {error && (
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 12px", borderRadius: "var(--radius-sm)", background: "var(--red-light)", color: "var(--red)", fontSize: "12.5px", fontWeight: 600 }}>
+            <AlertTriangle size={15} /> {error}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+          <SecondaryButton type="button" onClick={onClose}>Cancel</SecondaryButton>
+          <PrimaryButton type="submit" disabled={saving}>{saving ? "Saving..." : (initial ? "Save Changes" : "Create Shift")}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ShiftTab({ shifts, onCreated, onUpdated, onDeleted }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [deletingName, setDeletingName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const openEdit = (shift) => {
+    setEditing(shift);
+  };
+
+  const openDelete = (shift) => {
+    setDeleting(shift);
+    setDeletingName(shift.name);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting || busy) return;
+
+    setBusy(true);
+
+    try {
+      await deleteShift(deleting.id);
+      onDeleted(deleting.id);
+    } catch (err) {
+      console.error("Failed to delete shift:", err);
+    } finally {
+      setBusy(false);
+      setDeleting(null);
+      setDeletingName("");
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+        <div>
+          <h2 style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)", marginBottom: "4px" }}>Shift Management</h2>
+          <p style={{ fontSize: "12.5px", color: "var(--subtext)", margin: 0 }}>
+            Define regular, day and night shifts used for attendance and payroll.
+          </p>
+        </div>
+        <PrimaryButton onClick={() => setShowAdd(true)}><Plus size={16} /> Add Shift</PrimaryButton>
+      </div>
+
+      {shifts.length === 0 ? (
+        <EmptyState icon={Clock} title="No shifts yet" message="Create your first shift to manage attendance timings." />
+      ) : (
+        <div style={{ ...cardStyle, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                  {["Shift Name", "Type", "Start", "End", "Duration", ""].map((h) => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {shifts.map((shift, i) => {
+                  const meta = shiftTypeMeta(shift);
+                  return (
+                    <tr key={shift.id} style={{ borderBottom: i < shifts.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 600 }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <Clock size={15} style={{ color: "var(--subtext)" }} /> {shift.name}
+                        </span>
+                      </td>
+                      <td style={{ padding: "13px 16px" }}>
+                        <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} />
+                      </td>
+                      <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--text)", fontFamily: "monospace" }}>{shift.startTime}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--text)", fontFamily: "monospace" }}>{shift.endTime}</td>
+                      <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--subtext)" }}>{fmtDuration(shift.durationMinutes)}</td>
+                      <td style={{ padding: "13px 16px", whiteSpace: "nowrap" }}>
+                        <button onClick={() => openEdit(shift)} style={{ padding: "6px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--primary)", fontWeight: 600, fontSize: "12.5px", cursor: "pointer", marginRight: "8px" }}>
+                          Edit
+                        </button>
+                        <button onClick={() => openDelete(shift)} style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "6px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--red)", fontWeight: 600, fontSize: "12.5px", cursor: "pointer" }}>
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <ShiftFormModal
+        isOpen={showAdd}
+        title="Add Shift"
+        onClose={() => setShowAdd(false)}
+        onSaved={onCreated}
+      />
+
+      <ShiftFormModal
+        isOpen={!!editing}
+        title="Edit Shift"
+        initial={editing}
+        onClose={() => setEditing(null)}
+        onSaved={onUpdated}
+      />
+
+      <ConfirmDialog
+        isOpen={!!deleting}
+        title="Delete Shift"
+        message={`Are you sure you want to delete the "${deletingName}" shift? This cannot be undone.`}
+        confirmLabel="Yes, Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => { setDeleting(null); setDeletingName(""); }}
+      />
+    </div>
+  );
+}
+
 /* ---------------------------------- Page ---------------------------------- */
 
 const TABS = [
@@ -969,6 +1203,7 @@ const TABS = [
   { key: "costCenters", label: "Cost Centers", icon: Wallet },
   { key: "designationsGrades", label: "Designations & Grades", icon: BadgeCheck },
   { key: "reporting", label: "Reporting Structure", icon: Network },
+  { key: "shifts", label: "Shift Management", icon: Clock },
 ];
 
 export default function OrgManagement() {
@@ -983,6 +1218,7 @@ export default function OrgManagement() {
   const [grades, setGrades] = useState([]);
   const [roster, setRoster] = useState([]);
   const [auditLog, setAuditLog] = useState([]);
+  const [shifts, setShifts] = useState([]);
 
   useEffect(() => {
     const loadOrganizationData = async () => {
@@ -999,6 +1235,7 @@ export default function OrgManagement() {
           g,
           r,
           al,
+          sh,
         ] = await Promise.all([
           getCompany(),
           getBusinessUnits(),
@@ -1009,6 +1246,7 @@ export default function OrgManagement() {
           getGrades(),
           getRoster(),
           getAuditLog(),
+          getShifts(),
         ]);
 
         setCompany(c.data);
@@ -1020,6 +1258,7 @@ export default function OrgManagement() {
         setGrades(g.data);
         setRoster(r.data);
         setAuditLog(al.data);
+        setShifts(sh.data);
       } catch (error) {
         console.error(
           "Failed to load organization management data:",
@@ -1096,6 +1335,15 @@ export default function OrgManagement() {
             auditLog={auditLog}
             onManagerUpdated={handleManagerUpdated}
             onBulkReassigned={handleBulkReassigned}
+          />
+        )}
+
+        {activeTab === "shifts" && (
+          <ShiftTab
+            shifts={shifts}
+            onCreated={(s) => setShifts((prev) => [...prev, s])}
+            onUpdated={(s) => setShifts((prev) => prev.map((x) => (x.id === s.id ? s : x)))}
+            onDeleted={(id) => setShifts((prev) => prev.filter((x) => x.id !== id))}
           />
         )}
       </div>

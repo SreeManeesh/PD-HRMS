@@ -14,9 +14,6 @@
 import axios from "axios";
 
 let rawBaseUrl = import.meta.env.VITE_API_URL || "/api";
-if (rawBaseUrl.includes("localhost:4000")) {
-  rawBaseUrl = rawBaseUrl.replace("localhost:4000", "localhost:4001");
-}
 
 const api = axios.create({
   baseURL: rawBaseUrl,

@@ -812,6 +812,302 @@ export class OrganizationManagementService {
     }
 
     // =========================================================
+    // SHIFTS (Attendance Shift Management)
+    // =========================================================
+
+    async getShifts() {
+        const shifts = await prisma.attendanceShift.findMany({
+            orderBy: {
+                startTime: "asc",
+            },
+        });
+
+        return shifts.map((shift) => this.mapShift(shift));
+    }
+
+    async createShift(data: any) {
+        const name = data.name?.trim();
+
+        if (!name) {
+            throw new Error("Shift name is required");
+        }
+
+        const startTime = this.parseTime(data.startTime);
+
+        if (startTime === undefined) {
+            throw new Error(
+                "Shift start time is required (e.g. 09:00 or 9:00 AM)"
+            );
+        }
+
+        const endTime = this.parseTime(data.endTime);
+
+        if (endTime === undefined) {
+            throw new Error(
+                "Shift end time is required (e.g. 18:00 or 6:00 PM)"
+            );
+        }
+
+        const { id: existingId } =
+            (await prisma.attendanceShift.findFirst({
+                where: {
+                    name,
+                },
+                select: {
+                    id: true,
+                },
+            })) ?? {};
+
+        if (existingId) {
+            throw new Error(
+                "A shift with this name already exists. Use a unique shift name."
+            );
+        }
+
+        const shift = await prisma.attendanceShift.create({
+            data: {
+                name,
+                startTime: this.toTime(startTime),
+                endTime: this.toTime(endTime),
+            },
+        });
+
+        return this.mapShift(shift);
+    }
+
+    async updateShift(id: string, data: any) {
+        const existing = await prisma.attendanceShift.findUnique({
+            where: {
+                id,
+            },
+        });
+
+        if (!existing) {
+            throw new Error("Shift not found");
+        }
+
+        const name = data.name?.trim();
+
+        if (!name) {
+            throw new Error("Shift name is required");
+        }
+
+        const startMinutes = this.parseTime(data.startTime);
+
+        if (startMinutes === undefined) {
+            throw new Error(
+                "Shift start time is required (e.g. 09:00 or 9:00 AM)"
+            );
+        }
+
+        const endMinutes = this.parseTime(data.endTime);
+
+        if (endMinutes === undefined) {
+            throw new Error(
+                "Shift end time is required (e.g. 18:00 or 6:00 PM)"
+            );
+        }
+
+        const { id: duplicateId } =
+            (await prisma.attendanceShift.findFirst({
+                where: {
+                    name,
+                    NOT: {
+                        id,
+                    },
+                },
+                select: {
+                    id: true,
+                },
+            })) ?? {};
+
+        if (duplicateId) {
+            throw new Error(
+                "A shift with this name already exists. Use a unique shift name."
+            );
+        }
+
+        const updated = await prisma.attendanceShift.update({
+            where: {
+                id,
+            },
+            data: {
+                name,
+                startTime: this.toTime(startMinutes),
+                endTime: this.toTime(endMinutes),
+            },
+        });
+
+        return this.mapShift(updated);
+    }
+
+    async deleteShift(id: string) {
+        const existing = await prisma.attendanceShift.findUnique({
+            where: {
+                id,
+            },
+        });
+
+        if (!existing) {
+            throw new Error("Shift not found");
+        }
+
+        await prisma.attendanceShift.delete({
+            where: {
+                id,
+            },
+        });
+
+        return {
+            id: existing.id,
+            name: existing.name,
+            message: "Shift deleted successfully",
+        };
+    }
+
+    /**
+     * Helper: map a Prisma AttendanceShift row into the API shape.
+     */
+    private mapShift(shift: any) {
+        return {
+            id: shift.id,
+            name: shift.name,
+            startTime: this.hhmm(shift.startTime),
+            endTime: this.hhmm(shift.endTime),
+            durationMinutes: this.durationMinutes(shift.startTime, shift.endTime),
+        };
+    }
+
+    /**
+     * Helper: best-effort parse of an input time into minutes since midnight.
+     */
+    private parseTime(value: unknown): number | undefined {
+        if (value === undefined || value === null) {
+            return undefined;
+        }
+
+        if (value instanceof Date) {
+            const total = value.getHours() * 60 + value.getMinutes();
+            return Number.isNaN(total) ? undefined : total;
+        }
+
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+
+            if (!trimmed) {
+                return undefined;
+            }
+
+            // 09:00 | 9:00 | 09:00:00 | 9:05 AM/PM
+            const match = trimmed.match(
+                /^(\d{1,2}):(\d{1,2})(?::\d{1,2})?\s*(AM|PM)?$/i
+            );
+
+            if (match) {
+                let hours = parseInt(match[1], 10);
+                const minutes = parseInt(match[2], 10);
+                const meridiem = (match[3] ?? "").toUpperCase();
+
+                if (minutes > 59 && minutes !== 60) {
+                    return undefined;
+                }
+
+                if (meridiem === "PM" && hours < 12) {
+                    hours += 12;
+                }
+
+                if (meridiem === "AM" && hours === 12) {
+                    hours = 0;
+                }
+
+                if (hours > 23) {
+                    return undefined;
+                }
+
+                return hours * 60 + Math.min(minutes, 59);
+            }
+
+            // Fallback: Date.parse (covers ISO-style strings)
+            const parsed = new Date(trimmed);
+
+            if (!Number.isNaN(parsed.getTime())) {
+                const total = parsed.getHours() * 60 + parsed.getMinutes();
+                return Number.isNaN(total) ? undefined : total;
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Helper: minutes since midnight -> DateTime for Prisma @db.Time(0) columns.
+     */
+    private toTime(minutes: number): Date {
+        return new Date(
+            1970,
+            0,
+            1,
+            Math.floor(minutes / 60),
+            minutes % 60,
+            0,
+            0
+        );
+    }
+
+    /**
+     * Helper: Prisma Time value (Date) -> "HH:mm" 24-hour string, e.g. "09:00".
+     */
+    private hhmm(value: Date | string): string {
+        if (value instanceof Date) {
+            return new Date(
+                1970,
+                0,
+                1,
+                value.getHours(),
+                value.getMinutes(),
+                0,
+                0
+            ).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+            });
+        }
+
+        const match = String(value).match(/(\d{2}):(\d{2})/);
+
+        return match
+            ? `${match[1]}:${match[2]}`
+            : new Date(1970, 0, 1).toLocaleTimeString("en-GB", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+              });
+    }
+
+    /**
+     * Helper: shift length in minutes. Night shifts that cross midnight are
+     * computed by wrapping the end time past 24:00.
+     */
+    private durationMinutes(start: Date | string, end: Date | string): number {
+        const startText = this.hhmm(start);
+        const endText = this.hhmm(end);
+
+        let startMin =
+            parseInt(startText.slice(0, 2), 10) * 60 +
+            parseInt(startText.slice(3, 5), 10);
+        let endMin =
+            parseInt(endText.slice(0, 2), 10) * 60 +
+            parseInt(endText.slice(3, 5), 10);
+
+        if (endMin <= startMin) {
+            endMin += 24 * 60;
+        }
+
+        return endMin - startMin;
+    }
+
+    // =========================================================
     // COMPANY MAPPER
     // =========================================================
 

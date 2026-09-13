@@ -107,6 +107,7 @@ export interface CreateEmployeeInput {
   annualSalary?: number;
   photoUrl?: string;
   status?: string;
+  wizardData?: unknown;
 }
 
 export interface CreateEmployeeOptions {
@@ -299,6 +300,7 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
       country: input.country ?? null,
       annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : null,
       photoUrl: input.photoUrl ?? null,
+      wizardData: input.wizardData ?? undefined,
     },
     include: EMPLOYEE_INCLUDE,
   });
@@ -739,7 +741,7 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
     }
   }
 
-  let finalUserId = existing.userId;
+let finalUserId = existing.userId;
   if (email !== undefined && email !== null) {
     if (!existing.userId) {
       const user = await prisma.user.create({
@@ -777,6 +779,12 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
       country: input.country !== undefined ? input.country || null : undefined,
       annualSalary: input.annualSalary !== undefined ? (typeof input.annualSalary === "number" ? input.annualSalary : null) : undefined,
       photoUrl: input.photoUrl !== undefined ? input.photoUrl || null : undefined,
+      wizardData:
+        input.wizardData === undefined
+          ? undefined
+          : input.wizardData === null
+            ? Prisma.DbNull
+            : (input.wizardData as Prisma.InputJsonValue),
     },
     include: EMPLOYEE_INCLUDE,
   });
@@ -795,11 +803,19 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
   return { data: serializeEmployeeList([updated])[0] };
 }
 
-export async function deleteEmployee(id: string) {
+export async function deleteEmployee(id: string, actingUserId?: string | null) {
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   const where: Prisma.EmployeeWhereUniqueInput = isUuid ? { id } : { employeeCode: id };
   const existing = await prisma.employee.findUnique({ where, include: { user: true } });
   if (!existing) throw AppError.notFound("Employee not found");
+
+  // Never let an admin delete their own login account: doing so removes the
+  // user + refresh tokens and instantly force-logs the session out.
+  if (actingUserId && existing.userId === actingUserId) {
+    throw AppError.forbidden(
+      "You cannot delete your own account while signed in. Ask another administrator to remove it."
+    );
+  }
 
   const pk = existing.id;
 

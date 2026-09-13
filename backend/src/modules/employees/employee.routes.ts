@@ -41,6 +41,7 @@ const createBodySchema = z.object({
   country: z.string().optional(),
   annualSalary: z.coerce.number().nonnegative().optional(),
   status: z.enum(["Active", "On Leave", "Inactive", "Terminated"]).optional(),
+  wizardData: z.unknown().optional(),
 });
 
 const updateBodySchema = createBodySchema.partial();

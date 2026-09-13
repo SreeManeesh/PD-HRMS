@@ -13,6 +13,9 @@ export interface WizardMirrorPayload {
   dateOfJoining?: string;
   state?: string;
   country?: string;
+  skillType?: string;
+  annualSalary?: number;
+  wizardData?: unknown;
 }
 
 /**
@@ -41,6 +44,9 @@ export async function mirrorWizardRegistration(payload: WizardMirrorPayload) {
     dateOfJoining: payload.dateOfJoining || undefined,
     state: payload.state,
     country: payload.country,
+    skillType: payload.skillType,
+    annualSalary: payload.annualSalary,
+    wizardData: payload.wizardData,
   };
   return createEmployee(input, { autoCreateRefs: true });
 }
@@ -77,6 +83,10 @@ export async function getWizardSessionToken(): Promise<string> {
   return data.token;
 }
 
-export function buildWizardUrl(token: string): string {
-  return `${env.WIZARD_URL}/?token=${encodeURIComponent(token)}`;
+export function buildWizardUrl(token: string, operator?: { name?: string; email?: string; role?: string }): string {
+  const params = new URLSearchParams({ token });
+  if (operator?.name) params.set("operatorName", operator.name);
+  if (operator?.email) params.set("operatorEmail", operator.email);
+  if (operator?.role) params.set("operatorRole", operator.role);
+  return `${env.WIZARD_URL}/?${params.toString()}`;
 }

@@ -11,6 +11,7 @@ export const employeeSchema = z.object({
   maritalStatus: z.enum(['SINGLE','MARRIED','DIVORCED','WIDOWED']).optional().nullable(),
   bloodGroup: z.string().max(5).optional().nullable(),
   nationality: z.string().min(1).max(50).default('India'),
+  country: z.string().max(50).optional().nullable().default('India'),
   aadhaar: z.string().transform(v=>v.replace(/\D/g,'')).refine(v=>v.length===12,'must be exactly 12 digits').optional().nullable(),
   pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/i).transform(v=>v.toUpperCase()).optional().nullable(),
   passportNumber: z.string().max(20).optional().nullable(),
@@ -34,6 +35,7 @@ export const employeeSchema = z.object({
   job: z.object({
     employmentType: z.enum(['PERMANENT','CONTRACT','INTERN','CONSULTANT','PROBATION','TRAINEE']),
     employeeCategory: z.enum(['WHITE_COLLAR','BLUE_COLLAR','FIELD','WORK_FROM_HOME']).optional().nullable(),
+    skillType: z.enum(['Skilled','Semi Skilled','Unskilled']).optional().nullable(),
     dateOfJoining: z.string(),
     confirmationDate: z.string().optional().nullable(),
     probationMonths: z.number().int().nonnegative().optional().nullable(),
@@ -55,16 +57,16 @@ export const employeeSchema = z.object({
     attendanceTrackingMode: z.string().default('WEB'),
     noticePeriodDays: z.number().int().nonnegative().optional().nullable()
   }),
-  statutory: z.object({uanNumber:z.string().max(12).optional().nullable(),pfNumber:z.string().optional().nullable(),pfApplicable:z.boolean(),pfJoiningDate:z.string().optional().nullable(),esicNumber:z.string().max(10).optional().nullable(),esiApplicable:z.boolean(),ptState:z.string().optional().nullable(),ptRegistrationNumber:z.string().optional().nullable(),lwfApplicable:z.boolean(),taxRegime:z.enum(['OLD','NEW']),panVerified:z.boolean(),aadhaarPanLinked:z.boolean(),taxDeclarationStatus:z.string(),form16DeliveryMode:z.string().optional().nullable(),nominationUnderEpfDone:z.boolean(),epsMember:z.boolean(),epsPreviousMemberId:z.string().optional().nullable(),internationalWorkerFlag:z.boolean(),passportCountryOfOrigin:z.string().optional().nullable(),wcPolicyCategory:z.string().optional().nullable(),esicDispensary:z.string().optional().nullable()}),
+  statutory: z.object({uanNumber:z.string().max(12).optional().nullable(),pfNumber:z.string().optional().nullable(),pfApplicable:z.boolean(),pfJoiningDate:z.string().optional().nullable(),esicNumber:z.string().max(10).optional().nullable(),esiApplicable:z.boolean(),ptState:z.string().optional().nullable(),ptRegistrationNumber:z.string().optional().nullable(),lwfApplicable:z.boolean(),taxRegime:z.enum(['OLD','NEW']),panVerified:z.boolean(),aadhaarPanLinked:z.boolean(),taxDeclarationStatus:z.string(),form16DeliveryMode:z.string().optional().nullable(),nominationUnderEpfDone:z.boolean(),epsMember:z.boolean(),epsPreviousMemberId:z.string().optional().nullable(),internationalWorkerFlag:z.boolean(),passportCountryOfOrigin:z.string().optional().nullable(),wcPolicyCategory:z.string().optional().nullable(),esicDispensary:z.string().optional().nullable(),annualSalary:z.number().nonnegative().optional().nullable()}),
   bank: z.object({bankName:z.string(),accountNumber:z.string(),ifscCode:z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/i),bankBranch:z.string().optional().nullable(),accountHolderName:z.string(),accountType:z.enum(['SAVINGS','CURRENT']),salaryPaymentMode:z.enum(['BANK_TRANSFER','CHEQUE','CASH']),upiId:z.string().optional().nullable(),pennyDropVerified:z.boolean()}),
   family: z.array(z.object({memberName:z.string(),relationship:z.string(),dateOfBirth:z.string().optional().nullable(),isDependent:z.boolean(),dependentForInsurance:z.boolean(),aadhaar:z.string().optional().nullable(),nomineeFlag:z.boolean(),nominationSharePercent:z.number().min(0).max(100).optional().nullable(),guardianName:z.string().optional().nullable()})),
   education: z.array(z.object({highestQualification:z.string().optional().nullable(),specialization:z.string().optional().nullable(),institution:z.string().optional().nullable(),yearOfPassing:z.number().int().optional().nullable(),gradeOrPercentage:z.number().optional().nullable()})),
   skills: z.array(z.string()),
+  consents: z.array(z.object({code:z.string().min(1),status:z.enum(['GRANTED','DENIED']).optional().default('GRANTED'),method:z.string().optional().nullable()})).optional().nullable().default([]),
   certifications: z.array(z.object({name:z.string(),issuer:z.string().optional().nullable(),issuedOn:z.string().optional().nullable(),expiresOn:z.string().optional().nullable(),credentialId:z.string().optional().nullable()})),
   languages: z.array(z.object({languageName:z.string(),canRead:z.boolean(),canWrite:z.boolean(),canSpeak:z.boolean()})),
   experience: z.array(z.object({previousEmployerName:z.string(),designation:z.string().optional().nullable(),fromDate:z.string().optional().nullable(),toDate:z.string().optional().nullable(),lastDrawnSalary:z.number().optional().nullable(),reasonForLeaving:z.string().optional().nullable(),previousPfNumber:z.string().optional().nullable(),relievingLetterReceived:z.boolean()})),
-  role: z.string().min(1),
-  mfaEnabled: z.boolean().default(false)
+  role: z.string().min(1)
 });
 
 export const consentActionSchema = z.object({
