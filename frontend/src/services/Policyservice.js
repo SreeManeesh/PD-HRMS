@@ -7,3 +7,10 @@ export const publishPolicy = async (id) => (await api.post(`/policies/${id}/publ
 export const getAcknowledgements = async () => (await api.get("/policies/acknowledgements/me")).data;
 export const getAllAcknowledgements = async () => (await api.get("/policies/compliance")).data;
 export const acknowledgePolicy = async (policyId, versionId) => (await api.post(`/policies/${policyId}/acknowledge`, { versionId })).data;
+export const uploadPolicyFile = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return (await api.post("/policies/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })).data;
+};

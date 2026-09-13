@@ -1,15 +1,6 @@
-/**
- * Payroll Page — Module 7
- * Slide-button sections: Annual Payroll, Monthly Payroll, Employee Payroll, My Payslips.
- *
- * Annual Payroll  : periods (runs) table like before — click a period to reveal
- *                   that month's per-employee payroll details right there.
- * Monthly Payroll : day-by-day calculations for the selected month — click any
- *                   day to open that day's employees (like monthly payroll).
- * Employee Payroll: search bar to pick an employee; defaults to the manager.
- */
 
-import { useState, useEffect, useRef } from "react";
+
+import { useState, useEffect, useRef, Fragment } from "react";
 import { CheckCircle2, Eye } from "lucide-react";
 import { Play, FileText, Users, Wallet, CalendarRange, Search, ChevronDown, ChevronRight } from "lucide-react";
 import PayslipPreviewModal from "../../components/payslip/PayslipPreviewModal.jsx";
@@ -30,6 +21,14 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import EmployeeSearchBox from "../../components/shared/EmployeeSearchBox.jsx";
 import EmployeeSalaryBreakdown from "../../components/payroll/EmployeeSalaryBreakdown.jsx";
+import WageRatesPanel from "../../components/payroll/WageRatesPanel.jsx";
+import PayRulesPanel from "../../components/payroll/PayRulesPanel.jsx";
+import SalaryAdvancesPanel from "../../components/payroll/SalaryAdvancesPanel.jsx";
+import ProductionRecordsPanel from "../../components/payroll/ProductionRecordsPanel.jsx";
+import ContractorBillingPanel from "../../components/payroll/ContractorBillingPanel.jsx";
+import BlueCollarPayrollPanel from "../../components/payroll/BlueCollarPayrollPanel.jsx";
+import AdminEditableText from "../../components/shared/AdminEditableText.jsx";
+import { getLocations } from "../../services/Orgmanagementservice.js";
 import {
   MONTHS,
   MONTHS_FULL,
@@ -60,13 +59,19 @@ function SlideTabs({ tabs, active, onChange }) {
   );
 }
 
-function SectionTitle({ icon: Icon, title, subtitle }) {
+function SectionTitle({ icon: Icon, title, subtitle, labelKey }) {
+  const baseKey = labelKey || `sec_${(title || "").toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px" }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px", flexWrap: "wrap" }}>
       <h2 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)", display: "flex", alignItems: "center", gap: "8px" }}>
-        {Icon && <Icon size={17} style={{ color: "var(--primary)" }} />} {title}
+        {Icon && <Icon size={17} style={{ color: "var(--primary)" }} />}
+        <AdminEditableText labelKey={`${baseKey}_title`} defaultText={title} as="span" />
       </h2>
-      {subtitle && <span style={{ fontSize: "12.5px", color: "var(--subtext)" }}>{subtitle}</span>}
+      {subtitle && (
+        <span style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
+          <AdminEditableText labelKey={`${baseKey}_sub`} defaultText={subtitle} as="span" />
+        </span>
+      )}
     </div>
   );
 }
@@ -127,8 +132,13 @@ export default function Payroll() {
   const { user, permissions } = useAuth();
   const toast = useToast();
   const now = new Date();
-  const isStaff = user.role !== "EMPLOYEE";
+  const isAdmin = ["ADMIN", "SUPER_ADMIN"].includes(user?.role);
+  const isHR = user?.role === "HR";
+  const isManager = user?.role === "MANAGER";
+  const isEmployee = user?.role === "EMPLOYEE" || (!isAdmin && !isHR && !isManager);
+  const isStaff = isAdmin || isHR;
   const canApprove = Array.isArray(permissions) && permissions.includes("payroll:approve");
+
   const [runs, setRuns]         = useState([]);
   const [dataYears, setDataYears] = useState([]);
   const [payslips, setPayslips] = useState([]);
@@ -137,6 +147,7 @@ export default function Payroll() {
   const [savingRegime, setSavingRegime] = useState(false);
   const [regimeMsg, setRegimeMsg] = useState(null);
   const [employees, setEmployees] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [activeRun, setActiveRun] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -144,7 +155,7 @@ export default function Payroll() {
   const [approveRun, setApproveRun] = useState(null); // run awaiting four-eyes approve
   const [approving, setApproving] = useState(false);
   const [previewId, setPreviewId] = useState(null); // payslip id shown in the payslip preview modal
-  const [activeTab, setActiveTab] = useState("annual");
+  const [activeTab, setActiveTab] = useState(isAdmin || isHR ? "annual" : "employee");
   const [month, setMonth]       = useState(now.getMonth() + 1);
   const [year, setYear]         = useState(now.getFullYear());
   const [annualSearch, setAnnualSearch] = useState("");
@@ -165,35 +176,45 @@ export default function Payroll() {
   const [dayError, setDayError] = useState("");
   const [selectedDay, setSelectedDay] = useState(null); // ISO date
   const [monthPayMap, setMonthPayMap] = useState({});    // empId -> monthly summary
+  const [monthlyViewMode, setMonthlyViewMode] = useState("table"); // "table" | "calendar"
 
-  // Employee payroll: search + default to manager.
+  // Employee payroll: search + default to manager or user.
   const [empSearch, setEmpSearch] = useState("");
   const [activeEmpId, setActiveEmpId] = useState("");
 
   useEffect(() => {
     setLoading(true);
-    // Each call resolves independently so a failure (e.g. employees list) can
-    // never blank the whole dashboard — Employee Payroll keeps working even if
-    // runs or payslips error out and vice versa.
     Promise.all([
       getPayrollRuns().catch(() => ({ data: [] })),
       getPayrollYears().catch(() => ({ data: [] })),
       getPayslips(user.id).catch(() => ({ data: [] })),
       getEmployees({ limit: 5000 }).catch(() => ({ data: [] })),
+      getLocations().catch(() => ({ data: [] })),
     ])
-      .then(([runRes, yearRes, slipRes, empRes]) => {
+      .then(([runRes, yearRes, slipRes, empRes, locRes]) => {
         setRuns(runRes.data);
         setDataYears(yearRes.data || []);
         setPayslips(slipRes.data);
         const empList = empRes.data || [];
         setEmployees(empList);
+        setLocations(locRes.data || []);
         const first = runRes.data?.[0];
         if (first) { setMonth(first.month); setYear(first.year); }
-        // Employees always see their OWN payroll; staff default to their employee or manager.
-        const me = empList.find((e) => e.id === user.id || e.email === user.email);
-        if (!isStaff) {
-          const myEmpId = me ? me.id : user.id;
-          setActiveEmpId((cur) => cur || myEmpId);
+
+        const me = empList.find((e) => e.id === user.id || e.email === user.email || e.id === user.employeeId);
+        const myEmpId = me ? me.id : (user.employeeId || user.id);
+
+        if (isEmployee) {
+          setActiveEmpId(myEmpId);
+        } else if (isManager) {
+          const reports = empList.filter(
+            (e) =>
+              e.reportingManagerId === user.employeeId ||
+              e.reportingManagerId === user.id ||
+              (user.email && e.reportingManager?.email === user.email)
+          );
+          const firstReport = reports[0]?.id || myEmpId;
+          setActiveEmpId((cur) => cur || firstReport);
         } else {
           const managerId = me && me.managerId;
           const defaultStaffEmp = managerId ? empList.find((e) => e.id === managerId)?.id : (me?.id || empList[0]?.id || user.id);
@@ -201,7 +222,7 @@ export default function Payroll() {
         }
       })
       .finally(() => setLoading(false));
-  }, [user.id]);
+  }, [user.id, user.employeeId, user.role, isEmployee, isManager]);
 
   // Load the employee's saved tax regime (OLD/NEW) for the payslip year.
   useEffect(() => {
@@ -355,29 +376,46 @@ export default function Payroll() {
   const expandedPeriod = expandedRun ? `${MONTHS_FULL[expandedRun.month - 1]} ${expandedRun.year}` : "";
 
   // ═══ Monthly Payroll: aggregate attendance + payroll summaries for the month ═══
+  // Scoped employees for team managers and employees
+  const scopedEmployees = isManager
+    ? employees.filter(
+        (e) =>
+          e.reportingManagerId === user.employeeId ||
+          e.reportingManagerId === user.id ||
+          (user.email && e.reportingManager?.email === user.email) ||
+          e.id === user.id ||
+          e.id === user.employeeId
+      )
+    : isEmployee
+    ? employees.filter((e) => e.id === user.id || e.id === user.employeeId || (user.email && e.email === user.email))
+    : employees;
+
+  // Fetch day-by-day attendance for employees in the selected month,
+  // joined with each employee's full monthly salary calculation.
   useEffect(() => {
-    if (!employees.length) { setDayMap({}); setMonthPayMap({}); return; }
+    if (employees.length === 0) return;
+    const targetEmps = isManager ? scopedEmployees : employees;
+    if (targetEmps.length === 0) return;
     setDayLoading(true);
     setDayError("");
-    setSelectedDay(null);
-    // Payroll summaries load in ONE batched request; attendance stays
-    // per-employee so the day-grid keeps fresh punch data.
     Promise.all([
-      getEmployeePayrollSummaries(month, year).then((res) => res.data || []).catch(() => []),
-      Promise.all(employees.map((emp) =>
-        getMyAttendance({ employeeId: emp.id, month, year })
-          .then((res) => res.data || [])
-          .catch(() => [])
+      getEmployeePayrollSummaries(month, year).catch(() => []), // positional args — service signature is (month, year)
+      Promise.all(targetEmps.map((emp) =>
+        getMyAttendance({ employeeId: emp.id, month, year }).catch(() => [])
       )),
     ])
       .then(([summaries, attByEmp]) => {
-        const payByCode = Object.fromEntries((summaries || []).map((s) => [s.employeeId, s]));
+        // Both services resolve to { data } envelopes — unwrap the record lists
+        const summaryRows = Array.isArray(summaries) ? summaries : (summaries?.data || []);
+        const payByCode = Object.fromEntries(summaryRows.map((s) => [s.employeeId, s]));
         const map = {};
         const payMap = {};
-        employees.forEach((emp, i) => {
+        targetEmps.forEach((emp, i) => {
           const pay = payByCode[emp.id] || payByCode[emp.employeeCode];
           if (pay) payMap[emp.id] = pay;
-          (attByEmp[i] || []).forEach((r) => {
+          // getMyAttendance resolves to { data, total } — unwrap the record list
+          const recs = Array.isArray(attByEmp[i]) ? attByEmp[i] : (attByEmp[i]?.data || []);
+          recs.forEach((r) => {
             const date = String(r.date).slice(0, 10);
             const slot = map[date] || (map[date] = { present: 0, wfh: 0, late: 0, leave: 0, absent: 0, total: 0, records: [] });
             slot.total += 1;
@@ -387,8 +425,6 @@ export default function Payroll() {
             else if (status === "Late") slot.late += 1;
             else if (status === "Leave") slot.leave += 1;
             else if (status === "Absent") slot.absent += 1;
-            // Holiday/Weekend/other statuses are counted in total but not in
-            // the present/absent buckets.
             slot.records.push(r);
           });
         });
@@ -397,7 +433,7 @@ export default function Payroll() {
       })
       .catch((err) => setDayError(err.message || "Could not load daily attendance"))
       .finally(() => setDayLoading(false));
-  }, [employees, month, year, user.id, refreshKey]);
+  }, [employees, month, year, user.id, refreshKey, isManager]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const dayRows = Array.from({ length: daysInMonth }, (_, i) => {
@@ -410,9 +446,6 @@ export default function Payroll() {
 
   const selectedDayRecords = selectedDay ? (dayMap[selectedDay]?.records || []) : [];
 
-  // Day-wise salary for the selected day: for each tracked employee, derive
-  // per-day gross/deductions/net from the monthly summary (prorated by working
-  // days) and join with that day's attendance record.
   const ATTENDANCE_META = {
     Present: { label: "Present", color: "#16a34a", bg: "#f0fdf4" },
     WFH:     { label: "WFH",     color: "#0284c7", bg: "#f0f9ff" },
@@ -420,8 +453,9 @@ export default function Payroll() {
     Leave:   { label: "Leave",   color: "#7c3aed", bg: "#f5f3ff" },
     Absent:  { label: "Absent",  color: "#dc2626", bg: "#fef2f2" },
   };
+  const targetDayEmps = isManager ? scopedEmployees : employees;
   const selectedDayRows = selectedDay
-    ? employees.map((emp) => {
+    ? targetDayEmps.map((emp) => {
         const summary = monthPayMap[emp.id];
         const rec = selectedDayRecords.find((r) => r.employeeId === emp.id) || null;
         const workingDays = summary?.workingDays ?? 1;
@@ -464,21 +498,35 @@ export default function Payroll() {
 
   if (loading) return <MainLayout><Spinner /></MainLayout>;
 
-  // Employees only see Employee Payroll + My Payslips; admin/HR/manager see all.
-  const tabs = isStaff
-    ? [
-        { id: "annual",    label: "Annual Payroll"   },
-        { id: "monthly",   label: "Monthly Payroll"  },
-        { id: "employee",  label: "Employee Payroll" },
-        { id: "payslips",  label: "My Payslips"      },
-        { id: "distribution", label: "Payslip Distribution" },
-        { id: "designer",  label: "Nesting Manager" },
-        { id: "branding",  label: "Payslip Branding" },
-      ]
-    : [
-        { id: "employee",  label: "Employee Payroll" },
-        { id: "payslips",  label: "My Payslips"      },
-];
+  // Role-based tabs
+  let tabs = [];
+  if (isAdmin || isHR) {
+    tabs = [
+      { id: "annual",       label: "Annual Payroll"       },
+      { id: "monthly",      label: "Monthly Payroll"      },
+      { id: "employee",     label: "Employee Payroll"     },
+      { id: "wagerates",    label: "Wage Rates & Overrides"},
+      { id: "components",   label: "Pay Rules & Slabs"    },
+      { id: "advances",     label: "Salary Advances"      },
+      { id: "production",   label: "Production Units"     },
+      { id: "contractors",  label: "Contractors & Billing"},
+      { id: "payslips",     label: "My Payslips"          },
+      { id: "distribution", label: "Payslip Distribution" },
+      { id: "designer",     label: "Nesting Manager"      },
+      { id: "branding",     label: "Payslip Branding"     },
+    ];
+  } else if (isManager) {
+    tabs = [
+      { id: "monthly",      label: "Team Payroll & Attendance" },
+      { id: "employee",     label: "Team Payroll Breakdown" },
+      { id: "payslips",     label: "My Payslips"          },
+    ];
+  } else {
+    tabs = [
+      { id: "employee",     label: "My Payroll Breakdown" },
+      { id: "payslips",     label: "My Payslips"          },
+    ];
+  }
   const effectiveTab = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id || "employee";
 
   return (
@@ -520,152 +568,128 @@ export default function Payroll() {
                     const meta = run ? (payrollStatusMeta[run.status] || payrollStatusMeta.Draft) : null;
                     const isActive = expandedRun && expandedRun.year === year && expandedRun.month === mo;
                     return (
-                      <tr
-                        key={m}
-                        onClick={() => setExpandedRun((cur) => (cur && cur.year === year && cur.month === mo ? null : { month: mo, year }))}
-                        style={{
-                          borderBottom: i < MONTHS.length - 1 ? "1px solid var(--border)" : "none",
-                          cursor: "pointer",
-                          background: isActive ? "var(--primary-light)" : "transparent",
-                        }}
-                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--background)"; }}
-                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-                      >
-                        <td style={{ padding: "13px 18px", width: 24 }}>
-                          {isActive ? <ChevronDown size={16} style={{ color: "var(--primary)", verticalAlign: "middle" }} /> : <ChevronRight size={16} style={{ color: "var(--subtext)", verticalAlign: "middle" }} />}
-                        </td>
-                        <td style={{ padding: "13px 18px", fontSize: "12.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{String(mo).padStart(2, "0")}</td>
-                        <td style={{ padding: "13px 18px", fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>{m}</td>
-                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{year}</td>
-                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{run ? run.totalEmployees : "—"}</td>
-                        <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontFamily: "monospace" }}>{run ? fmt(run.netPayroll) : "—"}</td>
-                        <td style={{ padding: "13px 18px" }}>
-                          {run && meta ? <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /> : <span style={{ fontSize: 12, color: "var(--subtext)" }}>No run</span>}
-                        </td>
-<td style={{ padding: "13px 18px" }}>
-  {run?.status === "Draft" && (
-    <button onClick={(e) => { e.stopPropagation(); setActiveRun(run); setShowConfirm(true); }}
-      style={{ fontSize: 11.5, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", border: "1px solid var(--primary)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Run</button>
-  )}
-  {run?.status === "Processing" && canApprove && (
-    <button onClick={(e) => { e.stopPropagation(); setApproveRun(run); }}
-      style={{ fontSize: 11.5, fontWeight: 700, color: "var(--amber)", background: "var(--amber-light)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Approve</button>
-  )}
-  {run?.status === "Processing" && !canApprove && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Awaiting approval</span>}
-  {run?.status === "Paid" && (
-    <span style={{ fontSize: 11.5, color: "var(--green)", fontWeight: 700 }}>Paid</span>
-  )}
-  {!run && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Future</span>}
-</td>
-                      </tr>
+                      <Fragment key={m}>
+                        <tr
+                          onClick={() => setExpandedRun((cur) => (cur && cur.year === year && cur.month === mo ? null : { month: mo, year }))}
+                          style={{
+                            borderBottom: !isActive && i < MONTHS.length - 1 ? "1px solid var(--border)" : "none",
+                            cursor: "pointer",
+                            background: isActive ? "var(--primary-light)" : "transparent",
+                          }}
+                          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--background)"; }}
+                          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <td style={{ padding: "13px 18px", width: 24 }}>
+                            {isActive ? <ChevronDown size={16} style={{ color: "var(--primary)", verticalAlign: "middle" }} /> : <ChevronRight size={16} style={{ color: "var(--subtext)", verticalAlign: "middle" }} />}
+                          </td>
+                          <td style={{ padding: "13px 18px", fontSize: "12.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{String(mo).padStart(2, "0")}</td>
+                          <td style={{ padding: "13px 18px", fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>{m}</td>
+                          <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{year}</td>
+                          <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--label)" }}>{run ? run.totalEmployees : "—"}</td>
+                          <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontFamily: "monospace" }}>{run ? fmt(run.netPayroll) : "—"}</td>
+                          <td style={{ padding: "13px 18px" }}>
+                            {run && meta ? <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /> : <span style={{ fontSize: 12, color: "var(--subtext)" }}>No run</span>}
+                          </td>
+                          <td style={{ padding: "13px 18px" }}>
+                            {run?.status === "Draft" && (
+                              <button onClick={(e) => { e.stopPropagation(); setActiveRun(run); setShowConfirm(true); }}
+                                style={{ fontSize: 11.5, fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", border: "1px solid var(--primary)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Run</button>
+                            )}
+                            {run?.status === "Processing" && canApprove && (
+                              <button onClick={(e) => { e.stopPropagation(); setApproveRun(run); }}
+                                style={{ fontSize: 11.5, fontWeight: 700, color: "var(--amber)", background: "var(--amber-light)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer" }}>Approve</button>
+                            )}
+                            {run?.status === "Processing" && !canApprove && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Awaiting approval</span>}
+                            {run?.status === "Paid" && (
+                              <span style={{ fontSize: 11.5, color: "var(--green)", fontWeight: 700 }}>Paid</span>
+                            )}
+                            {!run && <span style={{ fontSize: 11.5, color: "var(--subtext)" }}>Future</span>}
+                          </td>
+                        </tr>
+                        {isActive && (
+                          <tr key={`${m}-breakdown`} style={{ borderBottom: i < MONTHS.length - 1 ? "1px solid var(--border)" : "none" }}>
+                            <td colSpan={8} style={{ padding: "20px 24px", background: "var(--background)" }}>
+                              <BlueCollarPayrollPanel
+                                key={`annual-run-${mo}-${year}`}
+                                initialMonth={mo}
+                                initialYear={year}
+                                years={YEARS}
+                                title={`${MONTHS_FULL[mo - 1]} ${year} — Workforce Payroll Breakdown`}
+                                subtitle="Integrated 20-column statutory payroll dynamically computed from attendance and state minimum wages"
+                                onViewEmployeeSlip={(slipId) => setPreviewId(slipId)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-
-            {expandedRun && (
-              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 18 }}>
-                <SectionTitle icon={Users} title={`${expandedPeriod} — Employee Details`} subtitle="Per-employee payroll for the selected month" />
-                {(() => {
-                  const run = runs.find((r) => r.year === expandedRun.year && r.month === expandedRun.month);
-                  if (!run) return null;
-                  return (
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                      {run.status === "Draft" && (
-                        <button onClick={() => { setActiveRun(run); setShowConfirm(true); }}
-                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                          <Play size={13} /> Run Payroll
-                        </button>
-                      )}
-                      {run.status === "Processing" && canApprove && (
-                        <button onClick={() => setApproveRun(run)}
-                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", background: "var(--amber-light)", color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                          <CheckCircle2 size={13} /> Approve & Pay
-                        </button>
-                      )}
-                      {run.status === "Paid" && (
-                        <button onClick={() => setActiveTab("payslips")}
-                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", background: "var(--green-light)", color: "var(--green)", border: "1px solid var(--green)", borderRadius: "var(--radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                          <Wallet size={13} /> View Payslips
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {yearLoading ? (
-                  <Spinner />
-                ) : yearError ? (
-                  <p style={{ fontSize: 13, color: "var(--red)", fontWeight: 600 }}>{yearError}</p>
-                ) : annualEmpVisible.length === 0 ? (
-                  <EmptyState title="No employee data" subtitle="No computed payroll found for this period." />
-                ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                          {["Employee","Working Days","Present Days","Leave Days","Gross","Deductions","Net Pay","Status"].map((h) => (
-                            <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {annualEmpVisible.map((row, idx) => (
-                          <tr key={row.employeeId} style={{ borderBottom: idx < annualEmpVisible.length - 1 ? "1px solid var(--border)" : "none" }}>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                                <span>{row.employeeName}</span>
-                                <span style={{ color: "var(--subtext)", fontWeight: 500, fontSize: "12px" }}>({row.employeeId})</span>
-                                {(() => {
-                                  const emp = employees.find((e) => e.id === row.employeeId || e.employeeCode === row.employeeId);
-                                  const skill = row.skillType || emp?.skillType;
-                                  if (!skill) return null;
-                                  const sm = getSkillMeta(skill);
-                                  return (
-                                    <span
-                                      style={{
-                                        fontSize: "10.5px",
-                                        fontWeight: 700,
-                                        padding: "1px 7px",
-                                        borderRadius: "99px",
-                                        color: sm.color,
-                                        background: sm.bg,
-                                        border: `1px solid ${sm.border}`,
-                                      }}
-                                    >
-                                      {sm.label}
-                                    </span>
-                                  );
-                                })()}
-                              </div>
-                            </td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.workingDays ?? "—"}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.presentDays ?? "—"}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.leaveDays > 0 ? "var(--amber)" : "var(--subtext)" }}>{row.leaveDays ?? 0}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)", fontFamily: "monospace" }}>{fmt(row.gross)}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--red)", fontFamily: "monospace" }}>−{fmt(row.deductions?.total)}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 700, color: "var(--green)", fontFamily: "monospace" }}>{fmt(row.netPay)}</td>
-                            <td style={{ padding: "13px 18px" }}>
-                              <StatusBadge {...(payrollStatusMeta[row.status] || { label: row.status, color: "#64748b", bg: "#f8fafc" })} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
           </section>
         )}
 
         {/* ═══ Monthly Payroll ═══ */}
         {effectiveTab === "monthly" && (
           <section style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: "20px" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-              <SectionTitle icon={Wallet} title="Monthly Payroll" subtitle={`Day-by-day calculations for ${MONTHS_FULL[month - 1]} ${year} — click any day to see its employees`} />
-              {(() => {
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "16px" }}>
+              <div>
+                <SectionTitle
+                  icon={Wallet}
+                  title={isManager ? "Team Payroll & Attendance" : "Monthly Master Payroll"}
+                  subtitle={
+                    isManager
+                      ? `Complete monthly payroll calculations and day-by-day attendance for your team for ${MONTHS_FULL[month - 1]} ${year}`
+                      : `Live statutory calculations & attendance breakdown for ${MONTHS_FULL[month - 1]} ${year}`
+                  }
+                />
+                {/* View switcher tabs */}
+                <div style={{ display: "inline-flex", gap: "4px", background: "var(--background)", padding: "3px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", marginTop: "4px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setMonthlyViewMode("table")}
+                    style={{
+                      padding: "6px 14px",
+                      borderRadius: "var(--radius-sm)",
+                      fontSize: "12.5px",
+                      fontWeight: monthlyViewMode === "table" ? 700 : 500,
+                      border: "none",
+                      background: monthlyViewMode === "table" ? "var(--primary)" : "transparent",
+                      color: monthlyViewMode === "table" ? "#fff" : "var(--subtext)",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <FileText size={14} /> 20-Column Master Sheet
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMonthlyViewMode("calendar")}
+                    style={{
+                      padding: "6px 14px",
+                      borderRadius: "var(--radius-sm)",
+                      fontSize: "12.5px",
+                      fontWeight: monthlyViewMode === "calendar" ? 700 : 500,
+                      border: "none",
+                      background: monthlyViewMode === "calendar" ? "var(--primary)" : "transparent",
+                      color: monthlyViewMode === "calendar" ? "#fff" : "var(--subtext)",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <CalendarRange size={14} /> Day-by-Day Attendance Calendar
+                  </button>
+                </div>
+              </div>
+
+              {isStaff && (() => {
                 const run = runs.find((r) => r.month === month && r.year === year);
                 if (run?.status === "Draft") {
                   return (
@@ -705,125 +729,149 @@ export default function Payroll() {
               })()}
             </div>
 
-            <MonthYearToolbar
-              month={month} year={year} onMonth={setMonth} onYear={setYear} years={YEARS}
-              search={monthlySearch} onSearch={setMonthlySearch}
-              searchPlaceholder="Search day, weekday…"
-            />
-
-            {dayLoading ? (
-              <Spinner />
-            ) : dayError ? (
-              <p style={{ fontSize: "13px", color: "var(--red)", fontWeight: 600 }}>{dayError}</p>
+            {monthlyViewMode === "table" ? (
+              <BlueCollarPayrollPanel
+                key={`monthly-table-${month}-${year}`}
+                initialMonth={month}
+                initialYear={year}
+                years={YEARS}
+                title="Monthly Master Payroll Calculations"
+                subtitle={`Comprehensive 20-column statutory payroll table for ${MONTHS_FULL[month - 1]} ${year} with live attendance reconciliation`}
+                onViewEmployeeSlip={(slipId) => setPreviewId(slipId)}
+              />
             ) : (
               <>
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "18px" }}>
-                  <Stat label="Working day records" value={`${dayLoading ? 0 : Object.keys(dayMap).length} days`} color="var(--text)" mono={false} />
-                  <Stat label="Present" value={dayRows.reduce((s, r) => s + r.present, 0)} color="var(--green)" mono={false} />
-                  <Stat label="WFH" value={dayRows.reduce((s, r) => s + r.wfh, 0)} color="var(--primary)" mono={false} />
-                  <Stat label="Late" value={dayRows.reduce((s, r) => s + r.late, 0)} color="var(--amber)" mono={false} />
-                  <Stat label="Leave" value={dayRows.reduce((s, r) => s + r.leave, 0)} color="var(--purple, #7c3aed)" mono={false} />
-                </div>
+                <MonthYearToolbar
+                  month={month} year={year} onMonth={setMonth} onYear={setYear} years={YEARS}
+                  search={monthlySearch} onSearch={setMonthlySearch}
+                  searchPlaceholder="Search day, weekday…"
+                />
 
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                        {["","Date","Day","Present","WFH","Late","Leave","Absent","Total","Action"].map((h) => (
-                          <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredDayRows.map((row, i) => {
-                        const isSelected = selectedDay === row.date;
-                        return (
-                          <tr key={row.date} onClick={() => setSelectedDay(isSelected ? null : row.date)}
-                            style={{
-                              borderBottom: i < filteredDayRows.length - 1 ? "1px solid var(--border)" : "none",
-                              cursor: "pointer",
-                              background: isSelected ? "var(--primary-light)" : "transparent",
-                              transition: "background 0.12s",
-                            }}
-                            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--background)"; }}
-                            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
-                          >
-                            <td style={{ padding: "13px 18px", width: "24px" }}>
-                              {isSelected ? <ChevronDown size={16} style={{ color: "var(--primary)", verticalAlign: "middle" }} /> : <ChevronRight size={16} style={{ color: "var(--subtext)", verticalAlign: "middle" }} />}
-                            </td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)", fontFamily: "monospace" }}>{row.date}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13px", color: "var(--label)" }}>{row.weekday}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--green)", fontWeight: 600 }}>{row.present}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--primary)", fontWeight: 600 }}>{row.wfh}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--amber)", fontWeight: 600 }}>{row.late}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--purple, #7c3aed)", fontWeight: 600 }}>{row.leave}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--red)", fontWeight: 600 }}>{row.absent}</td>
-                            <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.total}</td>
-                            <td style={{ padding: "13px 18px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", padding: "3px 12px", borderRadius: "99px" }}>{isSelected ? "Viewing" : "View Salary"}</span>
-                            </td>
+                {dayLoading ? (
+                  <Spinner />
+                ) : dayError ? (
+                  <p style={{ fontSize: "13px", color: "var(--red)", fontWeight: 600 }}>{dayError}</p>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "18px" }}>
+                      <Stat label="Working day records" value={`${dayLoading ? 0 : Object.keys(dayMap).length} days`} color="var(--text)" mono={false} />
+                      <Stat label="Present" value={dayRows.reduce((s, r) => s + r.present, 0)} color="var(--green)" mono={false} />
+                      <Stat label="WFH" value={dayRows.reduce((s, r) => s + r.wfh, 0)} color="var(--primary)" mono={false} />
+                      <Stat label="Late" value={dayRows.reduce((s, r) => s + r.late, 0)} color="var(--amber)" mono={false} />
+                      <Stat label="Leave" value={dayRows.reduce((s, r) => s + r.leave, 0)} color="var(--purple, #7c3aed)" mono={false} />
+                    </div>
+
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                            {["","Date","Day","Present","WFH","Late","Leave","Absent","Total","Action"].map((h) => (
+                              <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
+                            ))}
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody>
+                          {filteredDayRows.map((row, i) => {
+                            const isSelected = selectedDay === row.date;
+                            return (
+                              <tr key={row.date} onClick={() => setSelectedDay(isSelected ? null : row.date)}
+                                style={{
+                                  borderBottom: i < filteredDayRows.length - 1 ? "1px solid var(--border)" : "none",
+                                  cursor: "pointer",
+                                  background: isSelected ? "var(--primary-light)" : "transparent",
+                                  transition: "background 0.12s",
+                                }}
+                                onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--background)"; }}
+                                onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                              >
+                                <td style={{ padding: "13px 18px", width: "24px" }}>
+                                  {isSelected ? <ChevronDown size={16} style={{ color: "var(--primary)", verticalAlign: "middle" }} /> : <ChevronRight size={16} style={{ color: "var(--subtext)", verticalAlign: "middle" }} />}
+                                </td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)", fontFamily: "monospace" }}>{row.date}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13px", color: "var(--label)" }}>{row.weekday}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--green)", fontWeight: 600 }}>{row.present}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--primary)", fontWeight: 600 }}>{row.wfh}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--amber)", fontWeight: 600 }}>{row.late}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--purple, #7c3aed)", fontWeight: 600 }}>{row.leave}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--red)", fontWeight: 600 }}>{row.absent}</td>
+                                <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--text)" }}>{row.total}</td>
+                                <td style={{ padding: "13px 18px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--primary)", background: "var(--primary-light)", padding: "3px 12px", borderRadius: "99px" }}>{isSelected ? "Viewing" : "View Salary"}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
 
-                {selectedDay && (
-                  <div style={{ marginTop: "18px", borderTop: "1px solid var(--border)", paddingTop: "18px" }}>
-                    <SectionTitle icon={Users} title={`${selectedDay} — Employee Salary`} subtitle="Day-wise salary computed from each employee's monthly summary prorated by working days" />
-                    {filteredDayEmpRows.length === 0 ? (
-                      <EmptyState title="No employee data" subtitle="No employees or payroll data found for this day." />
-                    ) : (
-                      <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                          <thead>
-                            <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                              {["Employee","ID","Status","Check In","Check Out","Gross","Deductions","Net Pay"].map((h) => (
-                                <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredDayEmpRows.map((row, idx) => {
-                              const meta = row.status ? (ATTENDANCE_META[row.status] || { label: row.status, color: "#64748b", bg: "#f8fafc" }) : null;
-                              return (
-                                <tr key={row.employeeId} style={{ borderBottom: idx < filteredDayEmpRows.length - 1 ? "1px solid var(--border)" : "none" }}>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>{row.employeeName}</td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{row.employeeId}</td>
-                                  <td style={{ padding: "13px 18px" }}>
-                                    {meta ? <StatusBadge {...meta} /> : <span style={{ fontSize: "12px", color: "var(--subtext)" }}>No record</span>}
-                                  </td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.checkIn !== "—" ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.checkIn}</td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.checkOut !== "—" ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.checkOut}</td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.dayGross != null ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayGross != null ? fmt(row.dayGross) : "—"}</td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.dayDeductions != null ? "var(--red)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayDeductions != null ? `−${fmt(row.dayDeductions)}` : "—"}</td>
-                                  <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 700, color: row.dayNet != null ? "var(--green)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayNet != null ? fmt(row.dayNet) : "—"}</td>
+                    {selectedDay && (
+                      <div style={{ marginTop: "18px", borderTop: "1px solid var(--border)", paddingTop: "18px" }}>
+                        <SectionTitle icon={Users} title={`${selectedDay} — Employee Salary`} subtitle="Day-wise salary computed from each employee's monthly summary prorated by working days" />
+                        {filteredDayEmpRows.length === 0 ? (
+                          <EmptyState title="No employee data" subtitle="No employees or payroll data found for this day." />
+                        ) : (
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                              <thead>
+                                <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                                  {["Employee","ID","Status","Check In","Check Out","Gross","Deductions","Net Pay"].map((h) => (
+                                    <th key={h} style={{ padding: "11px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
+                                  ))}
                                 </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                              </thead>
+                              <tbody>
+                                {filteredDayEmpRows.map((row, idx) => {
+                                  const meta = row.status ? (ATTENDANCE_META[row.status] || { label: row.status, color: "#64748b", bg: "#f8fafc" }) : null;
+                                  return (
+                                    <tr key={row.employeeId} style={{ borderBottom: idx < filteredDayEmpRows.length - 1 ? "1px solid var(--border)" : "none" }}>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>{row.employeeName}</td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{row.employeeId}</td>
+                                      <td style={{ padding: "13px 18px" }}>
+                                        {meta ? <StatusBadge {...meta} /> : <span style={{ fontSize: "12px", color: "var(--subtext)" }}>No record</span>}
+                                      </td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.checkIn !== "—" ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.checkIn}</td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.checkOut !== "—" ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.checkOut}</td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.dayGross != null ? "var(--text)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayGross != null ? fmt(row.dayGross) : "—"}</td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", color: row.dayDeductions != null ? "var(--red)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayDeductions != null ? `−${fmt(row.dayDeductions)}` : "—"}</td>
+                                      <td style={{ padding: "13px 18px", fontSize: "13.5px", fontWeight: 700, color: row.dayNet != null ? "var(--green)" : "var(--subtext)", fontFamily: "monospace" }}>{row.dayNet != null ? fmt(row.dayNet) : "—"}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
               </>
             )}
           </section>
         )}
 
-        {/* ═══ Employee Payroll ═══ */}
+        {/* ═══ Employee Payroll / Team Payroll / My Payroll Breakdown ═══ */}
         {effectiveTab === "employee" && (
           <section style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: "20px" }}>
-            <SectionTitle icon={Users} title="Employee Payroll" subtitle={isStaff ? `Calculated for ${MONTHS_FULL[month - 1]} ${year}` : `Your payroll for ${MONTHS_FULL[month - 1]} ${year}`} />
+            <SectionTitle
+              icon={Users}
+              title={isManager ? "Team Payroll" : isEmployee ? "My Payroll Breakdown" : "Employee Payroll"}
+              subtitle={
+                isManager
+                  ? `Team payroll breakdown for ${MONTHS_FULL[month - 1]} ${year}`
+                  : isEmployee
+                  ? `Your personal payroll breakdown for ${MONTHS_FULL[month - 1]} ${year}`
+                  : `Calculated for ${MONTHS_FULL[month - 1]} ${year}`
+              }
+            />
 
-            {isStaff ? (
+            {!isEmployee ? (
               <MonthYearToolbar
                 month={month} year={year} onMonth={setMonth} onYear={setYear} years={YEARS}
                 searchSlot={
                   <EmployeeSearchBox
-                    employees={employees}
+                    employees={isManager ? scopedEmployees : employees}
                     value={empSearch}
                     onChange={setEmpSearch}
                     onSelect={(id) => setActiveEmpId(id)}
@@ -831,13 +879,27 @@ export default function Payroll() {
                 }
               />
             ) : (
-              <p style={{ fontSize: "12.5px", color: "var(--subtext)", marginBottom: "6px" }}>
-                Showing your own payroll for {MONTHS_FULL[month - 1]} {year}.
-              </p>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "18px", padding: "14px 16px", background: "var(--background)", borderRadius: "var(--radius)" }}>
+                <Select value={month} onChange={(e) => setMonth(Number(e.target.value))}>
+                  {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </Select>
+                <Select value={year} onChange={(e) => setYear(Number(e.target.value))}>
+                  {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+                </Select>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--label)" }}>{MONTHS_FULL[month - 1]} {year}</span>
+              </div>
             )}
 
             {activeEmpId ? (
-              <EmployeeSummary employeeId={activeEmpId} month={month} year={year} />
+              <EmployeeSummary
+                employeeId={
+                  isEmployee
+                    ? (employees.find((e) => e.id === user.id || e.email === user.email || e.id === user.employeeId)?.id || user.employeeId || user.id)
+                    : activeEmpId
+                }
+                month={month}
+                year={year}
+              />
             ) : (
               <EmptyState title="Select an employee" subtitle="Use the search bar dropdown to choose an employee." />
             )}
@@ -947,6 +1009,22 @@ export default function Payroll() {
             )}
           </section>
         )}
+
+
+        {/* ═══ Wage Rates (Admin) ═══ */}
+        {effectiveTab === "wagerates" && <WageRatesPanel locations={locations} />}
+
+        {/* ═══ Pay Rules & Slabs ═══ */}
+        {effectiveTab === "components" && <PayRulesPanel />}
+
+        {/* ═══ Salary Advances & Loan Recovery ═══ */}
+        {effectiveTab === "advances" && <SalaryAdvancesPanel employees={employees} />}
+
+        {/* ═══ Production Incentive Units ═══ */}
+        {effectiveTab === "production" && <ProductionRecordsPanel employees={employees} />}
+
+        {/* ═══ Multi-Contractor Billing ═══ */}
+        {effectiveTab === "contractors" && <ContractorBillingPanel />}
 
         {/* ═══ Payslip Distribution ═══ */}
         {effectiveTab === "distribution" && <PayslipDistributionPanel />}

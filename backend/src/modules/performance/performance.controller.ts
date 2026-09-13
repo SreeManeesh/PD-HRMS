@@ -54,11 +54,9 @@ export const getGoals = asyncHandler(
 
 export const createGoal = asyncHandler(
   async (req: Request, res: Response) => {
-    const employeeCode =
-      req.body.employeeId ||
-      req.auth?.employeeCode;
+    const callerCode = req.auth?.employeeCode;
 
-    if (!employeeCode) {
+    if (!callerCode && !req.body.employeeId) {
       throw AppError.unauthorized(
         "Authenticated user is not linked to an employee"
       );
@@ -66,7 +64,7 @@ export const createGoal = asyncHandler(
 
     const result =
       await performanceService.createGoal(
-        employeeCode,
+        callerCode || req.body.employeeId,
         req.body,
         req.auth?.sub
       );

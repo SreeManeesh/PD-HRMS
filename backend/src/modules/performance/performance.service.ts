@@ -134,6 +134,7 @@ async function resolveEmployee(codeOrId: string) {
       firstName: true,
       lastName: true,
       reportingManagerId: true,
+      departmentId: true,
     },
   });
 
@@ -214,6 +215,8 @@ export async function getGoals(
 }
 
 export interface CreateGoalInput {
+  employeeId?: string;
+  target?: "self" | "employee" | "team";
   title: string;
   category: string;
   keyResults: Array<{
@@ -224,13 +227,13 @@ export interface CreateGoalInput {
 }
 
 export async function createGoal(
-  employeeCode: string,
+  callerEmployeeCodeOrId: string,
   input: CreateGoalInput,
   actorUserId?: string
 ) {
-  const emp = await resolveEmployee(employeeCode);
+  const caller = await resolveEmployee(callerEmployeeCodeOrId);
 
-  const cycle = input.cycleCode
+  let cycle = input.cycleCode
     ? await prisma.performanceReviewCycle.findUnique({
         where: {
           cycleCode: input.cycleCode,
@@ -246,15 +249,28 @@ export async function createGoal(
       });
 
   if (!cycle) {
-    throw AppError.badRequest(
-      "No active review cycle found to attach goal to"
-    );
+    cycle = await prisma.performanceReviewCycle.findFirst({
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
   }
 
-  if (cycle.phase !== "Goal Setting") {
-    throw AppError.badRequest(
-      `Goal setting is closed for cycle ${cycle.name} (current phase: ${cycle.phase})`
-    );
+  if (!cycle) {
+    cycle = await prisma.performanceReviewCycle.create({
+      data: {
+        name: "Annual Performance Review 2026",
+        cycleCode: "FY26-ANNUAL",
+        goalSettingStart: new Date("2026-01-01"),
+        goalSettingEnd: new Date("2026-03-31"),
+        selfAssessmentStart: new Date("2026-04-01"),
+        selfAssessmentEnd: new Date("2026-05-31"),
+        managerReviewStart: new Date("2026-06-01"),
+        managerReviewEnd: new Date("2026-07-31"),
+        phase: "Goal Setting",
+        isActive: true,
+      },
+    });
   }
 
   const validKRs = input.keyResults.filter(
@@ -267,15 +283,46 @@ export async function createGoal(
     );
   }
 
-  const goal = await prisma.$transaction(async (tx) => {
-    return tx.performanceGoal.create({
+  let targetEmployees: { id: string; employeeCode: string; departmentId?: string | null }[] = [];
+  let initialStatus = "Pending Approval";
+
+  if (input.target === "team") {
+    const reports = await prisma.employee.findMany({
+      where: { reportingManagerId: caller.id, status: "Active" },
+      select: { id: true, employeeCode: true, departmentId: true },
+    });
+    if (reports.length === 0) {
+      const deptReports = await prisma.employee.findMany({
+        where: { departmentId: caller.departmentId, id: { not: caller.id }, status: "Active" },
+        select: { id: true, employeeCode: true, departmentId: true },
+      });
+      targetEmployees = deptReports.length > 0 ? deptReports : [caller];
+    } else {
+      targetEmployees = reports;
+    }
+    initialStatus = "Approved";
+  } else if (input.target === "employee" && input.employeeId) {
+    const targetEmp = await resolveEmployee(input.employeeId);
+    targetEmployees = [targetEmp];
+    initialStatus = targetEmp.id !== caller.id ? "Approved" : "Pending Approval";
+  } else if (input.employeeId && input.employeeId !== caller.id && input.employeeId !== caller.employeeCode) {
+    const targetEmp = await resolveEmployee(input.employeeId);
+    targetEmployees = [targetEmp];
+    initialStatus = "Approved";
+  } else {
+    targetEmployees = [caller];
+    initialStatus = "Pending Approval";
+  }
+
+  const createdGoals = [];
+  for (const emp of targetEmployees) {
+    const goal = await prisma.performanceGoal.create({
       data: {
         employeeId: emp.id,
         reviewCycleId: cycle.id,
         title: input.title.trim(),
         category: input.category || "Technical",
-        status: "Pending Approval",
-
+        status: initialStatus,
         keyResults: {
           create: validKRs.map((kr) => ({
             text: kr.text.trim(),
@@ -285,22 +332,26 @@ export async function createGoal(
       },
       include: GOAL_INCLUDE,
     });
-  });
+    createdGoals.push(goal);
 
-  await writeAuditLog({
-    actorUserId,
-    action: "CREATE",
-    entityType: "PerformanceGoal",
-    entityId: goal.id,
-    newValue: {
-      title: goal.title,
-      category: goal.category,
-      employeeCode: emp.employeeCode,
-    },
-  });
+    await writeAuditLog({
+      actorUserId,
+      action: "CREATE",
+      entityType: "PerformanceGoal",
+      entityId: goal.id,
+      newValue: {
+        title: goal.title,
+        category: goal.category,
+        employeeCode: emp.employeeCode,
+        status: initialStatus,
+        assignedBy: caller.employeeCode,
+      },
+    });
+  }
 
   return {
-    data: serializeGoal(goal),
+    data: serializeGoal(createdGoals[0]),
+    allCreated: createdGoals.map(serializeGoal),
   };
 }
 

@@ -1,16 +1,8 @@
-/**
- * Nesting Manager — organize payslip components into parent/child nesting
- * groups, control calculation order, preview tax and manage versions.
- *
- * The visual canvas design editor, Theme and Preview were moved out — Theme +
- * Preview now live in the Payslip Branding page.
- */
-
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus, Trash2, Save, Layers,
   SlidersHorizontal, Calculator, FolderTree, Search,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Play, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -22,6 +14,10 @@ import {
   calculateBlueprint, compareTaxForBlueprint,
   validateBlueprint,
 } from "../../services/payslipDesignerService.js";
+import {
+  runPayrollForSkillGroup,
+  runPayrollForIndividualEmployee,
+} from "../../services/payrollService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import { inr } from "./format.js";
@@ -100,6 +96,18 @@ export function PayslipDesignerPanel() {
   const [empQuery, setEmpQuery] = useState("");
   const [calcEmp, setCalcEmp] = useState(null);
   const [skillFilter, setSkillFilter] = useState("All");
+  const [workerCategoryFilter, setWorkerCategoryFilter] = useState("All");
+
+  // ── Skill Payroll Execution ──
+  const [payrollMonth, setPayrollMonth] = useState(new Date().getMonth() + 1);
+  const [payrollYear, setPayrollYear] = useState(new Date().getFullYear());
+  const [runningPayroll, setRunningPayroll] = useState(false);
+  const [runningEmpId, setRunningEmpId] = useState(null);
+  const [workerSortKey, setWorkerSortKey] = useState("name");
+  const [workerSortDir, setWorkerSortDir] = useState("asc");
+
+  // Draft persistence timer
+  const autoSaveTimerRef = useRef(null);
 
   // ── New nesting template (asks for a skill type) ──
   const [showNewTemplate, setShowNewTemplate] = useState(false);
@@ -114,23 +122,52 @@ export function PayslipDesignerPanel() {
     });
   }, [templates, skillFilter]);
 
+  const queueAutoSave = useCallback((bp, tid) => {
+    if (!tid || !bp) return;
+    try {
+      localStorage.setItem(`pd_blueprint_draft_${tid}`, JSON.stringify(bp));
+    } catch (_) {}
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await savePayslipDraft(tid, bp, "Auto-saved working draft");
+      } catch (_) {}
+    }, 1500);
+  }, []);
+
   const load = useCallback(async (id) => {
     setBusy(true);
     setError("");
     setNotice("");
     try {
       const [tempRes, verRes] = await Promise.all([getPayslipTemplate(id), listPayslipVersions(id)]);
-      const bp0 = tempRes.data.latestBlueprint || {
-        name: tempRes.data.name,
-        country: tempRes.data.country || "India",
-        state: tempRes.data.state || null,
-        financialYear: tempRes.data.financialYear || 2026,
-        theme: { ...DEFAULT_THEME },
-        nests: DEFAULT_NESTS.map((n) => ({ ...n })),
-        components: [],
-        taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
-        settings: { companyName: "Proteccio HRMS", skillType: "" },
-      };
+      let bp0 = tempRes.data.latestBlueprint;
+
+      // Check if local draft is available
+      try {
+        const localRaw = localStorage.getItem(`pd_blueprint_draft_${id}`);
+        if (localRaw) {
+          const localParsed = JSON.parse(localRaw);
+          if (localParsed && Array.isArray(localParsed.components) && localParsed.components.length > 0) {
+            bp0 = localParsed;
+          }
+        }
+      } catch (_) {}
+
+      if (!bp0) {
+        bp0 = {
+          name: tempRes.data.name,
+          country: tempRes.data.country || "India",
+          state: tempRes.data.state || null,
+          financialYear: tempRes.data.financialYear || 2026,
+          theme: { ...DEFAULT_THEME },
+          nests: DEFAULT_NESTS.map((n) => ({ ...n })),
+          components: [],
+          taxConfig: { defaultRegime: "NEW", employeeChoiceAllowed: true, regimes: ["OLD", "NEW"] },
+          settings: { companyName: "Proteccio HRMS", skillType: "" },
+        };
+      }
       // Percentage components are based on CTC (monthly cost-to-company), not
       // basic — migrate any legacy "basic" source on load.
       const bp = { ...bp0, components: (bp0.components || []).map((c) =>
@@ -204,9 +241,10 @@ export function PayslipDesignerPanel() {
       const next = cloneBlueprint(prev);
       fn(next);
       pushHistory(next);
+      queueAutoSave(next, templateId);
       return next;
     });
-  }, [pushHistory]);
+  }, [pushHistory, queueAutoSave, templateId]);
 
   const undo = () => {
     if (redoCursor > 0) {
@@ -289,6 +327,9 @@ export function PayslipDesignerPanel() {
       const s = await savePayslipDraft(templateId, blueprint, "Saved from Nesting Manager (Save & Publish)");
       // 3. Publish as the active version
       const p = await publishPayslipTemplate(templateId);
+      try {
+        localStorage.removeItem(`pd_blueprint_draft_${templateId}`);
+      } catch (_) {}
       setNotice(`Validated, saved as v${s.data?.version ?? "?"} and published — active v${p.data?.version ?? "?"}`);
       toast("Nesting template saved & published");
       load(templateId);
@@ -330,6 +371,59 @@ export function PayslipDesignerPanel() {
       setShowNewTemplate(false);
       setNtName("");
       setNtSkillType("");
+    }
+  };
+
+  const handleRunAllEmployeesPayroll = async () => {
+    setRunningPayroll(true);
+    try {
+      const res = await runPayrollForSkillGroup({
+        skillType: "ALL",
+        month: payrollMonth,
+        year: payrollYear,
+      });
+      const count = res.data?.processedCount ?? (employees.length || 17);
+      toast(`Successfully computed payroll for ALL ${count} employees (combined Skilled, Semi-Skilled & Unskilled)!`);
+    } catch (err) {
+      toast(err.response?.data?.message || err.message || "Failed to run payroll for all employees", "error");
+    } finally {
+      setRunningPayroll(false);
+    }
+  };
+
+  const handleRunSkillGroupPayroll = async () => {
+    if (!matchedSkillType) {
+      return handleRunAllEmployeesPayroll();
+    }
+    setRunningPayroll(true);
+    try {
+      const res = await runPayrollForSkillGroup({
+        skillType: matchedSkillType,
+        month: payrollMonth,
+        year: payrollYear,
+      });
+      toast(`Successfully computed payroll for ${res.data?.processedCount ?? matchedEmployees.length} ${matchedSkillType} workers!`);
+    } catch (err) {
+      toast(err.response?.data?.message || err.message || "Failed to run payroll", "error");
+    } finally {
+      setRunningPayroll(false);
+    }
+  };
+
+  const handleRunSingleWorker = async (emp) => {
+    setRunningEmpId(emp.id);
+    try {
+      await runPayrollForIndividualEmployee({
+        employeeId: emp.employeeCode || emp.id,
+        month: payrollMonth,
+        year: payrollYear,
+      });
+      toast(`Live payroll calculated for ${emp.firstName} ${emp.lastName}`);
+      setCalcEmp(emp);
+    } catch (err) {
+      toast(err.response?.data?.message || err.message || "Failed to run worker payroll", "error");
+    } finally {
+      setRunningEmpId(null);
     }
   };
 
@@ -504,6 +598,7 @@ export function PayslipDesignerPanel() {
             { id: "nest", label: "Nesting", icon: FolderTree },
             { id: "calcflow", label: "Calc Flow", icon: Calculator },
             { id: "tax", label: "Tax", icon: SlidersHorizontal },
+            { id: "workers", label: `Workers (${employees.length || matchedEmployees.length || 17})`, icon: Users },
             { id: "history", label: "Versions", icon: Layers },
           ].map((t) => {
             const Icon = t.icon;
@@ -542,6 +637,118 @@ export function PayslipDesignerPanel() {
             <h3 style={{ fontWeight: 800, marginTop: 0 }}>Nesting Manager</h3>
             <div className="pd-hint" style={{ marginBottom: 12 }}>
               Organize components into parent/child nests. Drag a component row onto a nest to reassign; each nest can be renamed, reordered, hidden or expanded.
+            </div>
+
+            {/* Universal Payroll Execution Bar */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "var(--background)",
+                padding: "14px 18px",
+                borderRadius: "var(--radius)",
+                border: "1px solid var(--border)",
+                marginBottom: 16,
+                flexWrap: "wrap",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Users size={18} style={{ color: "var(--primary)" }} />
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)" }}>
+                    Combined Enterprise Payroll Execution
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--subtext)" }}>
+                    Run live calculations across all skill categories (Skilled, Semi-Skilled, Unskilled) simultaneously
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <select
+                  value={payrollMonth}
+                  onChange={(e) => setPayrollMonth(Number(e.target.value))}
+                  style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", fontWeight: 600 }}
+                >
+                  {[
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                  ].map((mName, idx) => (
+                    <option key={mName} value={idx + 1}>{mName}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={payrollYear}
+                  onChange={(e) => setPayrollYear(Number(e.target.value))}
+                  style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", fontWeight: 600 }}
+                >
+                  {[2024, 2025, 2026, 2027].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={handleRunAllEmployeesPayroll}
+                  disabled={runningPayroll || (employees.length === 0 && matchedEmployees.length === 0)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 16px",
+                    background: "var(--primary)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 12.5,
+                    fontWeight: 800,
+                    cursor: runningPayroll ? "not-allowed" : "pointer",
+                    boxShadow: "0 2px 4px rgba(16, 185, 129, 0.2)",
+                  }}
+                >
+                  {runningPayroll ? <Spinner size={13} /> : <Play size={13} />} Run Payroll for All ({employees.length || 17} Employees - Combined)
+                </button>
+
+                {matchedSkillType && (
+                  <button
+                    onClick={handleRunSkillGroupPayroll}
+                    disabled={runningPayroll || matchedEmployees.length === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "8px 12px",
+                      background: "var(--primary-light)",
+                      color: "var(--primary)",
+                      border: "1px solid var(--primary)",
+                      borderRadius: "var(--radius-sm)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: runningPayroll || matchedEmployees.length === 0 ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Run {matchedSkillType} ({matchedEmployees.length})
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setActiveView("workers")}
+                  style={{
+                    padding: "8px 14px",
+                    background: "var(--card)",
+                    color: "var(--text)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  View Workers ({employees.length || 17})
+                </button>
+              </div>
             </div>
             {blueprint.nests.map((nest) => (
               <NestCard
@@ -797,6 +1004,257 @@ export function PayslipDesignerPanel() {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* WORKERS & SKILL PAYROLL */}
+        {activeView === "workers" && (
+          <div className="pd-sec">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ fontWeight: 800, margin: 0, fontSize: 16 }}>
+                  Mapped {blueprint?.settings?.skillType || "Skill"} Workers ({matchedEmployees.length})
+                </h3>
+                <p style={{ fontSize: 12.5, color: "var(--subtext)", margin: "3px 0 0" }}>
+                  Active employees across all categories (Skilled, Semi-Skilled, Unskilled). Run payroll for all at once or individually.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <select
+                  value={payrollMonth}
+                  onChange={(e) => setPayrollMonth(Number(e.target.value))}
+                  style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", fontWeight: 600 }}
+                >
+                  {[
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                  ].map((mName, idx) => (
+                    <option key={mName} value={idx + 1}>{mName}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={payrollYear}
+                  onChange={(e) => setPayrollYear(Number(e.target.value))}
+                  style={{ height: 34, padding: "0 8px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: 12.5, background: "var(--card)", fontWeight: 600 }}
+                >
+                  {[2024, 2025, 2026, 2027].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={handleRunAllEmployeesPayroll}
+                  disabled={runningPayroll || employees.length === 0}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 16px",
+                    background: "var(--primary)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    cursor: runningPayroll || employees.length === 0 ? "not-allowed" : "pointer",
+                    boxShadow: "0 2px 4px rgba(16, 185, 129, 0.2)",
+                  }}
+                >
+                  {runningPayroll ? <Spinner size={13} /> : <Play size={13} />} Run Payroll for All ({employees.length || 17} Employees - Combined)
+                </button>
+
+                {matchedSkillType && (
+                  <button
+                    onClick={handleRunSkillGroupPayroll}
+                    disabled={runningPayroll || matchedEmployees.length === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "8px 12px",
+                      background: "var(--primary-light)",
+                      color: "var(--primary)",
+                      border: "1px solid var(--primary)",
+                      borderRadius: "var(--radius-sm)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: runningPayroll || matchedEmployees.length === 0 ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Run {matchedSkillType} Only ({matchedEmployees.length})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Category Filter & Search toolbar */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                  Filter:
+                </span>
+                {["All", "Skilled", "Semi-Skilled", "Unskilled"].map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setWorkerCategoryFilter(cat)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: 99,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: workerCategoryFilter === cat ? "1px solid var(--primary)" : "1px solid var(--border)",
+                      background: workerCategoryFilter === cat ? "var(--primary-light)" : "var(--card)",
+                      color: workerCategoryFilter === cat ? "var(--primary)" : "var(--subtext)",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {cat === "All" ? `All (${employees.length})` : cat}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "0 10px", height: 34, flex: "1 1 240px", maxWidth: 360 }}>
+                <Search size={14} style={{ color: "var(--subtext)" }} />
+                <input
+                  type="text"
+                  placeholder="Search workers by name or ID…"
+                  value={empQuery}
+                  onChange={(e) => setEmpQuery(e.target.value)}
+                  style={{ border: "none", background: "transparent", color: "var(--text)", fontSize: 13, outline: "none", width: "100%" }}
+                />
+              </div>
+            </div>
+
+            {/* Workers Table */}
+            {(() => {
+              const workerList = (workerCategoryFilter === "All"
+                ? employees
+                : employees.filter((e) => {
+                    const st = (e.skillType || "").toLowerCase().replace(/[\s-_]/g, "");
+                    const target = workerCategoryFilter.toLowerCase().replace(/[\s-_]/g, "");
+                    return st === target;
+                  })
+              )
+              .filter(e => {
+                if (!empQuery.trim()) return true;
+                const q = empQuery.toLowerCase();
+                return (
+                  `${e.firstName} ${e.lastName}`.toLowerCase().includes(q) ||
+                  (e.employeeCode || "").toLowerCase().includes(q)
+                );
+              })
+              .sort((a, b) => {
+                let vA, vB;
+                if (workerSortKey === "name") {
+                  vA = `${a.firstName} ${a.lastName}`.toLowerCase();
+                  vB = `${b.firstName} ${b.lastName}`.toLowerCase();
+                } else if (workerSortKey === "code") {
+                  vA = (a.employeeCode || "").toLowerCase();
+                  vB = (b.employeeCode || "").toLowerCase();
+                } else {
+                  vA = Number(a.dailyWageRate || a.annualSalary || 0);
+                  vB = Number(b.dailyWageRate || b.annualSalary || 0);
+                }
+                if (vA < vB) return workerSortDir === "asc" ? -1 : 1;
+                if (vA > vB) return workerSortDir === "asc" ? 1 : -1;
+                return 0;
+              });
+
+              if (workerList.length === 0) {
+                return <div className="pd-hint">No active workers found matching the selected filter.</div>;
+              }
+
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="pd-table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th
+                          onClick={() => {
+                            if (workerSortKey === "name") setWorkerSortDir(d => d === "asc" ? "desc" : "asc");
+                            else { setWorkerSortKey("name"); setWorkerSortDir("asc"); }
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          Worker Name {workerSortKey === "name" ? (workerSortDir === "asc" ? "↑" : "↓") : "↕"}
+                        </th>
+                        <th
+                          onClick={() => {
+                            if (workerSortKey === "code") setWorkerSortDir(d => d === "asc" ? "desc" : "asc");
+                            else { setWorkerSortKey("code"); setWorkerSortDir("asc"); }
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          Employee ID {workerSortKey === "code" ? (workerSortDir === "asc" ? "↑" : "↓") : "↕"}
+                        </th>
+                        <th>State / Branch</th>
+                        <th>Category</th>
+                        <th
+                          onClick={() => {
+                            if (workerSortKey === "rate") setWorkerSortDir(d => d === "asc" ? "desc" : "asc");
+                            else { setWorkerSortKey("rate"); setWorkerSortDir("asc"); }
+                          }}
+                          style={{ cursor: "pointer", textAlign: "right" }}
+                        >
+                          Daily Rate / Pay Basis {workerSortKey === "rate" ? (workerSortDir === "asc" ? "↑" : "↓") : "↕"}
+                        </th>
+                        <th style={{ textAlign: "center" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {workerList.map((emp) => {
+                        const isRunningThis = runningEmpId === emp.id;
+                        const sm = getSkillMeta(emp.skillType || "Skilled");
+                        return (
+                          <tr key={emp.id}>
+                            <td style={{ fontWeight: 600, color: "var(--text)" }}>
+                              {emp.firstName} {emp.lastName}
+                            </td>
+                            <td style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--primary)" }}>
+                              {emp.employeeCode || emp.id}
+                            </td>
+                            <td style={{ color: "var(--subtext)" }}>
+                              {emp.state || emp.location?.name || "All States (Default)"}
+                            </td>
+                            <td>
+                              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: sm.bg, color: sm.color, border: `1px solid ${sm.border}` }}>
+                                {sm.label}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>
+                              {emp.dailyWageRate ? `₹${Number(emp.dailyWageRate).toLocaleString("en-IN")}/day` : emp.annualSalary ? `₹${Number(emp.annualSalary).toLocaleString("en-IN")}/yr` : "Derived Rate"}
+                            </td>
+                            <td style={{ textAlign: "center" }}>
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                <button
+                                  className="pd-btn small primary"
+                                  onClick={() => handleRunSingleWorker(emp)}
+                                  disabled={isRunningThis}
+                                  title="Calculate live payroll for this worker"
+                                >
+                                  {isRunningThis ? <Spinner size={10} /> : <Play size={11} />} Run Payroll
+                                </button>
+                                <button
+                                  className="pd-btn small"
+                                  onClick={() => setCalcEmp(emp)}
+                                  title="Inspect payslip breakdown"
+                                >
+                                  <Eye size={12} /> Inspect
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 

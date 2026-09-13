@@ -11,4 +11,8 @@ router.get("/payroll-config", authenticate, controller.get);
 // Writes are restricted to HR/Admin.
 router.put("/payroll-config", authenticate, requireRole("ADMIN", "HR"), controller.update);
 
+// Dynamic UI text labels
+router.get("/ui-labels", authenticate, controller.getUiLabels);
+router.put("/ui-labels", authenticate, requireRole("ADMIN", "SUPER_ADMIN"), controller.updateUiLabels);
+
 export default router;

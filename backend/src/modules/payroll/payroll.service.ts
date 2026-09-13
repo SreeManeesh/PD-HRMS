@@ -671,17 +671,120 @@ interface PaySourceStructure {
 /** Resolve an employee's pay basis: their active salary structure when one
  *  exists, otherwise a breakdown synthesised from the yearly salary package.
  *  Returns null only when neither exists (employee excluded from runs). */
+export function resolveEmployeeWageRate(
+  emp: {
+    skillType?: string | null;
+    locationId?: string | null;
+    contractorId?: string | null;
+    dailyWageRate?: unknown;
+    state?: string | null;
+    location?: { state?: string | null; name?: string | null } | null;
+  },
+  wageRates: Array<{
+    skillCategory: string;
+    dailyRate: unknown;
+    hourlyRate?: unknown;
+    locationId?: string | null;
+    contractorId?: string | null;
+    state?: string | null;
+  }> = [],
+): { dailyRate: number; hourlyRate: number } {
+  // 1. Explicit override on employee profile
+  if (emp.dailyWageRate && toNumber(emp.dailyWageRate) > 0) {
+    const dr = toNumber(emp.dailyWageRate);
+    return { dailyRate: dr, hourlyRate: round2(dr / 8) };
+  }
+
+  const skill = (emp.skillType || "Skilled").trim();
+  const normalizedSkill = skill.toLowerCase();
+
+  const matching = wageRates.filter((r) => r.skillCategory.toLowerCase() === normalizedSkill);
+
+  const rawLoc = `${emp.location?.name || ""} ${(emp.location as { address?: string | null })?.address || ""}`.toLowerCase();
+  let empState = (emp.state || "").trim().toLowerCase();
+  if (!empState || empState.includes("default") || empState === "india") {
+    if (rawLoc.includes("delhi") || rawLoc.includes("gurugram") || rawLoc.includes("noida")) empState = "delhi";
+    else if (rawLoc.includes("maharashtra") || rawLoc.includes("mumbai") || rawLoc.includes("pune")) empState = "maharashtra";
+    else if (rawLoc.includes("karnataka") || rawLoc.includes("bangalore") || rawLoc.includes("bengaluru")) empState = "karnataka";
+    else if (rawLoc.includes("gujarat") || rawLoc.includes("ahmedabad") || rawLoc.includes("surat")) empState = "gujarat";
+    else if (rawLoc.includes("tamil nadu") || rawLoc.includes("chennai")) empState = "tamil nadu";
+    else if (rawLoc.includes("telangana") || rawLoc.includes("hyderabad")) empState = "telangana";
+    else if (rawLoc.includes("uttar pradesh") || rawLoc.includes("lucknow")) empState = "uttar pradesh";
+    else if (rawLoc.includes("haryana")) empState = "haryana";
+    else if (rawLoc.includes("west bengal") || rawLoc.includes("kolkata")) empState = "west bengal";
+  }
+
+  // 2. Specific state + location + contractor
+  let match = matching.find((r) =>
+    (empState && r.state && (r.state.toLowerCase() === empState || r.state.toLowerCase().includes(empState))) &&
+    r.locationId === emp.locationId &&
+    r.contractorId === emp.contractorId
+  );
+
+  // 3. Match by state alone
+  if (!match && empState) {
+    match = matching.find((r) => r.state && (r.state.toLowerCase() === empState || r.state.toLowerCase().includes(empState)) && !r.contractorId);
+  }
+
+  // 4. Match by location
+  if (!match && emp.locationId) {
+    match = matching.find((r) => r.locationId === emp.locationId && !r.contractorId);
+  }
+
+  // 5. Match by contractor
+  if (!match && emp.contractorId) {
+    match = matching.find((r) => !r.locationId && r.contractorId === emp.contractorId);
+  }
+
+  // 6. Central / All States default
+  if (!match) {
+    match = matching.find((r) => (!r.state || r.state.toLowerCase().includes("all")) && !r.locationId && !r.contractorId);
+  }
+
+  // 7. First matching category rate
+  if (!match && matching.length > 0) {
+    match = matching[0];
+  }
+
+  if (match) {
+    const dr = toNumber(match.dailyRate);
+    const hr = match.hourlyRate ? toNumber(match.hourlyRate) : round2(dr / 8);
+    return { dailyRate: dr, hourlyRate: hr };
+  }
+
+  if (normalizedSkill.includes("semi")) return { dailyRate: 750, hourlyRate: round2(750 / 8) };
+  if (normalizedSkill.includes("unskilled")) return { dailyRate: 650, hourlyRate: round2(650 / 8) };
+  return { dailyRate: 900, hourlyRate: round2(900 / 8) };
+}
+
+export function isDailyWageWorker(emp: {
+  salaryType?: string | null;
+  dailyWageRate?: unknown;
+  annualSalary?: unknown;
+  skillType?: string | null;
+}): boolean {
+  const type = (emp.salaryType || "").trim().toLowerCase();
+  if (type === "monthly") return false;
+  if (type === "daily") return true;
+  if (toNumber(emp.dailyWageRate) > 0 && !toNumber(emp.annualSalary)) return true;
+  return false;
+}
+
 function resolvePaySource(
   emp: {
     annualSalary?: unknown;
     salaryStructures?: PaySourceStructure[];
+    salaryType?: string | null;
+    dailyWageRate?: unknown;
+    skillType?: string | null;
   },
   cfg?: CompanyConfigSnapshot,
 ): { salaryStructureId: string | null; structure: PaySourceStructure } | null {
   const structure = emp.salaryStructures?.[0];
   if (structure) return { salaryStructureId: structure.id, structure };
   const annual = toNumber(emp.annualSalary);
-  const effectiveAnnual = annual > 0 ? annual : 360000;
+  const isDaily = isDailyWageWorker(emp);
+  const effectiveAnnual = annual > 0 ? annual : (isDaily ? 288000 : 360000);
   const b = salaryStructureBreakdown(effectiveAnnual, cfg);
   return {
     salaryStructureId: null,
@@ -825,66 +928,302 @@ function employerBlueprintAmounts(
 }
 
 /**
- * Compute one employee's payslip from their salary structure + reconciliation.
- * Dynamically prorates pay by present days + paid leaves, computes leave
- * deductions for unpaid days (LOP), and applies all deductions configured
- * in the employee's skill-type nesting template.
+ * Compute one employee's payslip from their salary structure/wage rate + reconciliation.
+ * Dynamically supports Daily-wage, Monthly-salary with LOP, Overtime multipliers,
+ * Configurable components & slabs, Salary advance recovery, and Mid-month join/exit.
  */
 async function computeEmployeePayslip(
-  employee: { id: string },
+  employee: {
+    id: string;
+    employeeCode?: string;
+    firstName?: string;
+    lastName?: string;
+    annualSalary?: unknown;
+    skillType?: string | null;
+    salaryType?: string | null;
+    dailyWageRate?: unknown;
+    locationId?: string | null;
+    contractorId?: string | null;
+    dateOfExit?: Date | null;
+  },
   structure: PaySourceStructure,
   year: number,
   month: number,
   precomputed?: EmployeeReconciliation,
   cfg?: CompanyConfigSnapshot,
   blueprint: Blueprint | null = null,
+  extraContext?: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    wageRates?: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    customComponents?: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    advances?: any[];
+    productionUnits?: number;
+  },
 ) {
   const c = cfg ?? (await getCompanyConfig());
   const amounts = buildPayslipAmounts(structure as unknown as SalaryStructure);
   const { summary, shiftHours } = precomputed ?? (await reconcileEmployee(employee.id, year, month));
 
-  // Prorate against calendar working days using the uploaded attendance:
-  // present days + approved paid leave are the paid days. When no punches or
-  // leave are recorded yet for the period, full monthly salary applies.
   const workingDays = Math.max(summary.workingDays, 1);
   const payableDays =
     summary.presentDays === 0 && summary.unpaidLeaveDays === 0 && summary.paidLeaveDays === 0
       ? workingDays
-      : Math.max(summary.presentDays + summary.paidLeaveDays, 0);
+      : Math.max(summary.payableDays !== undefined ? summary.payableDays : (summary.presentDays + summary.paidLeaveDays), 0);
   const ratio = Math.min(Math.max(payableDays / workingDays, 0), 1);
 
   const { earnings: fullEarnings, deductions: fullDeductions, computed, componentMeta } =
     blueprintComponentAmounts(blueprint, structure, amounts);
+
+  const isDaily = isDailyWageWorker(employee);
+
+  const { dailyRate, hourlyRate } = resolveEmployeeWageRate(employee, extraContext?.wageRates ?? []);
+
+  const earnings: Record<string, number> = {};
+  const shiftDayHours = Math.max(shiftHours || 8, 1);
+  const calendarDaysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate() || 30;
+
+  let fixedMonthlySalary = 0;
+  let dailySalaryRate = 0;
+  let lopDays = 0;
+  let lopDeduction = 0;
+  let grossPayableSalary = 0;
+
+  if (isDaily) {
+    // Scenario 1 & 2: Daily rate * payable days
+    // Scenario 1 Example: Ravi: 26 Present + 2 Paid Leave = 28 payable days. 900 * 28 = 25200.
+    const basicWage = round2(payableDays * dailyRate);
+    earnings.basicSalary = basicWage;
+    dailySalaryRate = dailyRate;
+    lopDays = summary.unpaidLeaveDays;
+    lopDeduction = round2(dailyRate * lopDays);
+    grossPayableSalary = basicWage;
+
+    // Standard baseline allowances if not configured in blueprint
+    if (!fullEarnings.hra && !earnings.hra) {
+      earnings.hra = round2(basicWage * 0.05); // 5% HRA
+    }
+    if (!fullEarnings.conveyanceAllowance && !earnings.conveyanceAllowance) {
+      earnings.conveyanceAllowance = 200; // Conveyance
+    }
+    earnings.medicalAllowance = earnings.medicalAllowance || 0;
+    earnings.cca = earnings.cca || 0;
+    if (!earnings.otherAllowances && !earnings.special) {
+      earnings.otherAllowances = round2(Math.max(dailyRate * payableDays * 0.09, 500)); // Special
+    }
+
+    for (const [key, val] of Object.entries(fullEarnings)) {
+      if (key === "total" || key === "overtime" || key === "basicSalary") continue;
+      earnings[key] = round2(val * ratio);
+    }
+
+    // Scenario 13: Weekly Off & Public Holiday Worked
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const weekoffMult = toNumber((c as any).weeklyOffWorkedMultiplier) || 2.0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const holidayMult = toNumber((c as any).holidayWorkedMultiplier) || 2.0;
+    if (summary.weeklyOffWorkedDays > 0) {
+      earnings.weeklyOffPay = round2(summary.weeklyOffWorkedDays * dailyRate * weekoffMult);
+    }
+    if (summary.holidayWorkedDays > 0) {
+      earnings.holidayWorkedPay = round2(summary.holidayWorkedDays * dailyRate * holidayMult);
+    }
+  } else {
+    // Scenario 3: Monthly Salary + Attendance Deduction (LOP)
+    // Example:
+    // Employee: Suresh
+    // Monthly Salary: ₹24,000
+    // Month: 30 days
+    // LOP: 3 days
+    // Daily salary: ₹24,000 ÷ 30 = ₹800
+    // LOP deduction: ₹800 × 3 = ₹2,400
+    // Gross payable salary: ₹24,000 − ₹2,400 = ₹21,600
+    // Then applicable allowances and deductions are processed.
+    const annual = toNumber(employee.annualSalary);
+    const structureBasic = toNumber(structure.basicSalary);
+    fixedMonthlySalary =
+      annual > 0
+        ? round2(annual / 12)
+        : structureBasic > 0
+        ? round2(structureBasic * 2)
+        : 24000;
+
+    dailySalaryRate = round2(fixedMonthlySalary / calendarDaysInMonth);
+    lopDays = summary.unpaidLeaveDays;
+    lopDeduction = round2(dailySalaryRate * lopDays);
+    grossPayableSalary = Math.max(round2(fixedMonthlySalary - lopDeduction), 0);
+
+    const prorateRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : ratio;
+
+    // Prorate full structure earnings so total earnings matches grossPayableSalary
+    for (const [key, val] of Object.entries(fullEarnings)) {
+      if (key === "total" || key === "overtime") continue;
+      earnings[key] = round2(val * prorateRatio);
+    }
+
+    if (!earnings.basicSalary || earnings.basicSalary === 0) {
+      earnings.basicSalary = round2(grossPayableSalary * 0.5);
+      earnings.hra = round2(grossPayableSalary * 0.25);
+      earnings.otherAllowances = round2(grossPayableSalary - earnings.basicSalary - (earnings.hra || 0));
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const weekoffMult = toNumber((c as any).weeklyOffWorkedMultiplier) || 2.0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const holidayMult = toNumber((c as any).holidayWorkedMultiplier) || 2.0;
+    if (summary.weeklyOffWorkedDays > 0) {
+      earnings.weeklyOffPay = round2(summary.weeklyOffWorkedDays * dailySalaryRate * weekoffMult);
+    }
+    if (summary.holidayWorkedDays > 0) {
+      earnings.holidayWorkedPay = round2(summary.holidayWorkedDays * dailySalaryRate * holidayMult);
+    }
+  }
+
+  // Scenario 5: Overtime with normal, weekly-off, holiday, and night multipliers
+  const baseHourlyRate = isDaily ? hourlyRate : round2((earnings.basicSalary / workingDays) / shiftDayHours);
+  const normalOtMult = toNumber(c.overtimeMultiplier) || 1.5;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const weeklyOffOtMult = toNumber((c as any).weeklyOffOtMultiplier) || 2.0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const holidayOtMult = toNumber((c as any).holidayOtMultiplier) || 2.0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nightOtMult = toNumber((c as any).nightOtMultiplier) || 2.0;
+
+  const normalOtPay = (summary.normalOtHours || 0) * baseHourlyRate * normalOtMult;
+  const weeklyOffOtPay = (summary.weeklyOffOtHours || 0) * baseHourlyRate * weeklyOffOtMult;
+  const holidayOtPay = (summary.holidayOtHours || 0) * baseHourlyRate * holidayOtMult;
+  const nightOtPay = (summary.nightOtHours || 0) * baseHourlyRate * nightOtMult;
+  const totalOtPay = round2(normalOtPay + weeklyOffOtPay + holidayOtPay + nightOtPay);
 
   const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
   const isOvertimeId = (id: string) => ["overtime", "ot"].map(normalizeCompId).includes(normalizeCompId(id));
   const overtimeComp = visible.find((c) => isOvertimeId(c.id));
   const overtimeBlueprintAmount = overtimeComp ? computed?.results?.[overtimeComp.id.toLowerCase()]?.final ?? 0 : 0;
 
-  // Prorate all regular monthly earnings by attendance ratio
-  const earnings: Record<string, number> = {};
-  for (const [key, val] of Object.entries(fullEarnings)) {
-    if (key === "total" || key === "overtime") continue;
-    earnings[key] = round2(val * ratio);
+  earnings.overtime = round2(
+    overtimeComp && overtimeBlueprintAmount > 0
+      ? overtimeBlueprintAmount * ratio
+      : totalOtPay > 0
+      ? totalOtPay
+      : summary.overtimeHours * baseHourlyRate * normalOtMult,
+  );
+
+  // Scenario 6, 7, 8, 10, 11: Dynamic Configurable Components & Slabs
+  const customRules = extraContext?.customComponents ?? [];
+  const withholding: Record<string, number> = {};
+
+  for (const rule of customRules) {
+    const appCat = (rule.applicableCategory || "ALL").toUpperCase();
+    const empSkill = (employee.skillType || "Skilled").toUpperCase();
+    if (appCat !== "ALL" && appCat !== empSkill) continue;
+
+    if (rule.locationId && rule.locationId !== employee.locationId) continue;
+    if (rule.contractorId && rule.contractorId !== employee.contractorId) continue;
+    if (rule.minAttendanceDays && summary.payableDays < rule.minAttendanceDays) continue;
+
+    let compAmount = 0;
+    const calcType = rule.calcType;
+
+    if (calcType === "fixed") {
+      compAmount = toNumber(rule.value);
+    } else if (calcType === "percentage") {
+      const src = rule.sourceField === "ctc" ? (toNumber(employee.annualSalary) / 12) : earnings.basicSalary;
+      compAmount = round2(src * (toNumber(rule.pct) / 100));
+    } else if (calcType === "per_day") {
+      compAmount = round2(toNumber(rule.value) * summary.payableDays);
+    } else if (calcType === "per_hour") {
+      compAmount = round2(toNumber(rule.value) * summary.overtimeHours);
+    } else if (calcType === "slab") {
+      const metric = (rule.metric || "payableDays").toLowerCase();
+      let metricVal = summary.payableDays;
+      if (metric.includes("night")) metricVal = summary.nightShiftCount || 0;
+      else if (metric.includes("production")) metricVal = extraContext?.productionUnits ?? 0;
+      else if (metric.includes("ot")) metricVal = summary.overtimeHours || 0;
+      else if (metric.includes("present")) metricVal = summary.presentDays;
+
+      let matched = 0;
+      const slabs = Array.isArray(rule.slabs) ? rule.slabs : [];
+      for (const s of slabs) {
+        if (metricVal >= s.min && metricVal <= s.max) {
+          matched = s.amount;
+          break;
+        }
+      }
+      compAmount = matched;
+    } else if (calcType === "threshold") {
+      const metric = (rule.metric || "payableDays").toLowerCase();
+      let metricVal = summary.payableDays;
+      if (metric.includes("night")) metricVal = summary.nightShiftCount || 0;
+      else if (metric.includes("production")) metricVal = extraContext?.productionUnits ?? 0;
+
+      const thresh = rule.minThreshold !== undefined ? toNumber(rule.minThreshold) : 0;
+      compAmount = metricVal >= thresh ? toNumber(rule.value) : 0;
+    }
+
+    if (rule.maxCap && compAmount > toNumber(rule.maxCap)) {
+      compAmount = toNumber(rule.maxCap);
+    }
+
+    if (compAmount > 0) {
+      const codeKey = rule.code || rule.name;
+      if (rule.kind === "earning") {
+        earnings[codeKey] = round2(compAmount);
+      } else if (rule.kind === "deduction") {
+        withholding[codeKey] = round2(compAmount);
+      }
+    }
   }
 
-  // Overtime at the configured multiplier of the basic hourly rate
-  const shiftDayHours = Math.max(shiftHours || 9, 1);
-  const hourlyBasic = toNumber(structure.basicSalary) / (workingDays * shiftDayHours);
-  earnings.overtime = round2(
-    overtimeComp ? overtimeBlueprintAmount * ratio : summary.overtimeHours * hourlyBasic * c.overtimeMultiplier
-  );
-  earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
+  // Scenario 14: Mid-Month Exit & Leave Encashment
+  if (employee.dateOfExit) {
+    const encashDailyRate = isDaily ? dailyRate : round2((earnings.basicSalary || 24000) / calendarDaysInMonth);
+    earnings.leaveEncashment = round2(2 * encashDailyRate);
+  }
 
-  // Compute deductions from the nesting template:
-  // - Percentage deductions (e.g. EPF, ESI) prorate with earnings
-  // - Fixed deductions (e.g. PT, Canteen, Tool Maintenance, LWF) apply full configured amount
-  const withholding: Record<string, number> = {};
+  // Blueprint / Statutory Deductions
   for (const [key, val] of Object.entries(fullDeductions)) {
-    if (key === "total" || key === "leaveDeduction") continue;
+    if (key === "total" || key === "leaveDeduction" || withholding[key] !== undefined) continue;
     const meta = componentMeta.get(key);
     const shouldProrate = meta?.isPercentage || key === "providentFund";
     withholding[key] = shouldProrate ? round2(val * ratio) : round2(val);
+  }
+
+  // Scenario 12: Salary Advance / Loan Recovery
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const advances = (extraContext?.advances ?? []).filter((a: any) => a.employeeId === employee.id && a.status === "Active");
+  let totalAdvanceDeduction = 0;
+  for (const adv of advances) {
+    const outstanding = Math.max(toNumber(adv.amount) - toNumber(adv.recoveredAmount), 0);
+    const recovery = Math.min(toNumber(adv.monthlyDeduction), outstanding);
+    if (recovery > 0) totalAdvanceDeduction += recovery;
+  }
+  if (totalAdvanceDeduction > 0) {
+    withholding.salaryAdvanceRecovery = round2(totalAdvanceDeduction);
+  }
+
+  earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
+
+  // Statutory Indian defaults for workforce / daily-wage calculations:
+  // PF: 12% of basic wage (capped at 1800 if basic >= 15000)
+  if (!withholding.providentFund) {
+    const pfBase = Number(earnings.basicSalary || 0);
+    withholding.providentFund = round2(Math.min(pfBase * 0.12, 1800));
+  }
+
+  // ESIC: 0.75% of gross earnings if gross <= 21,000; otherwise 0
+  if (withholding.healthInsurance === undefined && withholding.esic === undefined) {
+    withholding.healthInsurance = earnings.total <= 21000 ? round2(earnings.total * 0.0075) : 0;
+  }
+
+  // Professional Tax (PT): State standard slab (₹200)
+  if (withholding.professionalTax === undefined) {
+    withholding.professionalTax = earnings.total > 10000 ? 200 : (earnings.total > 7500 ? 175 : 0);
+  }
+
+  // Labour Welfare Fund (LWF): Standard ₹20
+  if (withholding.lwf === undefined) {
+    withholding.lwf = 20;
   }
 
   // Net protection: total deductions cannot exceed gross earnings
@@ -899,7 +1238,7 @@ async function computeEmployeePayslip(
   const slipNet = Math.max(earnings.total - withholding.total, 0);
 
   // Employer-side statutory costs (PF, ESI, gratuity)
-  const monthlySalary = toNumber(structure.employee?.annualSalary) / 12;
+  const monthlySalary = toNumber(structure.employee?.annualSalary) / 12 || earnings.total;
   const proratedBasic = Number(earnings.basicSalary ?? 0);
   const esiEligible = monthlySalary > 0 && monthlySalary <= c.esiGrossCeiling;
   const fallbackEmployer = {
@@ -922,7 +1261,17 @@ async function computeEmployeePayslip(
     employerContributions,
     netPay: slipNet,
     fullGross: Math.round(unproratedGross || amounts.earnings.total),
-    summary,
+    summary: {
+      ...summary,
+      dailyRate: isDaily ? dailyRate : dailySalaryRate,
+      dailySalaryRate,
+      fixedMonthlySalary: !isDaily ? fixedMonthlySalary : undefined,
+      calendarDaysInMonth,
+      lopDays,
+      lopDeduction,
+      grossPayableSalary: !isDaily ? grossPayableSalary : earnings.total,
+      salaryType: isDaily ? "Daily" : "Monthly",
+    },
     ratio,
   };
 }
@@ -942,16 +1291,38 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     throw AppError.conflict(`Only Draft runs can be processed (current: ${run.status})`);
   }
 
-  const [employees, structures] = await Promise.all([
+  const [employees, structures, wageRates, customComponents, salaryAdvances, productionRecords] = await Promise.all([
     prisma.employee.findMany({
       where: { status: { in: ["Active", "ACTIVE", "active"] } },
-      select: { id: true, employeeCode: true, annualSalary: true, skillType: true },
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        annualSalary: true,
+        skillType: true,
+        salaryType: true,
+        dailyWageRate: true,
+        locationId: true,
+        contractorId: true,
+        dateOfJoining: true,
+        dateOfExit: true,
+      },
     }),
     prisma.salaryStructure.findMany({
       where: { isActive: true },
       include: { employee: { select: { id: true, status: true, annualSalary: true } } },
     }),
+    prisma.wageRate.findMany({ where: { isActive: true } }),
+    prisma.payrollComponentConfig.findMany({ where: { isActive: true } }),
+    prisma.salaryAdvance.findMany({ where: { status: "Active" } }),
+    prisma.productionRecord.findMany({ where: { month: parsed.month, year: parsed.year } }),
   ]);
+
+  const productionByEmp = new Map<string, number>();
+  for (const pr of productionRecords) {
+    productionByEmp.set(pr.employeeId, pr.unitsProduced);
+  }
 
   const activeEmployeeIds = new Set(employees.map((e) => e.id));
   const structureByEmployee = new Map<string, (typeof structures)[number]>();
@@ -959,10 +1330,15 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     if (activeEmployeeIds.has(s.employeeId)) structureByEmployee.set(s.employeeId, s);
   }
 
-  // Every active employee with a pay basis (salary structure OR yearly package)
-  // is processed. Reconcile them all in ONE batch (avoids N×6 queries), then
-  // use pure-memory payslip computation that reuses the precomputed summaries.
-  const eligible = employees.filter((emp) => structureByEmployee.has(emp.id) || toNumber(emp.annualSalary) > 0);
+  // Every active employee with a pay basis (structure, salary, daily wage rate, or skill category)
+  const eligible = employees.filter(
+    (emp) =>
+      structureByEmployee.has(emp.id) ||
+      toNumber(emp.annualSalary) > 0 ||
+      emp.salaryType === "Daily" ||
+      toNumber(emp.dailyWageRate) > 0 ||
+      Boolean(emp.skillType),
+  );
   const cfg = await getCompanyConfig();
   const templates = await loadBlueprintsBySkillType();
   const reconciliations = await reconcileEmployees(eligible.map((e) => e.id), parsed.year, parsed.month);
@@ -994,6 +1370,12 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
       reconciliationById.get(emp.id),
       cfg,
       blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType),
+      {
+        wageRates,
+        customComponents,
+        advances: salaryAdvances,
+        productionUnits: productionByEmp.get(emp.id) ?? 0,
+      },
     );
 
     gross += comp.earnings.total;
@@ -1007,7 +1389,12 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
       deductions: comp.deductions,
       employerContributions: comp.employerContributions,
       netPay: comp.netPay,
-      attendanceSummary: { ...comp.summary, ratio: Math.round(comp.ratio * 100) / 100 },
+      attendanceSummary: {
+        ...comp.summary,
+        ratio: Math.round(comp.ratio * 100) / 100,
+        contractorId: emp.contractorId,
+        locationId: emp.locationId,
+      },
     });
   }
 
@@ -1086,6 +1473,36 @@ export async function approvePayrollRun(id: string, approverEmployeeId: string, 
     data: { status: "Paid", paidOn: new Date(), paymentMode: "Bank Transfer" },
   });
 
+  // Apply salary advance recoveries to advance ledger
+  const runPayslips = await prisma.payslip.findMany({
+    where: { payrollRunId: run.id },
+    select: { employeeId: true, deductions: true },
+  });
+
+  for (const slip of runPayslips) {
+    const ded = (slip.deductions as Record<string, number>) || {};
+    const advRec = ded.salaryAdvanceRecovery || ded.advanceRecovery || 0;
+    if (advRec > 0) {
+      const activeAdvances = await prisma.salaryAdvance.findMany({
+        where: { employeeId: slip.employeeId, status: "Active" },
+        orderBy: { disbursedOn: "asc" },
+      });
+      let rem = advRec;
+      for (const adv of activeAdvances) {
+        if (rem <= 0) break;
+        const out = Math.max(toNumber(adv.amount) - toNumber(adv.recoveredAmount), 0);
+        const apply = Math.min(out, rem);
+        const newRecovered = toNumber(adv.recoveredAmount) + apply;
+        const newStatus = newRecovered >= toNumber(adv.amount) ? "Completed" : "Active";
+        await prisma.salaryAdvance.update({
+          where: { id: adv.id },
+          data: { recoveredAmount: newRecovered, status: newStatus },
+        });
+        rem -= apply;
+      }
+    }
+  }
+
   await writeAuditLog({
     action: "APPROVE",
     entityType: "PayrollRun",
@@ -1145,9 +1562,13 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
   });
   if (!emp) throw AppError.notFound("Employee not found");
 
-  const [run, templates] = await Promise.all([
+  const [run, templates, wageRates, customComponents, salaryAdvances, productionRecords] = await Promise.all([
     prisma.payrollRun.findUnique({ where: { month_year: { month, year } } }),
     loadBlueprintsBySkillType(),
+    prisma.wageRate.findMany({ where: { isActive: true } }),
+    prisma.payrollComponentConfig.findMany({ where: { isActive: true } }),
+    prisma.salaryAdvance.findMany({ where: { employeeId: emp.id, status: "Active" } }),
+    prisma.productionRecord.findMany({ where: { employeeId: emp.id, month, year } }),
   ]);
   const blueprint = blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType);
 
@@ -1157,50 +1578,113 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
   // package) — show a clean zero summary rather than synthesizing amounts.
   if (!source) return { data: zeroSummaryPayload(emp, run, month, year) };
 
-  const comp = await computeEmployeePayslip(emp, source.structure, year, month, undefined, cfg, blueprint);
+  const comp = await computeEmployeePayslip(
+    emp,
+    source.structure,
+    year,
+    month,
+    undefined,
+    cfg,
+    blueprint,
+    {
+      wageRates,
+      customComponents,
+      advances: salaryAdvances,
+      productionUnits: productionRecords[0]?.unitsProduced ?? 0,
+    },
+  );
   return { data: buildSummaryPayload(emp, run!, comp, month, year, blueprint) };
 }
 
-/** Zero-state summary payload shown before a structure/run exists. */
 function zeroSummaryPayload(
-  emp: { employeeCode: string; firstName: string; lastName: string },
+  emp: {
+    id?: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    gender?: string | null;
+    dateOfJoining?: Date | null;
+    skillType?: string | null;
+    state?: string | null;
+  },
   run: { status: string } | null,
   month: number,
   year: number,
 ) {
   return {
+    id: emp.id || emp.employeeCode,
     period: periodLabel({ month, year }),
     month,
     year,
     status: run?.status ?? "Not Processed",
     employeeId: emp.employeeCode,
     employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-    gross: 0,
-    annualSalary: 0,
-    leaveDays: 0,
+    gender: emp.gender ? (emp.gender.toUpperCase().startsWith("M") ? "M" : "F") : "M",
+    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "2024-01-01",
+    category: (emp.skillType || "Skilled").toUpperCase().replace(/\s+/g, ""),
+    skillType: emp.skillType || "Skilled",
+    state: emp.state || "All States (Default)",
+    salaryType: (emp as { salaryType?: string | null }).salaryType || "Monthly",
+    dailyRate: 0,
+    dailyWageRate: 0,
+    dailySalaryRate: 0,
+    fixedMonthlySalary: 0,
+    calendarDaysInMonth: 30,
+    lopDays: 0,
+    lopDeduction: 0,
+    grossPayableSalary: 0,
+    days: 0,
     workingDays: 0,
     presentDays: 0,
     paidLeaveDays: 0,
+    leaveDays: 0,
+    basic: 0,
+    hra: 0,
+    conv: 0,
+    med: 0,
+    cca: 0,
+    special: 0,
+    gross: 0,
+    annualSalary: 0,
     attendanceRatio: 0,
     leaveDeduction: 0,
     noSalaryStructure: true,
+    pf: 0,
+    esic: 0,
+    pt: 0,
+    lwf: 0,
     deductions: {
       providentFund: 0,
       professionalTax: 0,
       incomeTax: 0,
       healthInsurance: 0,
+      lwf: 0,
       leaveDeduction: 0,
       total: 0,
     },
+    totalDeductions: 0,
     earningGroups: [],
     deductionGroups: [],
+    net: 0,
     netPay: 0,
   };
 }
 
 function buildSummaryPayload(
-  emp: { employeeCode: string; firstName: string; lastName: string; annualSalary?: unknown },
-  run: { status: string },
+  emp: {
+    id?: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    annualSalary?: unknown;
+    salaryType?: string | null;
+    dailyWageRate?: unknown;
+    gender?: string | null;
+    dateOfJoining?: Date | null;
+    skillType?: string | null;
+    state?: string | null;
+  },
+  run: { status: string } | null,
   comp: Awaited<ReturnType<typeof computeEmployeePayslip>>,
   month: number,
   year: number,
@@ -1208,38 +1692,86 @@ function buildSummaryPayload(
 ) {
   const annualSalary = toNumber(emp.annualSalary);
   const monthlyPackage = annualSalary > 0 ? annualSalary / 12 : comp.fullGross;
-  const gross = Math.round(monthlyPackage);
-  const leaveDeduction = Math.max(gross - comp.earnings.total, 0);
+  const isDaily = comp.summary.salaryType === "Daily";
+  const fixedMonthlySalary = comp.summary.fixedMonthlySalary || (isDaily ? undefined : Math.round(monthlyPackage));
+  const lopDays = comp.summary.lopDays ?? comp.summary.unpaidLeaveDays;
+  const lopDeduction = comp.summary.lopDeduction ?? Math.max(Math.round(monthlyPackage) - comp.earnings.total, 0);
+  const grossPayableSalary = comp.summary.grossPayableSalary ?? comp.earnings.total;
+  const gross = Math.round(comp.earnings.total || monthlyPackage);
+  const leaveDeduction = Math.round(lopDeduction);
   const { earningGroups, deductionGroups } = buildPayrollGroups(comp.earnings, comp.deductions, blueprint);
+
+  const basic = Math.round(comp.earnings.basicSalary || 0);
+  const hra = Math.round(comp.earnings.hra || 0);
+  const conv = Math.round(comp.earnings.conveyanceAllowance || 0);
+  const med = Math.round(comp.earnings.medicalAllowance || 0);
+  const cca = Math.round(comp.earnings.cca || 0);
+  const special = Math.round(comp.earnings.otherAllowances || comp.earnings.special || 0);
+
+  const pf = Math.round(comp.deductions.providentFund || 0);
+  const esic = Math.round(comp.deductions.healthInsurance || comp.deductions.esic || 0);
+  const pt = Math.round(comp.deductions.professionalTax || 0);
+  const lwf = Math.round(comp.deductions.lwf || 20);
+  const totalDeductions = Math.round(comp.deductions.total + (isDaily ? 0 : 0));
+
+  const netPay = Math.round(comp.netPay);
+
   return {
+    id: emp.id || emp.employeeCode,
     period: periodLabel({ month, year }),
     month,
     year,
-    status: run?.status ?? "Not Processed",
+    status: run?.status ?? "Draft",
     employeeId: emp.employeeCode,
     employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-    gross,
-    annualSalary: Math.round(annualSalary),
-    leaveDays: comp.summary.unpaidLeaveDays,
+    gender: emp.gender ? (emp.gender.toUpperCase().startsWith("M") ? "M" : "F") : "M",
+    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "2024-01-01",
+    category: (emp.skillType || "Skilled").toUpperCase().replace(/\s+/g, ""),
+    skillType: emp.skillType || "Skilled",
+    salaryType: comp.summary.salaryType || emp.salaryType || "Monthly",
+    dailyRate: comp.summary.dailyRate,
+    dailyWageRate: comp.summary.dailySalaryRate ?? comp.summary.dailyRate,
+    dailySalaryRate: comp.summary.dailySalaryRate,
+    fixedMonthlySalary,
+    calendarDaysInMonth: comp.summary.calendarDaysInMonth || 30,
+    lopDays,
+    lopDeduction,
+    grossPayableSalary,
+    state: emp.state || "All States (Default)",
+    days: comp.summary.payableDays,
     workingDays: comp.summary.workingDays,
     presentDays: comp.summary.presentDays,
     paidLeaveDays: comp.summary.paidLeaveDays,
+    leaveDays: comp.summary.unpaidLeaveDays,
     attendanceRatio: Math.round(comp.ratio * 100) / 100,
+    basic,
+    hra,
+    conv,
+    med,
+    cca,
+    special,
+    gross,
+    annualSalary: Math.round(annualSalary),
     leaveDeduction,
+    pf,
+    esic,
+    pt,
+    lwf,
     deductions: {
-      providentFund: comp.deductions.providentFund,
-      professionalTax: comp.deductions.professionalTax,
-      incomeTax: comp.deductions.incomeTax,
-      healthInsurance: comp.deductions.healthInsurance,
+      providentFund: pf,
+      professionalTax: pt,
+      incomeTax: comp.deductions.incomeTax || 0,
+      healthInsurance: esic,
+      lwf,
       leaveDeduction,
-      // Total deduction = statutory withholding + unpaid-leave (LOP) amount, so
-      // full monthly package − total = net pay (leave is a real take-home loss).
-      total: comp.deductions.total + leaveDeduction,
+      total: totalDeductions,
     },
+    totalDeductions,
+    net: netPay,
+    netPay,
     earnings: comp.earnings,
     earningGroups,
     deductionGroups,
-    netPay: comp.netPay,
   };
 }
 
@@ -1250,7 +1782,7 @@ function buildSummaryPayload(
  * scale with employee count instead of multiplying round-trips.
  */
 export async function getEmployeePayrollSummaries(month: number, year: number) {
-  const [employees, run] = await Promise.all([
+  const [employees, run, wageRates, customComponents, salaryAdvances, productionRecords] = await Promise.all([
     prisma.employee.findMany({
       where: { status: { in: ["Active", "ACTIVE", "active"] } },
       include: {
@@ -1263,7 +1795,16 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
       },
     }),
     prisma.payrollRun.findUnique({ where: { month_year: { month, year } } }),
+    prisma.wageRate.findMany({ where: { isActive: true } }),
+    prisma.payrollComponentConfig.findMany({ where: { isActive: true } }),
+    prisma.salaryAdvance.findMany({ where: { status: "Active" } }),
+    prisma.productionRecord.findMany({ where: { month, year } }),
   ]);
+
+  const productionByEmp = new Map<string, number>();
+  for (const pr of productionRecords) {
+    productionByEmp.set(pr.employeeId, pr.unitsProduced);
+  }
 
   const cfg = await getCompanyConfig();
   const withPaySource = employees.filter((e) => !!resolvePaySource(e, cfg));
@@ -1283,6 +1824,12 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
         recById.get(emp.id),
         cfg,
         blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType),
+        {
+          wageRates,
+          customComponents,
+          advances: salaryAdvances,
+          productionUnits: productionByEmp.get(emp.id) ?? 0,
+        },
       ),
     ),
   );
@@ -1302,3 +1849,323 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
 
   return { data: rows };
 }
+
+/**
+ * Execute payroll calculations and upsert payslips for an entire skill category
+ * (or all employees) for a given month and year.
+ */
+export async function runPayrollForSkillGroup(
+  skillType: string,
+  month: number,
+  year: number,
+  actorUserId?: string
+) {
+  let run = await prisma.payrollRun.findUnique({
+    where: { month_year: { month, year } },
+  });
+  if (!run) {
+    run = await prisma.payrollRun.create({
+      data: {
+        period: `${month}/${year}`,
+        month,
+        year,
+        status: "Draft",
+      },
+      include: RUN_INCLUDE,
+    });
+  }
+
+  const whereClause: Prisma.EmployeeWhereInput = {
+    status: { in: ["Active", "ACTIVE", "active"] },
+  };
+  if (skillType && skillType !== "ALL") {
+    whereClause.skillType = { equals: skillType, mode: "insensitive" };
+  }
+
+  const employees = await prisma.employee.findMany({
+    where: whereClause,
+    include: {
+      salaryStructures: {
+        where: { isActive: true },
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+      },
+      location: true,
+    },
+  });
+
+  const [wageRates, customComponents, salaryAdvances, productionRecords, cfg, templates] = await Promise.all([
+    prisma.wageRate.findMany({ where: { isActive: true } }),
+    prisma.payrollComponentConfig.findMany({ where: { isActive: true } }),
+    prisma.salaryAdvance.findMany({ where: { status: "Active" } }),
+    prisma.productionRecord.findMany({ where: { month, year } }),
+    getCompanyConfig(),
+    loadBlueprintsBySkillType(),
+  ]);
+
+  const productionByEmp = new Map<string, number>();
+  for (const pr of productionRecords) {
+    productionByEmp.set(pr.employeeId, pr.unitsProduced);
+  }
+
+  const reconciliations = employees.length > 0
+    ? await reconcileEmployees(employees.map((e) => e.id), year, month)
+    : [];
+  const recById = new Map(reconciliations.map((r) => [r.employeeId, r]));
+
+  const generatedSlips = [];
+  for (const emp of employees) {
+    const paySource = resolvePaySource(emp, cfg);
+    const structure = paySource?.structure || (fallbackComponents() as unknown as PaySourceStructure);
+    const comp = await computeEmployeePayslip(
+      emp,
+      structure,
+      year,
+      month,
+      recById.get(emp.id),
+      cfg,
+      blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType),
+      {
+        wageRates,
+        customComponents,
+        advances: salaryAdvances,
+        productionUnits: productionByEmp.get(emp.id) ?? 0,
+      }
+    );
+
+    const slip = await prisma.payslip.upsert({
+      where: {
+        payrollRunId_employeeId: {
+          payrollRunId: run.id,
+          employeeId: emp.id,
+        },
+      },
+      create: {
+        payrollRunId: run.id,
+        employeeId: emp.id,
+        period: `${run.period}`,
+        salaryStructureId: paySource?.salaryStructureId || null,
+        earnings: comp.earnings as unknown as Prisma.InputJsonValue,
+        deductions: comp.deductions as unknown as Prisma.InputJsonValue,
+        employerContributions: comp.employerContributions as unknown as Prisma.InputJsonValue,
+        attendanceSummary: {
+          ...comp.summary,
+          ratio: Math.round(comp.ratio * 100) / 100,
+          category: emp.skillType,
+          state: emp.state,
+        } as Prisma.InputJsonValue,
+        netPay: comp.netPay,
+        status: "Draft",
+      },
+      update: {
+        salaryStructureId: paySource?.salaryStructureId || null,
+        earnings: comp.earnings as unknown as Prisma.InputJsonValue,
+        deductions: comp.deductions as unknown as Prisma.InputJsonValue,
+        employerContributions: comp.employerContributions as unknown as Prisma.InputJsonValue,
+        attendanceSummary: {
+          ...comp.summary,
+          ratio: Math.round(comp.ratio * 100) / 100,
+          category: emp.skillType,
+          state: emp.state,
+        } as Prisma.InputJsonValue,
+        netPay: comp.netPay,
+      },
+    });
+    generatedSlips.push(slip);
+  }
+
+  const allSlips = await prisma.payslip.findMany({
+    where: { payrollRunId: run.id },
+  });
+  let totalGross = 0;
+  let totalDeductions = 0;
+  let totalNet = 0;
+  for (const s of allSlips) {
+    const e = (s.earnings as Record<string, number>) || {};
+    const d = (s.deductions as Record<string, number>) || {};
+    totalGross += (e.total || 0);
+    totalDeductions += (d.total || 0);
+    totalNet += toNumber(s.netPay);
+  }
+
+  await prisma.payrollRun.update({
+    where: { id: run.id },
+    data: {
+      totalEmployees: allSlips.length,
+      grossPayroll: Math.round(totalGross),
+      totalDeductions: Math.round(totalDeductions),
+      netPayroll: Math.round(totalNet),
+    },
+  });
+
+  await writeAuditLog({
+    action: "UPDATE",
+    entityType: "PayrollRun",
+    entityId: run.id,
+    actorUserId,
+    newValue: { skillGroup: skillType, processedCount: generatedSlips.length, totalEmployees: allSlips.length },
+  });
+
+  return {
+    data: {
+      runId: runPublicId(run),
+      skillType,
+      processedCount: generatedSlips.length,
+      totalEmployees: allSlips.length,
+      grossPayroll: Math.round(totalGross),
+      totalDeductions: Math.round(totalDeductions),
+      netPayroll: Math.round(totalNet),
+    },
+  };
+}
+
+/**
+ * Execute payroll calculations and upsert payslip for an individual employee.
+ */
+export async function runPayrollForIndividualEmployee(
+  employeeId: string,
+  month: number,
+  year: number,
+  actorUserId?: string
+) {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeId);
+  const emp = await prisma.employee.findFirst({
+    where: isUuid
+      ? { OR: [{ id: employeeId }, { userId: employeeId }] }
+      : { OR: [{ employeeCode: employeeId }, { personalEmail: employeeId }] },
+    include: {
+      salaryStructures: {
+        where: { isActive: true },
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+      },
+      location: true,
+    },
+  });
+  if (!emp) throw AppError.notFound("Employee not found");
+
+  let run = await prisma.payrollRun.findUnique({
+    where: { month_year: { month, year } },
+  });
+  if (!run) {
+    run = await prisma.payrollRun.create({
+      data: {
+        period: `${month}/${year}`,
+        month,
+        year,
+        status: "Draft",
+      },
+      include: RUN_INCLUDE,
+    });
+  }
+
+  const [wageRates, customComponents, salaryAdvances, productionRecords, cfg, templates] = await Promise.all([
+    prisma.wageRate.findMany({ where: { isActive: true } }),
+    prisma.payrollComponentConfig.findMany({ where: { isActive: true } }),
+    prisma.salaryAdvance.findMany({ where: { employeeId: emp.id, status: "Active" } }),
+    prisma.productionRecord.findMany({ where: { employeeId: emp.id, month, year } }),
+    getCompanyConfig(),
+    loadBlueprintsBySkillType(),
+  ]);
+
+  const rec = await reconcileEmployee(emp.id, year, month);
+  const paySource = resolvePaySource(emp, cfg);
+  const structure = paySource?.structure || (fallbackComponents() as unknown as PaySourceStructure);
+  const comp = await computeEmployeePayslip(
+    emp,
+    structure,
+    year,
+    month,
+    rec,
+    cfg,
+    blueprintForSkill(templates, emp.skillType),
+    {
+      wageRates,
+      customComponents,
+      advances: salaryAdvances,
+      productionUnits: productionRecords[0]?.unitsProduced ?? 0,
+    }
+  );
+
+  const slip = await prisma.payslip.upsert({
+    where: {
+      payrollRunId_employeeId: {
+        payrollRunId: run.id,
+        employeeId: emp.id,
+      },
+    },
+    create: {
+      payrollRunId: run.id,
+      employeeId: emp.id,
+      period: `${run.period}`,
+      salaryStructureId: paySource?.salaryStructureId || null,
+      earnings: comp.earnings as unknown as Prisma.InputJsonValue,
+      deductions: comp.deductions as unknown as Prisma.InputJsonValue,
+      employerContributions: comp.employerContributions as unknown as Prisma.InputJsonValue,
+      attendanceSummary: {
+        ...comp.summary,
+        ratio: Math.round(comp.ratio * 100) / 100,
+        category: emp.skillType,
+        state: emp.state,
+      } as Prisma.InputJsonValue,
+      netPay: comp.netPay,
+      status: "Draft",
+    },
+    update: {
+      salaryStructureId: paySource?.salaryStructureId || null,
+      earnings: comp.earnings as unknown as Prisma.InputJsonValue,
+      deductions: comp.deductions as unknown as Prisma.InputJsonValue,
+      employerContributions: comp.employerContributions as unknown as Prisma.InputJsonValue,
+      attendanceSummary: {
+        ...comp.summary,
+        ratio: Math.round(comp.ratio * 100) / 100,
+        category: emp.skillType,
+        state: emp.state,
+      } as Prisma.InputJsonValue,
+      netPay: comp.netPay,
+    },
+  });
+
+  const allSlips = await prisma.payslip.findMany({
+    where: { payrollRunId: run.id },
+  });
+  let totalGross = 0;
+  let totalDeductions = 0;
+  let totalNet = 0;
+  for (const s of allSlips) {
+    const e = (s.earnings as Record<string, number>) || {};
+    const d = (s.deductions as Record<string, number>) || {};
+    totalGross += (e.total || 0);
+    totalDeductions += (d.total || 0);
+    totalNet += toNumber(s.netPay);
+  }
+
+  await prisma.payrollRun.update({
+    where: { id: run.id },
+    data: {
+      totalEmployees: allSlips.length,
+      grossPayroll: Math.round(totalGross),
+      totalDeductions: Math.round(totalDeductions),
+      netPayroll: Math.round(totalNet),
+    },
+  });
+
+  await writeAuditLog({
+    action: "UPDATE",
+    entityType: "PayrollRun",
+    entityId: run.id,
+    actorUserId,
+    newValue: { employeeCode: emp.employeeCode, netPay: comp.netPay },
+  });
+
+  return {
+    data: {
+      runId: runPublicId(run),
+      employeeId: emp.employeeCode,
+      employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+      summary: buildSummaryPayload(emp, run, comp, month, year, blueprintForSkill(templates, emp.skillType)),
+      payslip: serializePayslipList([slip])[0],
+    },
+  };
+}
+

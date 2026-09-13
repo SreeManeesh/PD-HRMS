@@ -11,3 +11,13 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
   const result = await configService.updateConfig(req.body || {}, req.auth?.sub);
   sendSuccess(res, result.data);
 });
+
+export const getUiLabels = asyncHandler(async (_req: Request, res: Response) => {
+  const result = await configService.getUiLabels();
+  sendSuccess(res, result.data);
+});
+
+export const updateUiLabels = asyncHandler(async (req: Request, res: Response) => {
+  const result = await configService.updateUiLabels(req.body || {}, req.auth?.sub);
+  sendSuccess(res, result.data);
+});

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Policy Management Page - Module 18
  * Tabs: Policy Library - My Acknowledgements - Compliance Dashboard
  */
@@ -11,6 +11,12 @@ import {
   Plus,
   History,
   CheckCircle2,
+  Upload,
+  Paperclip,
+  Download,
+  Eye,
+  ExternalLink,
+  X,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -27,6 +33,7 @@ import {
   getAcknowledgements,
   getAllAcknowledgements,
   acknowledgePolicy,
+  uploadPolicyFile,
 } from "../../services/Policyservice.js";
 import { policyStatusMeta, ackStatusMeta } from "../../mock/Policies.js";
 const fmtDate = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-");
@@ -117,6 +124,8 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
   const [mandatory, setMandatory] = useState(true);
   const [reviewCycleMonths, setReviewCycleMonths] = useState(12);
   const [summary, setSummary] = useState("");
+  const [content, setContent] = useState("");
+  const [file, setFile] = useState(null);
   const [effectiveDate, setEffectiveDate] = useState("");
   const [ackDeadlineDays, setAckDeadlineDays] = useState(14);
   const [saving, setSaving] = useState(false);
@@ -130,6 +139,21 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
     }
     setSaving(true);
     setError("");
+
+    let fileUrl = null;
+    let fileName = null;
+    if (file) {
+      try {
+        const uploadRes = await uploadPolicyFile(file);
+        fileUrl = uploadRes.data?.fileUrl;
+        fileName = uploadRes.data?.fileName || file.name;
+      } catch (err) {
+        setError("Failed to upload document: " + (err.response?.data?.message || err.message));
+        setSaving(false);
+        return;
+      }
+    }
+
     const policy = {
       title: title.trim(),
       category,
@@ -139,12 +163,15 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
       effectiveDate,
       ackDeadlineDays: mandatory ? Number(ackDeadlineDays) || null : null,
       summary: summary.trim(),
+      content: content.trim() || summary.trim(),
+      fileUrl,
+      fileName,
     };
     try {
       const res = await createPolicy(policy);
       onSaved(res.data);
       onClose();
-      setTitle(""); setSummary(""); setEffectiveDate(""); setAckDeadlineDays(14);
+      setTitle(""); setSummary(""); setContent(""); setFile(null); setEffectiveDate(""); setAckDeadlineDays(14);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -156,8 +183,8 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
     <Modal isOpen={isOpen} title="Author New Policy" onClose={onClose}>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          {fieldLabel("Title *")}
-          <input value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle(false)} />
+          {fieldLabel("Policy Title *")}
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Workplace Code of Ethics" style={inputStyle(false)} />
         </div>
         {error && <p style={{ margin: 0, color: "var(--red)", fontSize: "12px" }}>{error}</p>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
@@ -172,10 +199,61 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
             <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="Company-wide, or e.g. Location: Delhi" style={inputStyle(false)} />
           </div>
         </div>
+
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          {fieldLabel("Summary / Content")}
-          <textarea rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} style={{ ...inputStyle(false), resize: "vertical" }} />
+          {fieldLabel("Brief Summary *")}
+          <textarea rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="High-level overview of policy guidelines..." style={{ ...inputStyle(false), resize: "vertical" }} />
         </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+          {fieldLabel("Full Policy Document Content (Text / Markdown)")}
+          <textarea rows={4} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Detailed sections, clauses, responsibilities, and procedural requirements..." style={{ ...inputStyle(false), resize: "vertical", fontFamily: "monospace", fontSize: "12.5px" }} />
+        </div>
+
+        {/* File attachment option */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          {fieldLabel("Attach Policy File (PDF, Word, Text)")}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <input
+              type="file"
+              id="create-policy-file"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              style={{ display: "none" }}
+            />
+            <label
+              htmlFor="create-policy-file"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "8px 14px",
+                background: "var(--background)",
+                color: "var(--text)",
+                border: "1px dashed var(--border)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <Upload size={14} /> {file ? "Replace File" : "Choose File (.pdf, .docx, .txt)"}
+            </label>
+            {file && (
+              <span style={{ fontSize: "12px", color: "var(--primary)", display: "inline-flex", alignItems: "center", gap: "6px", background: "var(--background)", padding: "4px 8px", borderRadius: "4px" }}>
+                <Paperclip size={13} /> {file.name} ({(file.size / 1024).toFixed(0)} KB)
+                <button
+                  type="button"
+                  onClick={() => setFile(null)}
+                  style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", padding: "0 2px" }}
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            )}
+          </div>
+        </div>
+
         <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12.5px", color: "var(--label)", cursor: "pointer" }}>
           <input type="checkbox" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} />
           Requires mandatory employee acknowledgement
@@ -184,7 +262,7 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
             {fieldLabel("Effective Date *")}
             <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} style={inputStyle(false)} />
-            <p style={{ fontSize: "10.5px", color: "var(--subtext)", margin: 0 }}>Required before this can be published.</p>
+            <p style={{ fontSize: "10.5px", color: "var(--subtext)", margin: 0 }}>Required before publishing.</p>
           </div>
           {mandatory && (
             <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
@@ -199,7 +277,7 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
         </div>
         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
           <SecondaryButton type="button" onClick={onClose}>Cancel</SecondaryButton>
-          <PrimaryButton type="submit" disabled={saving}>{saving ? "Saving..." : "Save as Draft"}</PrimaryButton>
+          <PrimaryButton type="submit" disabled={saving}>{saving ? "Saving Policy..." : "Save Policy"}</PrimaryButton>
         </div>
       </form>
     </Modal>
@@ -208,6 +286,8 @@ function CreatePolicyModal({ isOpen, onClose, onSaved }) {
 
 function AddVersionModal({ isOpen, onClose, policy, onSaved }) {
   const [summary, setSummary] = useState("");
+  const [content, setContent] = useState("");
+  const [file, setFile] = useState(null);
   const [effectiveDate, setEffectiveDate] = useState("");
   const [ackDeadlineDays, setAckDeadlineDays] = useState(14);
   const [requiresReacknowledgement, setRequiresReacknowledgement] = useState(true);
@@ -225,17 +305,35 @@ function AddVersionModal({ isOpen, onClose, policy, onSaved }) {
     }
     setSaving(true);
     setError("");
+
+    let fileUrl = latest?.fileUrl || null;
+    let fileName = latest?.fileName || null;
+    if (file) {
+      try {
+        const uploadRes = await uploadPolicyFile(file);
+        fileUrl = uploadRes.data?.fileUrl;
+        fileName = uploadRes.data?.fileName || file.name;
+      } catch (err) {
+        setError("Failed to upload document: " + (err.response?.data?.message || err.message));
+        setSaving(false);
+        return;
+      }
+    }
+
     const version = {
       effectiveDate,
       ackDeadlineDays: policy.mandatoryAcknowledgement ? Number(ackDeadlineDays) || null : null,
       requiresReacknowledgement,
       summary: summary.trim(),
+      content: content.trim() || latest?.content || summary.trim(),
+      fileUrl,
+      fileName,
     };
     try {
       const res = await addVersion(policy.id, version);
       onSaved(res.data);
       onClose();
-      setSummary(""); setEffectiveDate(""); setAckDeadlineDays(14);
+      setSummary(""); setContent(""); setFile(null); setEffectiveDate(""); setAckDeadlineDays(14);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -247,12 +345,63 @@ function AddVersionModal({ isOpen, onClose, policy, onSaved }) {
     <Modal isOpen={isOpen} title={`New Version - ${policy.title}`} onClose={onClose}>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <p style={{ fontSize: "12px", color: "var(--subtext)", margin: 0 }}>
-          Version {latest.versionNumber} stays in history unchanged. This creates version {latest.versionNumber + 1} and moves the policy back to Draft until republished.
+          Version {latest.versionNumber} remains archived in version history. This creates version {latest.versionNumber + 1} and returns policy to Draft status until republished.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          {fieldLabel("What changed?")}
-          <textarea rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} style={{ ...inputStyle(false), resize: "vertical" }} />
+          {fieldLabel("Change Summary *")}
+          <textarea rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Summary of revisions made in this version..." style={{ ...inputStyle(false), resize: "vertical" }} />
         </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+          {fieldLabel("Updated Policy Document Text")}
+          <textarea rows={4} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Updated text or full document body..." style={{ ...inputStyle(false), resize: "vertical", fontFamily: "monospace", fontSize: "12.5px" }} />
+        </div>
+
+        {/* File attachment */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          {fieldLabel("Attach Updated Policy File")}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <input
+              type="file"
+              id="version-policy-file"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              style={{ display: "none" }}
+            />
+            <label
+              htmlFor="version-policy-file"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "8px 14px",
+                background: "var(--background)",
+                color: "var(--text)",
+                border: "1px dashed var(--border)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <Upload size={14} /> {file ? "Replace File" : latest?.fileUrl ? "Upload New Version Document" : "Choose File (.pdf, .docx, .txt)"}
+            </label>
+            {file ? (
+              <span style={{ fontSize: "12px", color: "var(--primary)", display: "inline-flex", alignItems: "center", gap: "6px", background: "var(--background)", padding: "4px 8px", borderRadius: "4px" }}>
+                <Paperclip size={13} /> {file.name} ({(file.size / 1024).toFixed(0)} KB)
+                <button
+                  type="button"
+                  onClick={() => setFile(null)}
+                  style={{ border: "none", background: "none", color: "var(--red)", cursor: "pointer", padding: "0 2px" }}
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            ) : latest?.fileName ? (
+              <span style={{ fontSize: "11.5px", color: "var(--subtext)" }}>Current file: {latest.fileName}</span>
+            ) : null}
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
             {fieldLabel("Effective Date *")}
@@ -267,7 +416,7 @@ function AddVersionModal({ isOpen, onClose, policy, onSaved }) {
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12.5px", color: "var(--label)", cursor: "pointer" }}>
           <input type="checkbox" checked={requiresReacknowledgement} onChange={(e) => setRequiresReacknowledgement(e.target.checked)} />
-          Require everyone to re-acknowledge (prior acknowledgements won't carry forward)
+          Require all employees to re-acknowledge new version
         </label>
         {error && <p style={{ margin: 0, color: "var(--red)", fontSize: "12px" }}>{error}</p>}
         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
@@ -301,9 +450,137 @@ function VersionHistory({ policy }) {
   );
 }
 
+function PolicyDetailModal({ isOpen, onClose, policy }) {
+  if (!policy) return null;
+  const v = currentVersion(policy);
+  const meta = policyStatusMeta[policy.status] || { color: "var(--primary)", bg: "var(--primary-light)" };
+
+  return (
+    <Modal isOpen={isOpen} title={policy.title} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+        {/* Top Badges */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11.5px", fontWeight: 700, background: "var(--background)", border: "1px solid var(--border)", padding: "3px 10px", borderRadius: "99px", color: "var(--text)" }}>
+              Version {v?.versionNumber || 1}
+            </span>
+            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
+              Category: <strong style={{ color: "var(--text)" }}>{policy.category}</strong>
+            </span>
+            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
+              Scope: <strong style={{ color: "var(--text)" }}>{policy.scope}</strong>
+            </span>
+          </div>
+          <StatusBadge label={policy.status} color={meta.color} bg={meta.bg} />
+        </div>
+
+        {/* Timing & Dates */}
+        <div style={{ display: "flex", gap: "16px", padding: "12px 14px", background: "var(--background)", borderRadius: "var(--radius-sm)", fontSize: "12px", color: "var(--subtext)", flexWrap: "wrap" }}>
+          <div>Effective Date: <strong style={{ color: "var(--text)" }}>{fmtDate(v?.effectiveDate)}</strong></div>
+          {policy.reviewCycleMonths && <div>Review Cycle: <strong style={{ color: "var(--text)" }}>Every {policy.reviewCycleMonths} months</strong></div>}
+          {v?.createdBy && <div>Author: <strong style={{ color: "var(--text)" }}>{v.createdBy}</strong></div>}
+          {policy.mandatoryAcknowledgement && (
+            <div style={{ color: "#7c3aed", fontWeight: 700 }}>
+              Mandatory Ack: Within {v?.ackDeadlineDays || 14} days
+            </div>
+          )}
+        </div>
+
+        {/* Attached Document Banner */}
+        {v?.fileUrl && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 16px",
+            background: "rgba(99, 102, 241, 0.06)",
+            border: "1px solid rgba(99, 102, 241, 0.2)",
+            borderRadius: "var(--radius-sm)",
+            gap: "12px",
+            flexWrap: "wrap",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <FileText size={22} style={{ color: "var(--primary)" }} />
+              <div>
+                <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>
+                  {v.fileName || "Attached Policy File"}
+                </p>
+                <p style={{ margin: "2px 0 0", fontSize: "11px", color: "var(--subtext)" }}>
+                  Official policy attachment
+                </p>
+              </div>
+            </div>
+            <a
+              href={v.fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              download={v.fileName || "policy-document"}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "7px 14px",
+                background: "var(--primary)",
+                color: "#fff",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              <Download size={14} /> Download Document
+            </a>
+          </div>
+        )}
+
+        {/* Summary */}
+        <div>
+          <h4 style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--label)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+            Summary
+          </h4>
+          <p style={{ fontSize: "13.5px", color: "var(--text)", lineHeight: 1.6, margin: 0 }}>
+            {v?.summary || "No summary provided."}
+          </p>
+        </div>
+
+        {/* Policy Document Content */}
+        {v?.content && (
+          <div>
+            <h4 style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--label)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+              Policy Document Content
+            </h4>
+            <div style={{
+              maxHeight: "260px",
+              overflowY: "auto",
+              padding: "14px 16px",
+              background: "var(--background)",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border)",
+              fontSize: "13px",
+              color: "var(--text)",
+              lineHeight: 1.65,
+              whiteSpace: "pre-wrap",
+            }}>
+              {v.content}
+            </div>
+          </div>
+        )}
+
+        {/* Version History Component */}
+        <VersionHistory policy={policy} />
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
+          <SecondaryButton type="button" onClick={onClose}>Close</SecondaryButton>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function PolicyLibraryTab({ policies, canManage, onPolicyAdded, onPolicyUpdated }) {
   const [showCreate, setShowCreate] = useState(false);
   const [versionTarget, setVersionTarget] = useState(null);
+  const [viewingPolicy, setViewingPolicy] = useState(null);
   const [publishError, setPublishError] = useState({});
 
   const handlePublish = async (id) => {
@@ -319,7 +596,7 @@ function PolicyLibraryTab({ policies, canManage, onPolicyAdded, onPolicyUpdated 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-        <h2 style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>Policy Library</h2>
+        <h2 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text)" }}>Policy Library</h2>
         {canManage && <PrimaryButton onClick={() => setShowCreate(true)}><Plus size={16} /> Author Policy</PrimaryButton>}
       </div>
 
@@ -328,37 +605,99 @@ function PolicyLibraryTab({ policies, canManage, onPolicyAdded, onPolicyUpdated 
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {policies.map((p) => {
-            const meta = policyStatusMeta[p.status];
+            const meta = policyStatusMeta[p.status] || { color: "var(--primary)", bg: "var(--primary-light)" };
             const v = currentVersion(p);
             return (
               <div key={p.id} style={{ ...cardStyle, padding: "18px 20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <h3 style={{ fontSize: "14.5px", fontWeight: 700, color: "var(--text)" }}>{p.title}</h3>
-                      <span style={{ fontSize: "11px", color: "var(--subtext)" }}>v{v.versionNumber}</span>
+                      <h3 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text)" }}>{p.title}</h3>
+                      <span style={{ fontSize: "11px", color: "var(--subtext)" }}>v{v?.versionNumber || 1}</span>
                     </div>
-                    <p style={{ fontSize: "11.5px", color: "var(--subtext)", marginTop: "2px" }}>{p.category} | {p.scope}</p>
+                    <p style={{ fontSize: "12px", color: "var(--subtext)", marginTop: "2px" }}>{p.category} | {p.scope}</p>
                   </div>
                   <StatusBadge label={p.status} color={meta.color} bg={meta.bg} />
                 </div>
 
-                {v.summary && <p style={{ fontSize: "12.5px", color: "var(--subtext)", marginTop: "10px" }}>{v.summary}</p>}
+                {v?.summary && <p style={{ fontSize: "13px", color: "var(--text)", marginTop: "10px", lineHeight: 1.5 }}>{v.summary}</p>}
 
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
-                  {p.mandatoryAcknowledgement && <span style={{ fontSize: "10.5px", fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "2px 8px", borderRadius: "99px" }}>Mandatory ack. within {v.ackDeadlineDays}d</span>}
-                  <span style={{ fontSize: "10.5px", fontWeight: 700, color: "var(--subtext)", background: "var(--background)", padding: "2px 8px", borderRadius: "99px" }}>Effective {fmtDate(v.effectiveDate)}</span>
-                  {p.reviewCycleMonths && <span style={{ fontSize: "10.5px", fontWeight: 700, color: "var(--subtext)", background: "var(--background)", padding: "2px 8px", borderRadius: "99px" }}>Review every {p.reviewCycleMonths}mo</span>}
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "12px", alignItems: "center" }}>
+                  {p.mandatoryAcknowledgement && (
+                    <span style={{ fontSize: "10.5px", fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "2px 8px", borderRadius: "99px" }}>
+                      Mandatory ack. within {v?.ackDeadlineDays || 14}d
+                    </span>
+                  )}
+                  <span style={{ fontSize: "10.5px", fontWeight: 600, color: "var(--subtext)", background: "var(--background)", padding: "2px 8px", borderRadius: "99px" }}>
+                    Effective {fmtDate(v?.effectiveDate)}
+                  </span>
+                  {p.reviewCycleMonths && (
+                    <span style={{ fontSize: "10.5px", fontWeight: 600, color: "var(--subtext)", background: "var(--background)", padding: "2px 8px", borderRadius: "99px" }}>
+                      Review every {p.reviewCycleMonths}mo
+                    </span>
+                  )}
+                  {v?.fileUrl && (
+                    <span style={{ fontSize: "10.5px", fontWeight: 600, color: "var(--primary)", background: "rgba(99, 102, 241, 0.1)", padding: "2px 8px", borderRadius: "99px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <Paperclip size={11} /> Document Attached
+                    </span>
+                  )}
                 </div>
 
                 {publishError[p.id] && <p style={{ fontSize: "11px", color: "var(--red)", marginTop: "8px" }}>{publishError[p.id]}</p>}
 
-                {canManage && <div style={{ display: "flex", gap: "14px", marginTop: "12px" }}>
-                  {p.status === "Draft" && (
-                    <button onClick={() => handlePublish(p.id)} style={{ fontSize: "12px", fontWeight: 700, color: "var(--primary)", border: "none", background: "none", cursor: "pointer" }}>Publish</button>
+                {/* Actions row: Accessible to all roles */}
+                <div style={{ display: "flex", gap: "14px", marginTop: "14px", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setViewingPolicy(p)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      color: "var(--primary)",
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  >
+                    <Eye size={14} /> View Policy
+                  </button>
+
+                  {v?.fileUrl && (
+                    <a
+                      href={v.fileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={v.fileName || "policy-document"}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        fontSize: "12.5px",
+                        fontWeight: 600,
+                        color: "var(--subtext)",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <Download size={13} /> {v.fileName ? `Download ${v.fileName.length > 22 ? v.fileName.slice(0, 20) + "…" : v.fileName}` : "Download Document"}
+                    </a>
                   )}
-                  <button onClick={() => setVersionTarget(p)} style={{ fontSize: "12px", fontWeight: 700, color: "var(--primary)", border: "none", background: "none", cursor: "pointer" }}>New version</button>
-                </div>}
+
+                  {canManage && (
+                    <>
+                      {p.status === "Draft" && (
+                        <button onClick={() => handlePublish(p.id)} style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--green, #16a34a)", border: "none", background: "none", cursor: "pointer", padding: 0 }}>
+                          Publish
+                        </button>
+                      )}
+                      <button onClick={() => setVersionTarget(p)} style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--subtext)", border: "none", background: "none", cursor: "pointer", padding: 0 }}>
+                        New Version
+                      </button>
+                    </>
+                  )}
+                </div>
 
                 <VersionHistory policy={p} />
               </div>
@@ -367,6 +706,7 @@ function PolicyLibraryTab({ policies, canManage, onPolicyAdded, onPolicyUpdated 
         </div>
       )}
 
+      <PolicyDetailModal isOpen={!!viewingPolicy} onClose={() => setViewingPolicy(null)} policy={viewingPolicy} />
       <CreatePolicyModal isOpen={showCreate} onClose={() => setShowCreate(false)} onSaved={onPolicyAdded} />
       <AddVersionModal isOpen={!!versionTarget} onClose={() => setVersionTarget(null)} policy={versionTarget} onSaved={onPolicyUpdated} />
     </div>

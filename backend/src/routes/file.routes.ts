@@ -12,6 +12,10 @@ function contentTypeByExt(fileName: string): string {
     if (ext === ".png") return "image/png";
     if (ext === ".svg") return "image/svg+xml";
     if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+    if (ext === ".pdf") return "application/pdf";
+    if (ext === ".txt") return "text/plain";
+    if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (ext === ".doc") return "application/msword";
     return "application/octet-stream";
 }
 
@@ -65,6 +69,9 @@ router.get("/company/*", serveWithDiskFallback(MINIO_BUCKET, "company"));
 
 // Employee profile photos (/uploads/employee/*) — MinIO first, local-disk fallback.
 router.get("/employee/*", serveWithDiskFallback(MINIO_BUCKET, "employee"));
+
+// Policy documents (/uploads/policies/*) — MinIO first, local-disk fallback.
+router.get("/policies/*", serveWithDiskFallback(MINIO_BUCKET, "policies"));
 
 // LMS content (/uploads/lms/*) — MinIO only (as before).
 router.get("/lms/*", async (req: Request, res: Response) => {

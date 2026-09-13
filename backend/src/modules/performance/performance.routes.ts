@@ -22,6 +22,7 @@ const advanceCyclePhaseSchema = z.object({
 
 const createGoalSchema = z.object({
   employeeId: z.string().optional(),
+  target: z.enum(["self", "employee", "team"]).optional(),
   title: z.string().min(1, "Goal title is required"),
   category: z.string().min(1, "Category is required"),
   cycleCode: z.string().optional(),

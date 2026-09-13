@@ -120,6 +120,26 @@ export default function EmployeeSalaryBreakdown({
                 </span>
               );
             })()}
+            {summary?.salaryType && (
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: "99px",
+                  color: summary.salaryType === "Daily" ? "#0284c7" : "#475569",
+                  background: summary.salaryType === "Daily" ? "#f0f9ff" : "#f8fafc",
+                  border: `1px solid ${summary.salaryType === "Daily" ? "#bae6fd" : "#e2e8f0"}`,
+                }}
+              >
+                {summary.salaryType === "Daily" ? `Daily Wage (${inr(summary.dailyWageRate || 0)}/day)` : "Monthly Fixed"}
+              </span>
+            )}
+            {summary?.contractorName && (
+              <span style={{ fontSize: "11.5px", color: "var(--subtext)", fontWeight: 600 }}>
+                Contractor: <b style={{ color: "var(--text)" }}>{summary.contractorName}</b>
+              </span>
+            )}
           </div>
         </div>
 
@@ -229,7 +249,67 @@ export default function EmployeeSalaryBreakdown({
                 />
               </div>
 
-              {/* Dynamic attendance & nesting deduction note */}
+              {/* Scenario 3: Monthly Salary + Attendance Deduction (LOP) Breakdown Banner */}
+              {summary.salaryType === "Monthly" && (
+                <div
+                  style={{
+                    background: "linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(59, 130, 246, 0.04) 100%)",
+                    border: "1px solid rgba(59, 130, 246, 0.25)",
+                    borderRadius: "var(--radius)",
+                    padding: "14px 16px",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "11px", fontWeight: 800, background: "#2563eb", color: "#fff", padding: "2px 8px", borderRadius: "4px" }}>
+                        SCENARIO 3: MONTHLY SALARY ENGINE
+                      </span>
+                      <span style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--text)" }}>
+                        Monthly Salary + Attendance LOP Deduction
+                      </span>
+                    </div>
+                    <span style={{ fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace" }}>
+                      Formula: (Monthly ÷ {summary.calendarDaysInMonth || 30}d) × LOP Days
+                    </span>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+                    <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Fixed Monthly Salary</div>
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
+                        {inr(summary.fixedMonthlySalary || (summary.annualSalary ? summary.annualSalary / 12 : 24000))}
+                      </div>
+                    </div>
+                    <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Daily Salary (÷{summary.calendarDaysInMonth || 30})</div>
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
+                        {inr(summary.dailySalaryRate || Math.round((summary.fixedMonthlySalary || 24000) / (summary.calendarDaysInMonth || 30)))}/d
+                      </div>
+                    </div>
+                    <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>LOP Days</div>
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: (summary.lopDays || summary.leaveDays) > 0 ? "#dc2626" : "var(--green)", fontFamily: "monospace", marginTop: "2px" }}>
+                        {(summary.lopDays != null ? summary.lopDays : summary.leaveDays) || 0} days
+                      </div>
+                    </div>
+                    <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>LOP Deduction</div>
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: (summary.lopDeduction || summary.leaveDeduction) > 0 ? "#dc2626" : "var(--subtext)", fontFamily: "monospace", marginTop: "2px" }}>
+                        −{inr(summary.lopDeduction || summary.leaveDeduction || 0)}
+                      </div>
+                    </div>
+                    <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Gross Payable Salary</div>
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: "#16a34a", fontFamily: "monospace", marginTop: "2px" }}>
+                        {inr(summary.grossPayableSalary || summary.gross)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Scenario 4: Attendance -> Leave Records -> Holiday Calendar -> Payroll Pipeline */}
               <div
                 style={{
                   background: "var(--background)",
@@ -243,22 +323,30 @@ export default function EmployeeSalaryBreakdown({
                   alignItems: "center",
                   justifyContent: "space-between",
                   flexWrap: "wrap",
-                  gap: "6px",
+                  gap: "8px",
                 }}
               >
-                <span>
-                  {summary.presentDays > 0 || summary.paidLeaveDays > 0
-                    ? `${summary.presentDays ?? 0} present + ${summary.paidLeaveDays ?? 0} paid leave of ${summary.workingDays ?? 0} working days paid.`
-                    : `Full monthly calculation (${summary.workingDays ?? 0} working days).`}
-                  {summary.leaveDays > 0 && (
-                    <strong style={{ color: "var(--amber)", marginLeft: "4px" }}>
-                      ({summary.leaveDays} unpaid day{summary.leaveDays === 1 ? "" : "s"} deducted {inr(summary.leaveDeduction)})
-                    </strong>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, color: "var(--text)" }}>
+                    Attendance Pipeline:
+                  </span>
+                  <span style={{ color: "var(--subtext)" }}>
+                    Attendance → Leave Records → Holiday Calendar → Payroll
+                  </span>
+                  {summary.paidLeaveDays > 0 && (
+                    <span style={{ background: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0", padding: "2px 7px", borderRadius: "4px", fontWeight: 700, fontSize: "11px" }}>
+                      ✓ {summary.paidLeaveDays} Approved Leave (Paid) → No LOP
+                    </span>
                   )}
-                </span>
+                  {(summary.lopDays > 0 || summary.leaveDays > 0) && (
+                    <span style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", padding: "2px 7px", borderRadius: "4px", fontWeight: 700, fontSize: "11px" }}>
+                      ⚠ {summary.lopDays || summary.leaveDays} Unauthorized Absence → LOP Deducted
+                    </span>
+                  )}
+                </div>
                 {summary.skillType && (
                   <span style={{ fontWeight: 600, color: "var(--text)" }}>
-                    Calculated via <em>{summary.skillType}</em> nesting blueprint
+                    Engine: <em>{summary.salaryType === "Monthly" ? "Monthly Salary" : "Daily Wage"}</em> ({summary.skillType})
                   </span>
                 )}
               </div>

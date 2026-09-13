@@ -67,6 +67,14 @@ model CompanyConfig {
   esiGrossCeiling     Decimal  @default(21000) @map("esi_gross_ceiling") @db.Decimal(12, 2)
   gratuityRate        Decimal  @default(0.0481) @map("gratuity_rate") @db.Decimal(6, 4)
   overtimeMultiplier  Decimal  @default(1.5) @map("overtime_multiplier") @db.Decimal(5, 3)
+  weeklyOffWorkedMultiplier Decimal  @default(2.0) @map("weekly_off_worked_multiplier") @db.Decimal(5, 2)
+  holidayWorkedMultiplier   Decimal  @default(2.0) @map("holiday_worked_multiplier") @db.Decimal(5, 2)
+  nightShiftAllowance       Decimal  @default(100.0) @map("night_shift_allowance") @db.Decimal(12, 2)
+  nightOtMultiplier         Decimal  @default(2.0) @map("night_ot_multiplier") @db.Decimal(5, 2)
+  weeklyOffOtMultiplier     Decimal  @default(2.0) @map("weekly_off_ot_multiplier") @db.Decimal(5, 2)
+  holidayOtMultiplier       Decimal  @default(2.0) @map("holiday_ot_multiplier") @db.Decimal(5, 2)
+  minOtMinutesThreshold     Int      @default(30) @map("min_ot_minutes_threshold")
+  maxOtHoursMonthly         Decimal? @map("max_ot_hours_monthly") @db.Decimal(6, 2)
 
   // Salary-breakdown factors used when an employee has only a yearly package
   // (mirrors the previous hardcoded allocation in lib/salaryStructure.ts).
@@ -79,6 +87,7 @@ model CompanyConfig {
   incomeTaxRate       Decimal  @default(0.05) @map("income_tax_rate") @db.Decimal(6, 4)
   healthInsurance     Decimal  @default(180) @map("health_insurance") @db.Decimal(12, 2)
 
+  uiLabels            Json?    @default("{}") @map("ui_labels")
   defaultTaxRegime    String   @default("NEW") @map("default_tax_regime") @db.VarChar(10)
   updatedByUserId     String?  @map("updated_by_user_id") @db.Uuid
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamp(6)
@@ -121,6 +130,8 @@ model Location {
   company         Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
   employees       Employee[]
   jobRequisitions JobRequisition[]
+  wageRates         WageRate[]
+  payrollComponents PayrollComponentConfig[]
 
   @@index([companyId])
   @@map("locations")
@@ -274,6 +285,10 @@ model Employee {
   reportingManagerId String?   @map("reporting_manager_id") @db.Uuid
   dateOfJoining      DateTime  @map("date_of_joining") @db.Date
   employmentType     String    @default("Full-Time") @map("employment_type") @db.VarChar(30)
+  salaryType         String    @default("Monthly") @map("salary_type") @db.VarChar(20)
+  dailyWageRate      Decimal?  @map("daily_wage_rate") @db.Decimal(12, 2)
+  contractorId       String?   @map("contractor_id") @db.Uuid
+  dateOfExit         DateTime? @map("date_of_exit") @db.Date
   status             String    @default("Active") @db.VarChar(20)
   isDepartmentHead   Boolean   @default(false) @map("is_department_head")
   photoUrl           String?   @map("photo_url") @db.VarChar(255)
@@ -283,6 +298,7 @@ model Employee {
   department       Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   designation      Designation? @relation(fields: [designationId], references: [id], onDelete: SetNull)
   location         Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  contractor       Contractor?  @relation(fields: [contractorId], references: [id], onDelete: SetNull)
   reportingManager Employee?    @relation("EmployeeReports", fields: [reportingManagerId], references: [id], onDelete: SetNull)
   reports          Employee[]   @relation("EmployeeReports")
 
@@ -333,11 +349,14 @@ model Employee {
   payslipVersionsAuthored PayslipTemplateVersion[] @relation("PayslipVersionAuthored")
   taxSelectionUpdates     EmployeeTaxSelection[]   @relation("EmployeeTaxSelectionUpdatedBy")
   payslipOverrideAuthored TemplateOverride[]       @relation("PayslipOverrideAuthor")
+  salaryAdvances          SalaryAdvance[]
+  productionRecords       ProductionRecord[]
 
   @@index([departmentId])
   @@index([designationId])
   @@index([reportingManagerId])
   @@index([status])
+  @@index([contractorId])
   @@map("employees")
 }
 
@@ -463,6 +482,9 @@ model PolicyVersion {
   acknowledgementDeadlineDays Int?      @map("acknowledgement_deadline_days")
   requiresReacknowledgement   Boolean   @default(true) @map("requires_reacknowledgement")
   summary                     String    @db.Text
+  content                     String?   @db.Text
+  fileUrl                     String?   @map("file_url") @db.VarChar(500)
+  fileName                    String?   @map("file_name") @db.VarChar(255)
   createdByUserId             String?   @map("created_by_user_id") @db.Uuid
   createdByName               String    @map("created_by_name") @db.VarChar(160)
   publishedAt                 DateTime? @map("published_at") @db.Timestamp(6)
@@ -668,6 +690,123 @@ model Payslip {
   @@unique([payrollRunId, employeeId])
   @@index([employeeId])
   @@map("payslips")
+}
+
+// ── Blue-Collar & Advanced Payroll Extensions ─────────────────────────────
+
+model Contractor {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.VarChar(120)
+  code             String   @unique @db.VarChar(50)
+  contactPerson    String?  @map("contact_person") @db.VarChar(100)
+  phone            String?  @db.VarChar(30)
+  email            String?  @db.VarChar(150)
+  serviceChargePct Decimal  @default(10.0) @map("service_charge_pct") @db.Decimal(5, 2)
+  gstNumber        String?  @map("gst_number") @db.VarChar(50)
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  employees         Employee[]
+  wageRates         WageRate[]
+  payrollComponents PayrollComponentConfig[]
+
+  @@map("contractors")
+}
+
+model WageRate {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  skillCategory String    @map("skill_category") @db.VarChar(50) // e.g. Skilled, Semi-Skilled, Unskilled
+  dailyRate     Decimal   @map("daily_rate") @db.Decimal(12, 2)
+  hourlyRate    Decimal?  @map("hourly_rate") @db.Decimal(12, 2)
+  locationId    String?   @map("location_id") @db.Uuid
+  contractorId  String?   @map("contractor_id") @db.Uuid
+  state         String?   @db.VarChar(100) // Indian state, e.g. Maharashtra, Delhi, Karnataka
+  effectiveFrom DateTime  @default(now()) @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  location   Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  contractor Contractor? @relation(fields: [contractorId], references: [id], onDelete: SetNull)
+
+  @@index([skillCategory])
+  @@index([locationId])
+  @@index([contractorId])
+  @@index([state])
+  @@map("wage_rates")
+}
+
+model PayrollComponentConfig {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String    @db.VarChar(100)
+  code               String    @unique @db.VarChar(60)
+  kind               String    @db.VarChar(20) // "earning" | "deduction"
+  calcType           String    @map("calc_type") @db.VarChar(30) // "fixed" | "percentage" | "per_day" | "per_hour" | "formula" | "slab" | "threshold"
+  value              Decimal?  @db.Decimal(12, 2)
+  sourceField        String?   @map("source_field") @db.VarChar(50)
+  pct                Decimal?  @db.Decimal(6, 2)
+  formula            String?   @db.Text
+  metric             String?   @db.VarChar(40) // "payableDays" | "presentDays" | "overtimeHours" | "nightShifts" | "productionUnits" | "basic" | "gross"
+  slabs              Json?     @default("[]")
+  applicableCategory String?   @default("ALL") @map("applicable_category") @db.VarChar(50) // "ALL" | "Skilled" | "Semi-Skilled" | "Unskilled"
+  locationId         String?   @map("location_id") @db.Uuid
+  contractorId       String?   @map("contractor_id") @db.Uuid
+  minAttendanceDays  Int?      @map("min_attendance_days")
+  minThreshold       Decimal?  @map("min_threshold") @db.Decimal(12, 2)
+  maxCap             Decimal?  @map("max_cap") @db.Decimal(12, 2)
+  effectiveFrom      DateTime  @default(now()) @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  location   Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  contractor Contractor? @relation(fields: [contractorId], references: [id], onDelete: SetNull)
+
+  @@index([kind])
+  @@index([applicableCategory])
+  @@index([locationId])
+  @@index([contractorId])
+  @@map("payroll_component_configs")
+}
+
+model SalaryAdvance {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  amount           Decimal   @db.Decimal(12, 2)
+  monthlyDeduction Decimal   @map("monthly_deduction") @db.Decimal(12, 2)
+  recoveredAmount  Decimal   @default(0) @map("recovered_amount") @db.Decimal(12, 2)
+  disbursedOn      DateTime  @default(now()) @map("disbursed_on") @db.Date
+  status           String    @default("Active") @db.VarChar(20) // "Active" | "Completed" | "Paused"
+  reason           String?   @db.VarChar(255)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("salary_advances")
+}
+
+model ProductionRecord {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String   @map("employee_id") @db.Uuid
+  month         Int
+  year          Int
+  unitsProduced Int      @default(0) @map("units_produced")
+  targetUnits   Int?     @default(1000) @map("target_units")
+  remarks       String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, month, year])
+  @@index([month, year])
+  @@map("production_records")
 }
 
 // ── Payslip Distribution Workflow ──────────────────────────────────────────

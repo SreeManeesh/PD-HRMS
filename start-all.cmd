@@ -65,10 +65,10 @@ popd
 
 echo.
 echo [4/4] Starting backend  -> http://localhost:4000/api/health
-start "HRMS Backend" cmd /k "cd /d ""%ROOT%backend"" && npm run dev"
+start "HRMS Backend" cmd /k "cd /d "%ROOT%backend" && npm run dev"
 
 echo [4/4] Starting frontend -> http://localhost:5173
-start "HRMS Frontend" cmd /k "cd /d ""%ROOT%frontend"" && npm run dev"
+start "HRMS Frontend" cmd /k "cd /d "%ROOT%frontend" && npm run dev"
 
 echo.
 echo All services are launching.

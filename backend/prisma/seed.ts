@@ -131,6 +131,9 @@ const DEPARTMENTS = [
 const LOCATIONS = [
   { name: "New York", address: "200 Fifth Avenue, New York, NY" },
   { name: "Delhi", address: "DLF Cyber City, Gurugram, Haryana" },
+  { name: "Hyderabad", address: "Hitec City, Madhapur, Hyderabad, Telangana" },
+  { name: "Chennai", address: "OMR IT Corridor, Chennai, Tamil Nadu" },
+  { name: "Bangalore", address: "Electronic City, Bangalore, Karnataka" },
   { name: "Austin", address: "400 Congress Ave, Austin, TX" },
   { name: "Seattle", address: "1200 4th Ave, Seattle, WA" },
   { name: "Chicago", address: "230 S LaSalle St, Chicago, IL" },
@@ -168,6 +171,10 @@ interface EmployeeSeed {
   role: string;
   isDepartmentHead: boolean;
   skillType?: string;
+  salaryType?: string;
+  dailyWageRate?: number;
+  contractorCode?: string;
+  dateOfExit?: string;
 }
 
 const EMPLOYEES: EmployeeSeed[] = [
@@ -186,6 +193,12 @@ const EMPLOYEES: EmployeeSeed[] = [
   { code: "EMP013", firstName: "Neha", lastName: "Joshi", email: "neha.joshi@company.com", phone: "+1-555-0113", designation: "Marketing Manager", department: "Marketing", location: "Miami", employmentType: "Full-Time", status: "Active", joinDate: "2020-11-15", salary: 92000, state: "Florida", country: "USA", managerId: "EMP010", gender: "Female", dob: "1989-07-03", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Semi Skilled" },
   { code: "EMP014", firstName: "Kiran", lastName: "Kumar", email: "kiran.kumar@company.com", phone: "+1-555-0114", designation: "Frontend Engineer", department: "Engineering", location: "Remote", employmentType: "Contract", status: "Active", joinDate: "2023-07-01", salary: 75000, state: "Telangana", country: "India", managerId: "EMP005", gender: "Male", dob: "1996-03-22", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Semi Skilled" },
   { code: "EMP015", firstName: "Pooja", lastName: "Iyer", email: "pooja.iyer@company.com", phone: "+1-555-0115", designation: "Finance Analyst", department: "Finance", location: "London", employmentType: "Full-Time", status: "Inactive", joinDate: "2021-04-19", salary: 80000, state: "England", country: "UK", managerId: "EMP010", gender: "Female", dob: "1992-11-08", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Unskilled" },
+  // ── Scenarios 1-16 Specific Worker Personas ──
+  { code: "EMP016", firstName: "Ravi", lastName: "Kumar", email: "ravi.kumar@company.com", phone: "+91-987-6543-210", designation: "Senior Software Engineer", department: "Engineering", location: "Delhi", employmentType: "Contract", status: "Active", joinDate: "2024-01-01", salary: 288000, state: "Delhi", country: "India", managerId: "EMP005", gender: "Male", dob: "1994-05-12", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Skilled", salaryType: "Daily", dailyWageRate: 900, contractorCode: "CONTA" },
+  { code: "EMP017", firstName: "Suresh", lastName: "Sharma", email: "suresh.sharma@company.com", phone: "+91-987-6543-211", designation: "DevOps Engineer", department: "Engineering", location: "Delhi", employmentType: "Full-Time", status: "Active", joinDate: "2024-02-01", salary: 288000, state: "Delhi", country: "India", managerId: "EMP005", gender: "Male", dob: "1992-08-19", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Semi Skilled", salaryType: "Monthly", contractorCode: "CONTB" },
+  { code: "EMP018", firstName: "Amit", lastName: "Verma", email: "amit.verma@company.com", phone: "+91-987-6543-212", designation: "Data Analyst", department: "Analytics", location: "Delhi", employmentType: "Contract", status: "Active", joinDate: "2024-03-01", salary: 208000, state: "Delhi", country: "India", managerId: "EMP009", gender: "Male", dob: "1996-10-10", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Unskilled", salaryType: "Daily", dailyWageRate: 650, contractorCode: "CONTC" },
+  { code: "EMP019", firstName: "Deepa", lastName: "Nair", email: "deepa.nair@company.com", phone: "+91-987-6543-213", designation: "Senior Software Engineer", department: "Engineering", location: "Delhi", employmentType: "Contract", status: "Active", joinDate: "2026-09-15", salary: 288000, state: "Delhi", country: "India", managerId: "EMP005", gender: "Female", dob: "1997-03-25", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Skilled", salaryType: "Daily", dailyWageRate: 900, contractorCode: "CONTA" },
+  { code: "EMP020", firstName: "Rajesh", lastName: "Patel", email: "rajesh.patel@company.com", phone: "+91-987-6543-214", designation: "Backend Engineer", department: "Engineering", location: "Delhi", employmentType: "Contract", status: "Inactive", joinDate: "2023-01-01", salary: 288000, state: "Delhi", country: "India", managerId: "EMP005", gender: "Male", dob: "1990-11-11", role: "EMPLOYEE", isDepartmentHead: false, skillType: "Skilled", salaryType: "Daily", dailyWageRate: 900, contractorCode: "CONTA", dateOfExit: "2026-09-18" },
 ];
 
 const LEAVE_TYPES = [
@@ -300,6 +313,10 @@ async function main() {
   await prisma.performanceOneOnOne.deleteMany();
   await prisma.performanceRatingHistory.deleteMany();
   await prisma.performanceReviewCycle.deleteMany();
+  await prisma.productionRecord.deleteMany();
+  await prisma.salaryAdvance.deleteMany();
+  await prisma.payrollComponentConfig.deleteMany();
+  await prisma.wageRate.deleteMany();
   await prisma.payslip.deleteMany();
   await prisma.payrollRun.deleteMany();
   await prisma.salaryStructure.deleteMany();
@@ -309,6 +326,7 @@ async function main() {
   await prisma.leaveType.deleteMany();
   await prisma.holiday.deleteMany();
   await prisma.employee.deleteMany();
+  await prisma.contractor.deleteMany();
   await prisma.user.deleteMany();
   await prisma.rolePermission.deleteMany();
   await prisma.permission.deleteMany();
@@ -328,6 +346,33 @@ async function main() {
       country: "India",
       currency: "INR",
       weeklyOffDays: [0, 6], // Sunday + Saturday -> Mon-Fri working week
+    },
+  });
+
+  await prisma.companyConfig.upsert({
+    where: { companyId: company.id },
+    create: {
+      companyId: company.id,
+      weeklyOffDays: [0, 6],
+      overtimeMultiplier: 1.5,
+      weeklyOffWorkedMultiplier: 2.0,
+      holidayWorkedMultiplier: 2.0,
+      nightShiftAllowance: 100,
+      nightOtMultiplier: 2.0,
+      weeklyOffOtMultiplier: 2.0,
+      holidayOtMultiplier: 2.0,
+      minOtMinutesThreshold: 30,
+      maxOtHoursMonthly: 60,
+    },
+    update: {
+      weeklyOffWorkedMultiplier: 2.0,
+      holidayWorkedMultiplier: 2.0,
+      nightShiftAllowance: 100,
+      nightOtMultiplier: 2.0,
+      weeklyOffOtMultiplier: 2.0,
+      holidayOtMultiplier: 2.0,
+      minOtMinutesThreshold: 30,
+      maxOtHoursMonthly: 60,
     },
   });
 
@@ -462,6 +507,9 @@ async function main() {
         country: e.country,
         annualSalary: e.salary,
         skillType: e.skillType ?? null,
+        salaryType: e.salaryType ?? "Monthly",
+        dailyWageRate: e.dailyWageRate ?? null,
+        dateOfExit: e.dateOfExit ? new Date(`${e.dateOfExit}T00:00:00Z`) : null,
       },
     });
     empByCode.set(e.code, emp.id);
@@ -1499,6 +1547,204 @@ async function main() {
       { userId: userByEmail.get("robert.king@company.com")!, title: "Policy acknowledgement reminder", body: "Please acknowledge the updated Information Security Policy.", category: "Policy", link: "/policies", isRead: true, readAt: new Date("2026-01-06T09:00:00Z"), createdAt: new Date("2026-01-02T09:00:00Z") },
     ],
   });
+
+  // ═══ Enterprise Payroll (16 Business Scenarios) Master Data ═══
+  console.log("   ↳ Seeding 16-Scenario Enterprise Payroll masters & demo records...");
+
+  // Contractors (Scenario 15)
+  const contractors = [
+    { code: "CONTA", name: "A-One Labour Services", contactPerson: "Rajesh Sharma", phone: "+91-9811122233", email: "contact@aonelabour.com", serviceChargePct: 10.0 },
+    { code: "CONTB", name: "Apex Workforce Solutions", contactPerson: "Sunil Verma", phone: "+91-9822233344", email: "info@apexworkforce.com", serviceChargePct: 8.5 },
+    { code: "CONTC", name: "BuildCraft Manpower", contactPerson: "Anand Joshi", phone: "+91-9833344455", email: "support@buildcraft.com", serviceChargePct: 12.0 },
+  ];
+  const contractorByCode = new Map<string, string>();
+  for (const c of contractors) {
+    const row = await prisma.contractor.create({ data: c });
+    contractorByCode.set(c.code, row.id);
+  }
+
+  // Assign contractors to scenario workers
+  for (const e of EMPLOYEES) {
+    if (e.contractorCode) {
+      const contractorId = contractorByCode.get(e.contractorCode);
+      const empId = empPKByCode.get(e.code);
+      if (contractorId && empId) {
+        await prisma.employee.update({
+          where: { id: empId },
+          data: { contractorId },
+        });
+      }
+    }
+  }
+
+  // Wage Rates (Scenario 1 & 16)
+  const wageRates = [
+    { category: "Skilled", dailyRate: 900, description: "Standard daily rate for Skilled workers (₹900/day)" },
+    { category: "Semi-Skilled", dailyRate: 750, description: "Standard daily rate for Semi-Skilled workers (₹750/day)" },
+    { category: "Unskilled", dailyRate: 650, description: "Standard daily rate for Unskilled workers (₹650/day)" },
+    { category: "Skilled", locationId: locByName.get("Hyderabad") ?? null, dailyRate: 850, description: "Hyderabad location rate for Skilled workers (₹850/day)" },
+    { category: "Skilled", locationId: locByName.get("Chennai") ?? null, dailyRate: 900, description: "Chennai location rate for Skilled workers (₹900/day)" },
+    { category: "Skilled", locationId: locByName.get("Bangalore") ?? null, dailyRate: 950, description: "Bangalore location rate for Skilled workers (₹950/day)" },
+  ];
+  for (const wr of wageRates) {
+    await prisma.wageRate.create({
+      data: {
+        skillCategory: wr.category,
+        dailyRate: wr.dailyRate,
+        locationId: wr.locationId,
+        effectiveFrom: new Date("2024-01-01T00:00:00Z"),
+        isActive: true,
+      },
+    });
+  }
+
+  // Configurable Payroll Components (Scenarios 6, 7, 8, 10, 11)
+  const components = [
+    {
+      code: "ATT_BONUS",
+      name: "Attendance Bonus",
+      kind: "earning",
+      calcType: "slab",
+      metric: "payableDays",
+      isActive: true,
+      slabs: [
+        { min: 26, max: 31, value: 1500 },
+        { min: 24, max: 25.5, value: 750 },
+        { min: 0, max: 23.5, value: 0 },
+      ],
+    },
+    {
+      code: "NIGHT_ALLOW",
+      name: "Night Shift Allowance",
+      kind: "earning",
+      calcType: "slab",
+      metric: "nightShifts",
+      isActive: true,
+      slabs: [
+        { min: 15, max: 999, value: 1500 },
+        { min: 10, max: 14, value: 1000 },
+        { min: 0, max: 9, value: 0 },
+      ],
+    },
+    {
+      code: "PROD_INC",
+      name: "Production Incentive",
+      kind: "earning",
+      calcType: "slab",
+      metric: "productionUnits",
+      isActive: true,
+      slabs: [
+        { min: 1200, max: 999999, value: 3000 },
+        { min: 1000, max: 1199, value: 2000 },
+        { min: 800, max: 999, value: 1000 },
+        { min: 0, max: 799, value: 0 },
+      ],
+    },
+    {
+      code: "FOOD_ALLOW",
+      name: "Food Allowance",
+      kind: "earning",
+      calcType: "fixed",
+      value: 1000,
+      minAttendanceDays: 25,
+      isActive: true,
+    },
+    {
+      code: "TRANSPORT_ALLOW",
+      name: "Transport Allowance",
+      kind: "earning",
+      calcType: "fixed",
+      value: 1500,
+      minAttendanceDays: 20,
+      isActive: true,
+    },
+  ];
+  for (const c of components) {
+    await prisma.payrollComponentConfig.create({
+      data: {
+        code: c.code,
+        name: c.name,
+        kind: c.kind,
+        calcType: c.calcType,
+        metric: c.metric ?? null,
+        value: c.value ?? null,
+        slabs: c.slabs ? (c.slabs as any) : undefined,
+        minAttendanceDays: c.minAttendanceDays ?? null,
+        isActive: c.isActive,
+        effectiveFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+  }
+
+  // Salary Advances & Loans (Scenario 12)
+  const raviId = empPKByCode.get("EMP016");
+  if (raviId) {
+    await prisma.salaryAdvance.create({
+      data: {
+        employeeId: raviId,
+        amount: 20000,
+        monthlyDeduction: 2000,
+        disbursedOn: new Date("2026-07-01T00:00:00Z"),
+        recoveredAmount: 4000,
+        status: "Active",
+        reason: "Advance loan sanctioned for family home renovation. Deduct ₹2,000/mo.",
+      },
+    });
+  }
+  const vikasId = empPKByCode.get("EMP003");
+  if (vikasId) {
+    await prisma.salaryAdvance.create({
+      data: {
+        employeeId: vikasId,
+        amount: 10000,
+        monthlyDeduction: 1000,
+        disbursedOn: new Date("2026-08-01T00:00:00Z"),
+        recoveredAmount: 1000,
+        status: "Active",
+        reason: "Emergency medical advance. Deduct ₹1,000/mo.",
+      },
+    });
+  }
+
+  // Production Records (Scenario 8)
+  if (raviId) {
+    await prisma.productionRecord.create({
+      data: {
+        employeeId: raviId,
+        month: 9,
+        year: 2026,
+        unitsProduced: 1150,
+        targetUnits: 1000,
+        remarks: "September production run: 1,150 high quality finished assemblies",
+      },
+    });
+  }
+  const sureshId = empPKByCode.get("EMP017");
+  if (sureshId) {
+    await prisma.productionRecord.create({
+      data: {
+        employeeId: sureshId,
+        month: 9,
+        year: 2026,
+        unitsProduced: 950,
+        targetUnits: 1000,
+        remarks: "September production run: 950 units",
+      },
+    });
+  }
+  const rahulId = empPKByCode.get("EMP006");
+  if (rahulId) {
+    await prisma.productionRecord.create({
+      data: {
+        employeeId: rahulId,
+        month: 9,
+        year: 2026,
+        unitsProduced: 1250,
+        targetUnits: 1000,
+        remarks: "September production run: 1,250 units",
+      },
+    });
+  }
 
   } // end SEED_DEMO_DATA
 

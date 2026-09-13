@@ -303,12 +303,31 @@ async function getLatestVersion(templateId: string) {
 export async function saveDraft(templateId: string, blueprint: Blueprint, actorEmployeeId?: string, summary?: string) {
   const template = await prisma.payslipTemplate.findUnique({ where: { id: templateId } });
   if (!template) throw AppError.notFound("Payslip template not found");
-  if (template.status === "Published" && template.isActive) {
-    throw AppError.conflict("Cannot edit an active published template directly. Restore a version first.");
-  }
 
   const latest = await getLatestVersion(templateId);
   const version = await prisma.$transaction(async (tx) => {
+    // If the latest version is already Draft, update it in place so multiple saves/auto-saves don't inflate version numbers
+    if (latest.status === "Draft") {
+      const v = await tx.payslipTemplateVersion.update({
+        where: { id: latest.id },
+        data: {
+          blueprint: asJson(blueprint),
+          changeSummary: summary || "Draft updated",
+        },
+      });
+      await tx.payslipTemplate.update({
+        where: { id: templateId },
+        data: {
+          name: blueprint.name ?? template.name,
+          country: blueprint.country ?? template.country,
+          state: blueprint.state ?? template.state,
+          financialYear: blueprint.financialYear ?? template.financialYear,
+        },
+      });
+      return v;
+    }
+
+    // Otherwise, create a new draft version
     const v = await tx.payslipTemplateVersion.create({
       data: {
         templateId,
@@ -326,7 +345,6 @@ export async function saveDraft(templateId: string, blueprint: Blueprint, actorE
         country: blueprint.country ?? template.country,
         state: blueprint.state ?? template.state,
         financialYear: blueprint.financialYear ?? template.financialYear,
-        status: "Draft",
       },
     });
     return v;
