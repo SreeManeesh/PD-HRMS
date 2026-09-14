@@ -60,6 +60,7 @@ export function serializeEmployee(emp: EmployeeWithRelations) {
     gender: emp.gender ?? "",
     skillType: emp.skillType ?? "",
     dob: emp.dateOfBirth ? formatDate(emp.dateOfBirth) : null,
+    wizardData: (emp as any).wizardData ?? null,
   };
 }
 

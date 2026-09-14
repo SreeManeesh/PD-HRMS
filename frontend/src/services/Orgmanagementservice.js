@@ -310,6 +310,65 @@ export const bulkReassignDepartment = async (
 
 
 /* ========================================================================= */
+/* SHIFTS                                                                    */
+/* ========================================================================= */
+
+/**
+ * GET /api/v1/organization/shifts
+ */
+export const getShifts = async () => {
+  const res = await api.get(
+    "/organization/shifts"
+  );
+
+  return {
+    data: res.data,
+  };
+};
+
+/**
+ * POST /api/v1/organization/shifts
+ */
+export const createShift = async (payload) => {
+  const res = await api.post(
+    "/organization/shifts",
+    payload
+  );
+
+  return {
+    data: res.data,
+  };
+};
+
+/**
+ * PUT /api/v1/organization/shifts/:id
+ */
+export const updateShift = async (id, payload) => {
+  const res = await api.put(
+    `/organization/shifts/${id}`,
+    payload
+  );
+
+  return {
+    data: res.data,
+  };
+};
+
+/**
+ * DELETE /api/v1/organization/shifts/:id
+ */
+export const deleteShift = async (id) => {
+  const res = await api.delete(
+    `/organization/shifts/${id}`
+  );
+
+  return {
+    data: res.data,
+  };
+};
+
+
+/* ========================================================================= */
 /* AUDIT LOG                                                                 */
 /* ========================================================================= */
 

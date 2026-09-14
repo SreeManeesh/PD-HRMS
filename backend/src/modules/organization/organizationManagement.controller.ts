@@ -355,6 +355,75 @@ export class OrganizationManagementController {
   }
 
   // =========================================================
+  // SHIFTS
+  // =========================================================
+
+  async getShifts(req: Request, res: Response) {
+    try {
+      const data =
+        await organizationManagementService.getShifts();
+
+      return res.status(200).json(data);
+    } catch (error: any) {
+      console.error("getShifts error:", error);
+
+      return res.status(500).json({
+        message: error.message || "Failed to get shifts",
+      });
+    }
+  }
+
+  async addShift(req: Request, res: Response) {
+    try {
+      const data =
+        await organizationManagementService.createShift(req.body);
+
+      return res.status(201).json(data);
+    } catch (error: any) {
+      console.error("addShift error:", error);
+
+      return res.status(400).json({
+        message: error.message || "Failed to create shift",
+      });
+    }
+  }
+
+  async updateShift(req: Request, res: Response) {
+    try {
+      const data =
+        await organizationManagementService.updateShift(
+          req.params.id,
+          req.body
+        );
+
+      return res.status(200).json(data);
+    } catch (error: any) {
+      console.error("updateShift error:", error);
+
+      return res.status(400).json({
+        message: error.message || "Failed to update shift",
+      });
+    }
+  }
+
+  async deleteShift(req: Request, res: Response) {
+    try {
+      const data =
+        await organizationManagementService.deleteShift(
+          req.params.id
+        );
+
+      return res.status(200).json(data);
+    } catch (error: any) {
+      console.error("deleteShift error:", error);
+
+      return res.status(400).json({
+        message: error.message || "Failed to delete shift",
+      });
+    }
+  }
+
+  // =========================================================
   // AUDIT LOG
   // =========================================================
 

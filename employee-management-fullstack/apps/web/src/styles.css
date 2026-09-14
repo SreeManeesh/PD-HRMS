@@ -363,6 +363,25 @@ input, select { font-family: inherit; }
 .field.error input, .field.error select { border-color: var(--red); }
 .field.error input:focus, .field.error select:focus { border-color: var(--red); box-shadow: 0 0 0 3px rgba(220,38,38,0.12); }
 .field .field-error { margin: -1px 0 0; font-size: 11.5px; font-weight: 600; color: var(--red); display: block; }
+.field .field-input-wrap { display: flex; align-items: center; border: 1px solid #dfe7ef; border-radius: 10px; background: #fff; transition: border-color .15s, box-shadow .15s; }
+.proof-type-inline { display: flex; gap: 8px; align-items: flex-end; }
+.proof-type-inline .field { flex: 1; min-width: 0; }
+.proof-type-inline .proof-file-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-bottom: 1px; padding: 10px 14px; border: 1px solid var(--primary); border-radius: 10px; color: var(--primary); background: #fff; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: all .15s; }
+.proof-type-inline .proof-file-btn:hover { background: var(--primary); color: #fff; }
+.proof-preview { margin-top: 14px; display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid #dbe4ee; border-radius: 12px; background: #f8fafc; flex-wrap: wrap; }
+.proof-preview.proof-preview-error { border-color: #f3b4b6; background: #fef2f2; color: #b91c1c; font-size: 12.5px; font-weight: 600; }
+.proof-preview .proof-preview-media { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; border: 1px solid #dfe7ef; background: #fff; flex-shrink: 0; }
+.proof-preview .proof-preview-doc { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--primary); font-weight: 800; font-size: 10px; text-transform: uppercase; }
+.proof-preview .proof-preview-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.proof-preview .proof-preview-meta strong { font-size: 13px; color: var(--text); word-break: break-word; }
+.proof-preview .proof-preview-meta span { font-size: 11.5px; color: var(--subtext); }
+.proof-preview .proof-cancel { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border: 1px solid #ef9da4; border-radius: 9px; background: #fff; color: #b91c1c; font-size: 12.5px; font-weight: 700; cursor: pointer; flex-shrink: 0; }
+.proof-preview .proof-cancel:hover { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+.field .field-input-wrap .field-prefix { padding: 0 0 0 12px; color: #52636f; font-weight: 700; font-size: 14px; line-height: 1; }
+.field .field-input-wrap input { width: 100%; border: none; background: transparent; box-shadow: none; }
+.field .field-input-wrap:hover { border-color: #c3d0de; }
+.field .field-input-wrap:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(15,118,110,0.14); }
+.field.error .field-input-wrap { border-color: var(--red); }
 
 /* ─── Buttons ─────────────────────────────────────────────────────────── */
 button.primary, button.ghost, button.secondary, button.danger {

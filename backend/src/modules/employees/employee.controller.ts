@@ -50,7 +50,8 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
 
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   const pk = await resolveEmployeeId(req.params.id);
-  const result = await employeeService.deleteEmployee(pk);
+  const actingUserId = req.auth?.sub ?? null;
+  const result = await employeeService.deleteEmployee(pk, actingUserId);
   sendSuccess(res, result.data);
 });
 

@@ -168,6 +168,38 @@ router.post(
 );
 
 // =========================================================
+// SHIFTS
+// =========================================================
+
+router.get(
+  "/shifts",
+  organizationManagementController.getShifts.bind(
+    organizationManagementController
+  )
+);
+
+router.post(
+  "/shifts",
+  organizationManagementController.addShift.bind(
+    organizationManagementController
+  )
+);
+
+router.put(
+  "/shifts/:id",
+  organizationManagementController.updateShift.bind(
+    organizationManagementController
+  )
+);
+
+router.delete(
+  "/shifts/:id",
+  organizationManagementController.deleteShift.bind(
+    organizationManagementController
+  )
+);
+
+// =========================================================
 // AUDIT LOG
 // =========================================================
 

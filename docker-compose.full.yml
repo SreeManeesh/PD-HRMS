@@ -1,0 +1,98 @@
+name: hrms-full
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: hrms-full-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hrms_admin
+      POSTGRES_PASSWORD: hrms_password
+      POSTGRES_DB: hrms_db
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - hrms_full_pgdata:/var/lib/postgresql/data
+      # Wizard DB schema (apps of employee-management-fullstack use DB "hrms").
+      # First-time init only: applied when the volume is created.
+      - ./employee-management-fullstack/database/schema.sql:/scripts/wizard-schema.sql:ro
+      - ./docker-init/10-wizard-db.sql:/docker-entrypoint-initdb.d/10-wizard-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms_admin -d hrms_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ./backend
+    container_name: hrms-full-api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://hrms_admin:hrms_password@db:5432/hrms_db?schema=public
+      WIZARD_API_URL: http://wizard-api:4100
+      WIZARD_URL: http://localhost:5174
+      WIZARD_SERVICE_SECRET: hrms-wizard-dev-secret
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    ports:
+      - "127.0.0.1:4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+
+  wizard-api:
+    build:
+      context: ./employee-management-fullstack/apps/api
+    container_name: hrms-full-wizard-api
+    restart: unless-stopped
+    environment:
+      PORT: "4100"
+      DATABASE_URL: postgres://hrms_admin:hrms_password@db:5432/hrms
+      HRMS_API_URL: http://api:4000
+      AUTH_SERVICE_SECRET: hrms-wizard-dev-secret
+      FRONTEND_ORIGIN: http://localhost:5173,http://localhost:5174
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4100:4100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4100/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  wizard-web:
+    build:
+      context: ./employee-management-fullstack/apps/web
+    container_name: hrms-full-wizard-web
+    restart: unless-stopped
+    depends_on:
+      wizard-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5174:80"
+
+  frontend:
+    image: nginx:alpine
+    container_name: hrms-full-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5173:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+
+volumes:
+  hrms_full_pgdata:

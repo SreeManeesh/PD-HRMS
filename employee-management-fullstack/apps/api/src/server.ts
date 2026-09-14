@@ -29,7 +29,7 @@ app.use(rateLimit({ windowMs: 60_000, limit: 300 }));
 
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
 fs.mkdirSync(uploadDir, { recursive: true });
-const upload = multer({ dest: uploadDir, limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({ dest: uploadDir, limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.get('/health', async (_req,res)=>{
   await pool.query('SELECT 1');
@@ -93,15 +93,36 @@ app.post('/api/auth/wizard-session', async (_req,res)=>{
 
 app.get('/api/lookups', auth, async (req,res)=>{
   const organizationId = res.locals.auth.organizationId;
-  const [departments,designations,locations,grades,costCenters,shifts] = await Promise.all([
+  const localShifts = await pool.query('SELECT * FROM shifts WHERE organization_id=$1 ORDER BY name',[organizationId]).then(r=>r.rows).catch(()=>[]);
+  const hrmsBase = (process.env.HRMS_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const secret = process.env.AUTH_SERVICE_SECRET || '';
+  try {
+    const hr = await fetch(`${hrmsBase}/api/wizard/org-data`, {
+      headers: { 'Content-Type': 'application/json', 'x-wizard-secret': secret },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (hr.ok) {
+      const body = await hr.json();
+      const org = body?.data ?? body;
+      res.json({
+        departments: org.departments || [],
+        designations: (org.designations || []).map((d:any)=>({ ...d, name: d.name || d.title || '' })),
+        locations: org.locations || [],
+        grades: org.grades || [],
+        costCenters: org.costCenters || [],
+        shifts: org.shifts || localShifts,
+      });
+      return;
+    }
+  } catch { /* fall through to local DB */ }
+  const [departments,designations,locations,grades,costCenters] = await Promise.all([
     pool.query('SELECT * FROM departments WHERE organization_id=$1 ORDER BY name',[organizationId]),
     pool.query('SELECT * FROM designations WHERE organization_id=$1 ORDER BY name',[organizationId]),
     pool.query('SELECT * FROM locations WHERE organization_id=$1 ORDER BY name',[organizationId]),
     pool.query('SELECT * FROM grades WHERE organization_id=$1 ORDER BY code',[organizationId]),
-    pool.query('SELECT * FROM cost_centers WHERE organization_id=$1 ORDER BY code',[organizationId]),
-    pool.query('SELECT * FROM shifts WHERE organization_id=$1 ORDER BY name',[organizationId])
+    pool.query('SELECT * FROM cost_centers WHERE organization_id=$1 ORDER BY code',[organizationId])
   ]);
-  res.json({departments:departments.rows,designations:designations.rows,locations:locations.rows,grades:grades.rows,costCenters:costCenters.rows,shifts:shifts.rows});
+  res.json({departments:departments.rows,designations:designations.rows,locations:locations.rows,grades:grades.rows,costCenters:costCenters.rows,shifts:localShifts});
 });
 
 app.get('/api/regulations', auth, async (_req,res)=>{ res.json((await pool.query('SELECT * FROM regulations WHERE enabled=true ORDER BY jurisdiction,name')).rows); });
@@ -116,32 +137,72 @@ app.get('/api/consents/catalog', auth, async (_req,res)=>{
 });
 
 /**
- * Server-to-server mirror into the main HRMS backend so a wizard-registered
- * employee appears in the HRMS Employees list. Awaited before the create
- * response so a 201 already guarantees the record exists in HRMS. Non-fatal:
- * mirrors never fail the wizard create itself.
+ * POST /api/consent-policies — admin-create a new consent type in the
+ * registration catalog (consent_policies). Mirrors the consent cockpit's
+ * campaign so a new consent type becomes available to the step-6 consent
+ * register once the profile consents tab reloads. Guarded: HR_ADMIN only.
  */
+app.post('/api/consent-policies', auth, async (req,res)=>{
+  const my = res.locals.auth;
+  if (!my?.roles?.includes?.('HR_ADMIN') && my?.userId !== 'service') {
+    return res.status(403).json({ message: 'HR admin role required to create consent types' });
+  }
+  const { code, title, description='', purposeText='', legalBasis='CONTRACT', isStatutory=false, blocking=false, withdrawable=true, requiredOnOnboarding=false, useCase='EMPLOYEE', dataFields=['name','email'], validityPeriodDays=null } = req.body ?? {};
+  if (!code || !title) return res.status(400).json({ message: 'code and title are required' });
+  const slug = code.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'') || 'consent_' + Date.now();
+  const result = await pool.query(`
+    INSERT INTO consent_policies(code,title,description,purpose_text,legal_basis,is_statutory,blocking,withdrawable,required_on_onboarding,consent_type,use_case,data_fields,validity_period_days,active,version)
+    VALUES($1,$2,$3,$4,$5::legal_basis,$6,$7,$8,$9,'EXPLICIT_CHECKBOX',$10,$11::jsonb,$12,true,'1.0')
+    RETURNING id,code,title,description,purpose_text,legal_basis,is_statutory,blocking,withdrawable,required_on_onboarding,consent_type,use_case,data_fields,validity_period_days,version
+  `,[slug,title,description,purposeText,legalBasis,isStatutory,blocking,withdrawable,requiredOnOnboarding,useCase,JSON.stringify(dataFields),validityPeriodDays]);
+  res.status(201).json({ consentPolicy: result.rows[0] });
+});
 async function mirrorToHrms(d: any, organizationId: string) {
   const hrmsBase = (process.env.HRMS_API_URL || 'http://localhost:4000').replace(/\/$/, '');
   const secret = process.env.AUTH_SERVICE_SECRET || '';
+  // The step-2 org dropdowns now carry HRMS org-management UUIDs, so resolve the
+  // display names from HRMS's org data instead of the wizard's local tables.
+  let designation = '';
+  let department = '';
+  try {
+    const orgRes = await fetch(`${hrmsBase}/api/wizard/org-data`, {
+      headers: { 'Content-Type': 'application/json', 'x-wizard-secret': secret },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (orgRes.ok) {
+      const body = await orgRes.json();
+      const org = body?.data ?? body;
+      designation = (org.designations || []).find((x: any) => x.id === d.job?.designationId)?.name || '';
+      department = (org.departments || []).find((x: any) => x.id === d.job?.departmentId)?.name || '';
+    }
+  } catch { /* fall through to local lookup below */ }
   const [desgRow, deptRow] = await Promise.all([
-    d.job?.designationId
+    designation ? Promise.resolve({ rows: [] }) : (d.job?.designationId
       ? pool.query('SELECT name FROM designations WHERE id=$1 AND organization_id=$2', [d.job.designationId, organizationId])
-      : Promise.resolve({ rows: [] }),
-    d.job?.departmentId
+      : Promise.resolve({ rows: [] })),
+    department ? Promise.resolve({ rows: [] }) : (d.job?.departmentId
       ? pool.query('SELECT name FROM departments WHERE id=$1 AND organization_id=$2', [d.job.departmentId, organizationId])
-      : Promise.resolve({ rows: [] }),
+      : Promise.resolve({ rows: [] })),
   ]);
+  if (!designation) designation = desgRow.rows[0]?.name || '';
+  if (!department) department = deptRow.rows[0]?.name || '';
+  const wizardSnapshot: any = { ...d };
+  if (wizardSnapshot.aadhaar) wizardSnapshot.aadhaar = `••••••••${String(wizardSnapshot.aadhaar).slice(-4)}`;
+  if (wizardSnapshot.bank?.accountNumber) wizardSnapshot.bank = { ...wizardSnapshot.bank, accountNumber: `••••${String(wizardSnapshot.bank.accountNumber).slice(-4)}` };
+  if (wizardSnapshot.family?.length) wizardSnapshot.family = wizardSnapshot.family.map((m: any) => ({ ...m, aadhaar: m.aadhaar ? `••••${String(m.aadhaar).slice(-4)}` : m.aadhaar }));
   const payload = {
     firstName: d.firstName ?? '',
     lastName: d.lastName ?? '',
     email: d.officialEmail || d.personalEmail || '',
-    designation: desgRow.rows[0]?.name || '',
-    department: deptRow.rows[0]?.name || '',
+    designation,
+    department,
     employmentType: d.job?.employmentType ?? 'Full-Time',
     dateOfJoining: d.job?.dateOfJoining || '',
     state: d.currentAddress?.stateCode || '',
-    country: d.currentAddress?.countryCode || '',
+    country: d.country || d.currentAddress?.countryCode || '',
+    skillType: d.job?.skillType || '',
+    annualSalary: typeof d.statutory?.annualSalary === 'number' ? d.statutory.annualSalary : undefined,
+    wizardData: wizardSnapshot,
   };
   const response = await fetch(`${hrmsBase}/api/wizard/mirror`, {
     method: 'POST',
@@ -197,6 +258,18 @@ app.post('/api/employees', auth, async (req,res)=>{
       for (const row of d.languages) await client.query(`INSERT INTO employee_languages(employee_id,language_name,can_read,can_write,can_speak) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,[employeeId,row.languageName,row.canRead,row.canWrite,row.canSpeak]);
       for (const row of d.experience) await client.query(`INSERT INTO employee_experience(employee_id,previous_employer_name,designation,from_date,to_date,last_drawn_salary,reason_for_leaving,previous_pf_number,relieving_letter_received) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[employeeId,row.previousEmployerName,row.designation,row.fromDate,row.toDate,row.lastDrawnSalary,row.reasonForLeaving,row.previousPfNumber,row.relievingLetterReceived]);
       await ensureEmployeeConsents(client, employeeId);
+      for (const c of d.consents || []) {
+        const policyRows = await client.query(`SELECT id, version, legal_basis FROM consent_policies WHERE code=$1 AND active=true`,[c.code]);
+        if (!policyRows.rowCount) continue;
+        const policy = policyRows.rows[0];
+        const finalStatus = c.status === 'DENIED' ? 'DENIED' : 'GRANTED';
+        const method = c.method || (policy.legal_basis === 'NOTICE_ONLY' ? 'NOTICE_ACKNOWLEDGEMENT' : 'EXPLICIT_CHECKBOX');
+        const upd = await client.query(`UPDATE employee_consents SET status=$5::consent_status, granted_on=CASE WHEN $5='DENIED'::consent_status THEN NULL ELSE now() END, granted_by_type='USER', granted_by_user_id=$1, consent_method=COALESCE($2::consent_type, consent_method), updated_at=now() WHERE employee_id=$3 AND consent_policy_id=$4`,[actorId, method, employeeId, policy.id, finalStatus]);
+        if (upd.rowCount) {
+          const ecRow = await client.query(`SELECT id FROM employee_consents WHERE employee_id=$1 AND consent_policy_id=$2 LIMIT 1`,[employeeId, policy.id]);
+          if (ecRow.rowCount) await appendConsentAudit(client, ecRow.rows[0].id, finalStatus === 'DENIED' ? 'DENIED' : (method === 'NOTICE_ACKNOWLEDGEMENT' ? 'ACKNOWLEDGED' : 'GRANTED'), { status: finalStatus, source: 'REGISTRATION_WIZARD' }, actorId, { ip: req.ip });
+        }
+      }
       await client.query(`INSERT INTO employee_audit_log(organization_id,employee_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$2,$3,'CREATED','EMPLOYEE',$2,$4)`,[a.organizationId,employeeId,actorId,{source:'employee-wizard'}]);
       return emp.rows[0];
     });

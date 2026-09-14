@@ -15,7 +15,7 @@ export function hashAudit(previousHash: string | null, payload: object) {
   return crypto.createHash('sha256').update(`${previousHash || ''}:${JSON.stringify(payload)}`).digest('hex');
 }
 
-export async function appendConsentAudit(client: PoolClient, employeeConsentId: string, action: string, details: object, actorUserId: string, reqMeta: {ip?: string, deviceInfo?: object}) {
+export async function appendConsentAudit(client: PoolClient, employeeConsentId: string, action: string, details: object, actorUserId: string | null, reqMeta: {ip?: string, deviceInfo?: object}) {
   const prev = await client.query(`SELECT record_hash FROM consent_audit_log ORDER BY action_timestamp DESC LIMIT 1`);
   const previousHash = prev.rows[0]?.record_hash || null;
   const payload = { employeeConsentId, action, details, actorUserId, ip: reqMeta.ip || null, deviceInfo: reqMeta.deviceInfo || null };

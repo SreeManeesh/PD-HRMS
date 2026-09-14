@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Users, Upload, MoreVertical, Pencil, Trash2, RotateCcw, CheckCircle2, X } from "lucide-react";
+import { Plus, Search, Filter, Users, Upload, MoreVertical, Trash2, RotateCcw, CheckCircle2, X } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -19,7 +19,6 @@ import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 import {
   getEmployees,
   createEmployee,
-  updateEmployee,
   previewBulkEmployees,
   bulkUploadEmployees,
   undoBulkEmployees,
@@ -38,192 +37,7 @@ const EMPLOYEE_STATUS_META = {
   Terminated: { label: "Terminated", color: "#dc2626", bg: "#fef2f2" },
 };
 
-// ─── Edit Employee Form ───────────────────────────────────────────────────────
-function EditEmployeeModal({ employee, employees, isOpen, onClose, onUpdated }) {
-  const toast = useToast();
-  const [form, setForm] = useState({
-    firstName: "", lastName: "", email: "", phone: "", gender: "", dob: "",
-    designation: "", skillType: "", department: "", location: "", employmentType: "Full-Time",
-    status: "Active", managerId: "", dateOfJoining: "",
-    state: "", country: "", annualSalary: "",
-  });
-  const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (employee) {
-      setForm({
-        firstName: employee.firstName || "", lastName: employee.lastName || "", email: employee.email || "",
-        phone: employee.phone || "", gender: employee.gender || "",
-        dob: employee.dob ? String(employee.dob).slice(0, 10) : "",
-        designation: employee.designation || "", skillType: employee.skillType || "",
-        department: employee.department || "",
-        location: employee.location || "", employmentType: employee.employmentType || "Full-Time",
-        status: employee.status || "Active", managerId: employee.managerId || "",
-        dateOfJoining: employee.joinDate ? String(employee.joinDate).slice(0, 10) : "",
-        state: employee.state || "", country: employee.country || "", annualSalary: employee.annualSalary ?? "",
-      });
-      setError("");
-      setErrors({});
-    }
-  }, [employee]);
-
-  const validate = () => {
-    const e = {};
-    if (!form.firstName.trim()) e.firstName = "Required";
-    if (!form.lastName.trim()) e.lastName = "Required";
-    if (!form.email.includes("@")) e.email = "Valid email required";
-    if (!form.designation.trim()) e.designation = "Required";
-    if (!form.department) e.department = "Required";
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!validate()) return;
-    setSaving(true);
-    setError("");
-    try {
-      await updateEmployee(employee.id, {
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim() || undefined,
-        gender: form.gender.trim() || undefined,
-        dob: form.dob ? String(form.dob).slice(0, 10) : undefined,
-        designation: form.designation.trim(),
-        skillType: form.skillType || undefined,
-        department: form.department,
-        location: form.location || undefined,
-        employmentType: form.employmentType,
-        status: form.status,
-        managerId: form.managerId || null,
-        dateOfJoining: form.dateOfJoining ? String(form.dateOfJoining).slice(0, 10) : undefined,
-        state: form.state.trim() || undefined,
-        country: form.country.trim() || undefined,
-        annualSalary: form.annualSalary ? Number(form.annualSalary) : undefined,
-      });
-      onUpdated();
-      onClose();
-      toast("Employee updated");
-    } catch (err) {
-      setError(err.message || "Could not update employee");
-      toast(err.message || "Could not update employee", "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const field = (label, key, type = "text") => (
-    <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{label}</label>
-      <input
-        type={type}
-        value={form[key]}
-        onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-        style={{
-          height: "38px", padding: "0 12px",
-          border: `1px solid ${errors[key] ? "var(--red)" : "var(--border)"}`,
-          borderRadius: "var(--radius-sm)",
-          fontSize: "13.5px", color: "var(--text)", outline: "none",
-          transition: "border-color 0.15s",
-        }}
-        onFocus={(e) => (e.target.style.borderColor = "var(--border-focus)")}
-        onBlur={(e) => (e.target.style.borderColor = errors[key] ? "var(--red)" : "var(--border)")}
-      />
-      {errors[key] && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors[key]}</span>}
-    </div>
-  );
-
-  const select = (label, key, options, placeholder) => {
-    const items = (options || []).map((o) => (typeof o === "object" && o !== null ? o : { value: o, label: String(o) }));
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{label}</label>
-        <select
-          value={form[key]}
-          onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
-          style={{
-            height: "38px", padding: "0 12px",
-            border: `1px solid ${errors[key] ? "var(--red)" : "var(--border)"}`,
-            borderRadius: "var(--radius-sm)",
-            fontSize: "13.5px", color: "var(--text)",
-            background: "var(--card)", outline: "none",
-          }}
-        >
-          <option value="">{placeholder || `Select ${label.replace(" *", "")}`}</option>
-          {items.map((it) => <option key={it.value} value={it.value}>{it.label}</option>)}
-        </select>
-        {errors[key] && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors[key]}</span>}
-      </div>
-    );
-  };
-
-  const managerOptions = (employees || [])
-    .filter((m) => (m.id || "") !== (employee?.id || ""))
-    .map((m) => ({ value: m.id, label: `${m.firstName} ${m.lastName} (${m.id})` }));
-
-  // Designation dropdown options — derived from the loaded employee roster so
-  // the current value always appears even when it isn't in a fixed catalog.
-  const designationOptions = [...new Set((employees || []).map((e) => e.designation).filter(Boolean))].sort();
-
-  return (
-    <Modal isOpen={isOpen} title="Edit Employee" onClose={onClose}>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {field("First Name *", "firstName")}
-          {field("Last Name *", "lastName")}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {field("Work Email *", "email", "email")}
-          {field("Phone", "phone")}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {select("Gender", "gender", genders, "Select Gender")}
-          {field("Date of Birth", "dob", "date")}
-        </div>
-        {select("Designation *", "designation", designationOptions, "Select Designation")}
-        {select("Skill Type", "skillType", skillTypes, "Select Skill Type")}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {select("Department *", "department", departments)}
-          {select("Work Location", "location", locations, "Select Work Location")}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {select("Employment Type", "employmentType", employmentTypes)}
-          {select("Status", "status", statuses)}
-        </div>
-        {select("Reporting Manager", "managerId", managerOptions, "None")}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {field("Date of Joining", "dateOfJoining", "date")}
-          {field("Yearly Salary Package", "annualSalary", "number")}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {field("State", "state")}
-          {field("Country", "country")}
-        </div>
-
-        {error && (
-          <div style={{ background: "var(--red-light)", color: "var(--red)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: "12.5px", fontWeight: 600 }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
-          <button type="button" onClick={onClose}
-            style={{ padding: "9px 20px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--label)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-            Cancel
-          </button>
-          <button type="submit" disabled={saving}
-            style={{ padding: "9px 20px", border: "none", borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}>
-            {saving ? "Saving…" : "Save Changes"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
+const dash = (v) => (v === null || v === undefined || String(v).trim() === "" ? "-" : v);
 
 // ─── Add Employee Form ────────────────────────────────────────────────────────
 function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
@@ -405,10 +219,9 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function Employees() {
   const navigate = useNavigate();
-  const { role, permissions } = useAuth();
-  const canEdit = role === "ADMIN" || role === "HR";
+  const { permissions } = useAuth();
   const canDelete = permissions.includes("employees:delete");
-  const showActions = canEdit || canDelete;
+  const showActions = canDelete;
   const toast = useToast();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -425,7 +238,6 @@ export default function Employees() {
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [undoBatch, setUndoBatch] = useState(null);
   const [undoing, setUndoing] = useState(false);
-  const [editingEmployee, setEditingEmployee] = useState(null);
   const [menuOpenFor, setMenuOpenFor] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -597,7 +409,7 @@ export default function Employees() {
             />
             <button
               id="add-employee-btn"
-              onClick={() => setShowAddModal(true)}
+              onClick={() => setShowWizard(true)}
               style={{
                 display: "flex", alignItems: "center", gap: "6px",
                 padding: "9px 16px", background: "var(--primary)", color: "#fff",
@@ -766,19 +578,19 @@ export default function Employees() {
                           </div>
                         </div>
                       </td>
-                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--text)" }}>{emp.designation}</td>
-                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{emp.department}</td>
-                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{emp.location}</td>
+                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--text)" }}>{dash(emp.designation)}</td>
+                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{dash(emp.department)}</td>
+                      <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{dash(emp.location)}</td>
                       <td style={{ padding: "14px 16px" }}>
                         <span style={{ fontSize: "11.5px", color: emp.employmentType === "Contract" ? "var(--amber)" : "var(--label)", background: emp.employmentType === "Contract" ? "var(--amber-light)" : "var(--background)", padding: "2px 8px", borderRadius: "99px", fontWeight: 500 }}>
-                          {emp.employmentType}
+                          {dash(emp.employmentType)}
                         </span>
                       </td>
                       <td style={{ padding: "14px 16px" }}>
                         <StatusBadge {...(EMPLOYEE_STATUS_META[emp.status] || EMPLOYEE_STATUS_META.Active)} />
                       </td>
                       <td style={{ padding: "14px 16px", fontSize: "12.5px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
-                        {new Date(emp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                        {emp.joinDate ? new Date(emp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-"}
                       </td>
 {showActions && (
                         <td style={{ padding: "14px 16px", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
@@ -809,22 +621,6 @@ export default function Employees() {
                                   minWidth: "168px", overflow: "hidden", padding: "6px",
                                 }}
                               >
-                                {canEdit && (
-                                  <button
-                                    onClick={() => { setMenuOpenFor(null); setEditingEmployee(emp); }}
-                                    style={{
-                                      display: "flex", alignItems: "center", gap: "9px", width: "100%",
-                                      padding: "9px 12px", border: "none", background: "none",
-                                      color: "var(--text)", fontSize: "13px", fontWeight: 500,
-                                      cursor: "pointer", textAlign: "left", borderRadius: "var(--radius-sm)",
-                                      transition: "background 0.12s",
-                                    }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--background)")}
-                                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-                                  >
-                                    <Pencil size={14} color="var(--label)" /> Edit Employee
-                                  </button>
-                                )}
                                 {canDelete && (
                                   <button
                                     onClick={() => { setMenuOpenFor(null); setDeleteTarget(emp); }}
@@ -991,7 +787,6 @@ export default function Employees() {
 
       <AddEmployeeModal isOpen={showAddModal} employees={employees} onClose={() => setShowAddModal(false)} onCreated={load} />
       <RegistrationWizardModal isOpen={showWizard} onClose={() => setShowWizard(false)} onRegistered={load} />
-      <EditEmployeeModal isOpen={!!editingEmployee} employee={editingEmployee} employees={employees} onClose={() => setEditingEmployee(null)} onUpdated={load} />
       <ConfirmDialog
         isOpen={!!deleteTarget}
         title="Delete employee"
