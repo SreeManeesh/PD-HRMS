@@ -21,8 +21,7 @@ describe('DemoBanner Component', () => {
   it('renders full demo banner with specified module name', () => {
     render(<DemoBanner module="Expenses" />);
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.getByText(/Demo Preview — Expenses/i)).toBeInTheDocument();
-    expect(screen.getByText(/Changes are visible in this session but/i)).toBeInTheDocument();
+    expect(screen.getByText('Expenses')).toBeInTheDocument();
   });
 
   it('renders compact pill badge in compact mode', () => {

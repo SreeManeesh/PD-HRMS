@@ -1592,18 +1592,18 @@ export function PayslipBrandingPanel() {
                 lopDays: 0,
                 netPaidDays: 31,
                 earnings: [
-                  { name: "BASIC", amount: Math.round(breakdown.basic) },
-                  { name: "HRA", amount: Math.round(breakdown.hra) },
-                  { name: "SPECIAL ALLOWANCE", amount: Math.round(breakdown.specialAllowance) },
-                  { name: "OTHER ALLOWANCE", amount: Math.round(breakdown.conveyance + breakdown.medical) },
+                  { name: "BASIC", amount: Math.round(computedSalary?.basic || 0) },
+                  { name: "HRA", amount: Math.round(computedSalary?.hra || 0) },
+                  { name: "SPECIAL ALLOWANCE", amount: Math.round(computedSalary?.specialAllowance || 0) },
+                  { name: "OTHER ALLOWANCE", amount: Math.round((computedSalary?.conveyance || 0) + (computedSalary?.medical || 0)) },
                 ],
                 deductions: [
-                  { name: "PF", amount: Math.round(breakdown.pf) },
-                  { name: "PROF TAX", amount: Math.round(breakdown.pt) },
-                  { name: "MEDICAL INSURANCE", amount: Math.round(breakdown.insurance) },
+                  { name: "PF", amount: Math.round(computedSalary?.epf || 0) },
+                  { name: "PROF TAX", amount: Math.round(computedSalary?.pt || 0) },
+                  { name: "TDS / TAX", amount: Math.round(computedSalary?.tds || 0) },
                 ],
-                netPay: Math.round(breakdown.netPay),
-                netPayInWords: breakdown.netPayWords,
+                netPay: Math.round(computedSalary?.netPay || 0),
+                netPayInWords: computedSalary?.netPayWords || "",
                 leaveBalance: "03",
               }}
               theme={{
