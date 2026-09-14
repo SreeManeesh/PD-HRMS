@@ -547,7 +547,7 @@ export default function Employees() {
             />
             <button
               id="add-employee-btn"
-              onClick={() => setShowWizard(true)}
+              onClick={() => setShowAddModal(true)}
               style={{
                 display: "flex", alignItems: "center", gap: "6px",
                 padding: "9px 16px", background: "var(--primary)", color: "#fff",
@@ -1046,7 +1046,12 @@ export default function Employees() {
       )}
 
       <AddEmployeeModal isOpen={showAddModal} employees={employees} onClose={() => setShowAddModal(false)} onCreated={load} />
-      <RegistrationWizardModal isOpen={showWizard} onClose={() => setShowWizard(false)} onRegistered={load} />
+      <RegistrationWizardModal
+        isOpen={showWizard}
+        onClose={() => setShowWizard(false)}
+        onRegistered={load}
+        onSwitchToStandard={() => setShowAddModal(true)}
+      />
       <ConfirmDialog
         isOpen={!!deleteTarget}
         title="Delete employee"

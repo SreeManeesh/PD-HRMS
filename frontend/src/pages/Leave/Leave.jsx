@@ -16,9 +16,6 @@ import {
   Eye,
   Trash2,
   UploadCloud,
-  User,
-  Phone,
-  Tag,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -39,37 +36,10 @@ import {
 import { clearUploadedAttendance } from "../../services/attendanceService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { leaveStatusMeta } from "../../mock/leave.js";
+import { parseLeaveDetails, formatFileSize, renderSortableHeader } from "../../utils/leaveUtils.jsx";
 import "./Leave.css";
 
 const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626", "#16a34a", "#db2777", "#ea580c", "#0ea5e9"];
-
-export function parseLeaveDetails(reason) {
-  if (!reason) return { summary: "", category: "General", isHalfDay: false, attachment: null };
-  if (typeof reason === "string" && reason.trim().startsWith("{")) {
-    try {
-      const parsed = JSON.parse(reason);
-      return {
-        summary: parsed.summary || "",
-        category: parsed.category || "General",
-        isHalfDay: Boolean(parsed.isHalfDay),
-        halfDaySession: parsed.halfDaySession || "First Half",
-        handoverTo: parsed.handoverTo || "",
-        emergencyContact: parsed.emergencyContact || "",
-        attachment: parsed.attachment || null,
-      };
-    } catch {
-      return { summary: reason, category: "General", isHalfDay: false, attachment: null };
-    }
-  }
-  return { summary: reason, category: "General", isHalfDay: false, attachment: null };
-}
-
-const formatFileSize = (bytes) => {
-  if (!bytes) return "0 B";
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-};
 
 function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, onClear }) {
   const PAGE = 6;
@@ -709,6 +679,13 @@ export default function Leave() {
   const canClear = user.role === "ADMIN" || user.role === "HR";
 
   const [selectedDetail, setSelectedDetail] = useState(null);
+  
+  // Search, sort, and filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortConfig, setSortConfig] = useState({ field: "appliedOn", order: "desc" });
+  const [leaveTypeFilter, setLeaveTypeFilter] = useState("");
+  const [dateRangeFilter, setDateRangeFilter] = useState({ startDate: "", endDate: "" });
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   const handleClear = async () => {
     if (!window.confirm("Clear uploaded attendance data and all pending leave requests? This permanently removes attendance records imported from files, upload-synced leave requests and any stale pending approvals. Approved leave balances are restored.")) return;
@@ -757,11 +734,86 @@ export default function Leave() {
     return () => window.clearTimeout(timer);
   }, [loadData]);
 
-  const filtered = statusFilter ? requests.filter((r) => r.status === statusFilter) : requests;
+  // Apply all filters: status, search, leave type, date range, category
+  const filtered = requests
+    .filter((r) => !statusFilter || r.status === statusFilter)
+    .filter((r) => {
+      if (!searchQuery.trim()) return true;
+      const query = searchQuery.toLowerCase();
+      return (
+        (r.employeeName?.toLowerCase() || "").includes(query) ||
+        (r.employeeId?.toLowerCase() || "").includes(query) ||
+        (r.leaveTypeName?.toLowerCase() || "").includes(query) ||
+        (r.reason?.toLowerCase() || "").includes(query)
+      );
+    })
+    .filter((r) => !leaveTypeFilter || r.leaveTypeId === leaveTypeFilter)
+    .filter((r) => {
+      if (!dateRangeFilter.startDate && !dateRangeFilter.endDate) return true;
+      const requestStart = new Date(r.startDate);
+      const filterStart = dateRangeFilter.startDate ? new Date(dateRangeFilter.startDate) : null;
+      const filterEnd = dateRangeFilter.endDate ? new Date(dateRangeFilter.endDate) : null;
+      if (filterStart && requestStart < filterStart) return false;
+      if (filterEnd && new Date(r.endDate) > filterEnd) return false;
+      return true;
+    })
+    .filter((r) => {
+      if (!categoryFilter) return true;
+      const details = parseLeaveDetails(r.reason);
+      return details.category === categoryFilter;
+    })
+    .sort((a, b) => {
+      let aVal, bVal;
+      
+      switch (sortConfig.field) {
+        case "employeeName":
+          aVal = a.employeeName || "";
+          bVal = b.employeeName || "";
+          break;
+        case "leaveTypeName":
+          aVal = a.leaveTypeName || "";
+          bVal = b.leaveTypeName || "";
+          break;
+        case "startDate":
+          aVal = new Date(a.startDate);
+          bVal = new Date(b.startDate);
+          break;
+        case "days":
+          aVal = Number(a.days || 0);
+          bVal = Number(b.days || 0);
+          break;
+        case "status":
+          aVal = a.status || "";
+          bVal = b.status || "";
+          break;
+        case "appliedOn":
+        default:
+          aVal = new Date(a.appliedOn);
+          bVal = new Date(b.appliedOn);
+      }
+      
+      if (typeof aVal === "string") {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+        return sortConfig.order === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return sortConfig.order === "asc" ? aVal - bVal : bVal - aVal;
+    });
+
   const statusCounts = requests.reduce((counts, request) => {
     counts[request.status] = (counts[request.status] || 0) + 1;
     return counts;
   }, {});
+  
+  // Get unique categories for category filter
+  const categories = useMemo(() => {
+    const cats = new Set();
+    requests.forEach((r) => {
+      const details = parseLeaveDetails(r.reason);
+      if (details.category) cats.add(details.category);
+    });
+    return Array.from(cats).sort();
+  }, [requests]);
 
   // The leave distribution follows the uploaded attendance data exactly: the
   // balance endpoint only returns leave types present in the file, so the donut
@@ -786,6 +838,13 @@ export default function Leave() {
   }, [balances, leaveTypes]);
 
   if (loading) return <MainLayout><Spinner /></MainLayout>;
+
+  const handleSort = (field) => {
+    setSortConfig((prev) => ({
+      field,
+      order: prev.field === field && prev.order === "asc" ? "desc" : "asc",
+    }));
+  };
 
   return (
     <MainLayout>
@@ -880,6 +939,184 @@ export default function Leave() {
           </select>
         </div>
 
+        {/* Search & Filter Controls */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "16px", padding: "14px", background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)" }}>
+          {/* Search Row */}
+          <div style={{ display: "flex", gap: "12px", alignItems: "flex-end" }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Search</label>
+              <input
+                type="text"
+                placeholder="Search by employee name, ID, leave type, or reason…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: "100%",
+                  height: "34px",
+                  padding: "0 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                }}
+              />
+            </div>
+            {(searchQuery || statusFilter || leaveTypeFilter || dateRangeFilter.startDate || dateRangeFilter.endDate || categoryFilter) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setStatusFilter("");
+                  setLeaveTypeFilter("");
+                  setDateRangeFilter({ startDate: "", endDate: "" });
+                  setCategoryFilter("");
+                  setSortConfig({ field: "appliedOn", order: "desc" });
+                }}
+                style={{
+                  padding: "7px 14px",
+                  background: "var(--red)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Clear All Filters
+              </button>
+            )}
+          </div>
+
+          {/* Filter Row 1: Leave Type, Category, Status */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave Type</label>
+              <select
+                value={leaveTypeFilter}
+                onChange={(e) => setLeaveTypeFilter(e.target.value)}
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">All Leave Types</option>
+                {leaveTypes.map((lt) => (
+                  <option key={lt.id} value={lt.id}>
+                    {lt.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Category</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">All Categories</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">All Statuses</option>
+                {["Pending", "Approved", "Rejected", "Cancelled", "Absent"].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Filter Row 2: Date Range */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave From Date</label>
+              <input
+                type="date"
+                value={dateRangeFilter.startDate}
+                onChange={(e) => setDateRangeFilter((prev) => ({ ...prev, startDate: e.target.value }))}
+                style={{
+                  height: "34px",
+                  padding: "0 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave To Date</label>
+              <input
+                type="date"
+                value={dateRangeFilter.endDate}
+                onChange={(e) => setDateRangeFilter((prev) => ({ ...prev, endDate: e.target.value }))}
+                style={{
+                  height: "34px",
+                  padding: "0 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  background: "var(--background)",
+                  color: "var(--text)",
+                  outline: "none",
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Results Summary */}
+          <div style={{ fontSize: "12px", color: "var(--subtext)", fontWeight: 500 }}>
+            Showing <strong>{filtered.length}</strong> of <strong>{requests.length}</strong> leave request{requests.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
         <div className="leave-status-cards">
           {[
             { key: "", label: "All requests", icon: CalendarDays, color: "#475569" },
@@ -917,9 +1154,16 @@ export default function Leave() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {["Employee", "Leave Type", "Dates", "Days", "Category & Reason", "Document", "Status", "Decision Details", "Applied On", "Actions"].map((h) => (
-                      <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
+                    {renderSortableHeader("Employee", "employeeName", sortConfig, handleSort)}
+                    {renderSortableHeader("Leave Type", "leaveTypeName", sortConfig, handleSort)}
+                    {renderSortableHeader("Dates", "startDate", sortConfig, handleSort)}
+                    {renderSortableHeader("Days", "days", sortConfig, handleSort)}
+                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Category & Reason</th>
+                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Document</th>
+                    {renderSortableHeader("Status", "status", sortConfig, handleSort)}
+                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Decision Details</th>
+                    {renderSortableHeader("Applied On", "appliedOn", sortConfig, handleSort)}
+                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
