@@ -366,9 +366,9 @@ export default function PayRulesPanel({ locations = [] }) {
               maxWidth: "780px",
             }}
           >
-            Manage calculation rules for attendance bonuses, night shift
-            differentials, tiered production incentives, and minimum attendance
-            thresholds. Rules evaluate dynamically during payroll processing.
+            calculation rules for attendance bonuses, night shift differentials,
+            tiered production incentives, and minimum attendance thresholds.
+            Rules evaluate dynamically during payroll processing.
           </p>
         </div>
         <button
