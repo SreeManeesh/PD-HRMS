@@ -5,9 +5,9 @@
  *           click-through to employee profile (/employees/:id)
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Users, Upload, MoreVertical, Trash2, RotateCcw, CheckCircle2, X } from "lucide-react";
+import { Plus, Search, Filter, Users, Upload, MoreVertical, Trash2, RotateCcw, CheckCircle2, X, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -28,7 +28,8 @@ import RegistrationWizardModal from "./RegistrationWizardModal.jsx";
 import BulkImportPreviewModal from "./BulkImportPreviewModal.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-import { departments, locations, employmentTypes, statuses, skillTypes, genders } from "../../mock/employees.js";
+import { getDepartments, getLocations } from "../../services/Orgmanagementservice.js";
+import { departments as mockDepartments, locations as mockLocations, employmentTypes, statuses, skillTypes, genders } from "../../mock/employees.js";
 
 const EMPLOYEE_STATUS_META = {
   Active:     { label: "Active",     color: "#16a34a", bg: "#f0fdf4" },
@@ -51,6 +52,33 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [liveDepartments, setLiveDepartments] = useState([]);
+  const [liveLocations, setLiveLocations] = useState([]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getDepartments()
+      .then((res) => {
+        const depts = res.data || [];
+        if (depts.length > 0) {
+          setLiveDepartments(depts.map((d) => ({ id: d.id, value: d.id, label: d.name, name: d.name })));
+        } else {
+          setLiveDepartments(mockDepartments.map((d) => ({ id: d, value: d, label: d, name: d })));
+        }
+      })
+      .catch(() => setLiveDepartments(mockDepartments.map((d) => ({ id: d, value: d, label: d, name: d }))));
+
+    getLocations()
+      .then((res) => {
+        const locs = res.data || [];
+        if (locs.length > 0) {
+          setLiveLocations(locs.map((l) => ({ id: l.id, value: l.id, label: l.name, name: l.name })));
+        } else {
+          setLiveLocations(mockLocations.map((l) => ({ id: l, value: l, label: l, name: l })));
+        }
+      })
+      .catch(() => setLiveLocations(mockLocations.map((l) => ({ id: l, value: l, label: l, name: l }))));
+  }, [isOpen]);
 
   const validate = () => {
     const e = {};
@@ -69,6 +97,9 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
     setSaving(true);
     setError("");
     try {
+      const selectedDept = liveDepartments.find((d) => d.value === form.department || d.label === form.department);
+      const selectedLoc = liveLocations.find((l) => l.value === form.location || l.label === form.location);
+
       await createEmployee({
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
@@ -78,8 +109,10 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
         dob: form.dob ? String(form.dob).slice(0, 10) : undefined,
         designation: form.designation.trim(),
         skillType: form.skillType || undefined,
-        department: form.department,
-        location: form.location || undefined,
+        departmentId: selectedDept?.id && selectedDept.id.length > 10 ? selectedDept.id : undefined,
+        department: selectedDept?.label || form.department,
+        locationId: selectedLoc?.id && selectedLoc.id.length > 10 ? selectedLoc.id : undefined,
+        location: selectedLoc?.label || form.location || undefined,
         employmentType: form.employmentType,
         status: form.status,
         managerId: form.managerId || undefined,
@@ -178,8 +211,8 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
         {select("Designation *", "designation", designationOptions, "Select Designation")}
         {select("Skill Type", "skillType", skillTypes, "Select Skill Type")}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {select("Department *", "department", departments)}
-          {select("Work Location", "location", locations, "Select Work Location")}
+          {select("Department *", "department", liveDepartments)}
+          {select("Work Location", "location", liveLocations, "Select Work Location")}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
           {select("Employment Type", "employmentType", employmentTypes)}
@@ -228,6 +261,64 @@ export default function Employees() {
   const [search, setSearch] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterLocation, setFilterLocation] = useState("");
+  const [filterSkill, setFilterSkill] = useState("");
+  const [sortField, setSortField] = useState("name");
+  const [sortOrder, setSortOrder] = useState("asc");
+
+  const dynamicDepts = useMemo(() => {
+    const set = new Set(mockDepartments);
+    employees.forEach((e) => {
+      if (e.department && e.department.trim()) set.add(e.department.trim());
+    });
+    return Array.from(set).filter(Boolean);
+  }, [employees]);
+
+  const dynamicLocations = useMemo(() => {
+    const set = new Set(mockLocations);
+    employees.forEach((e) => {
+      if (e.location && e.location.trim()) set.add(e.location.trim());
+    });
+    return Array.from(set).filter(Boolean);
+  }, [employees]);
+
+  const dynamicSkills = useMemo(() => {
+    const set = new Set(skillTypes);
+    employees.forEach((e) => {
+      if (e.skillType && e.skillType.trim()) set.add(e.skillType.trim());
+    });
+    return Array.from(set).filter(Boolean);
+  }, [employees]);
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
+
+  const renderSortIcon = (field) => {
+    if (sortField !== field) {
+      return <ArrowUpDown size={12} style={{ opacity: 0.35 }} />;
+    }
+    return sortOrder === "asc" ? (
+      <ArrowUp size={12} style={{ color: "var(--primary)" }} />
+    ) : (
+      <ArrowDown size={12} style={{ color: "var(--primary)" }} />
+    );
+  };
+
+  const getSkillBadge = (skill) => {
+    const s = String(skill || "").toLowerCase();
+    if (s.includes("highly")) return { bg: "#f5f3ff", color: "#7c3aed", border: "#ddd6fe" };
+    if (s.includes("skilled") && !s.includes("semi")) return { bg: "#ecfdf5", color: "#059669", border: "#a7f3d0" };
+    if (s.includes("semi")) return { bg: "#eff6ff", color: "#2563eb", border: "#bfdbfe" };
+    if (s.includes("unskilled")) return { bg: "#fff7ed", color: "#c2410c", border: "#ffedd5" };
+    return { bg: "var(--background)", color: "var(--subtext)", border: "var(--border)" };
+  };
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
@@ -243,7 +334,7 @@ export default function Employees() {
   const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(1);
   const bulkInputRef = useRef(null);
-  const PAGE_SIZE = 8;
+  const PAGE_SIZE = 10;
 
   // 15-30s Undo countdown timer
   useEffect(() => {
@@ -372,15 +463,62 @@ export default function Employees() {
     }
   };
 
-  const totalPages = Math.ceil(employees.length / PAGE_SIZE);
-  const paginated  = employees.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const processedEmployees = useMemo(() => {
+    let list = [...employees];
+
+    if (filterLocation) {
+      list = list.filter((e) => String(e.location || "").toLowerCase() === filterLocation.toLowerCase());
+    }
+    if (filterSkill) {
+      list = list.filter((e) => String(e.skillType || "").toLowerCase() === filterSkill.toLowerCase());
+    }
+
+    list.sort((a, b) => {
+      let valA = "";
+      let valB = "";
+      if (sortField === "name") {
+        valA = `${a.firstName || ""} ${a.lastName || ""}`.toLowerCase();
+        valB = `${b.firstName || ""} ${b.lastName || ""}`.toLowerCase();
+      } else if (sortField === "designation") {
+        valA = String(a.designation || "").toLowerCase();
+        valB = String(b.designation || "").toLowerCase();
+      } else if (sortField === "department") {
+        valA = String(a.department || "").toLowerCase();
+        valB = String(b.department || "").toLowerCase();
+      } else if (sortField === "location") {
+        valA = String(a.location || "").toLowerCase();
+        valB = String(b.location || "").toLowerCase();
+      } else if (sortField === "skillType") {
+        valA = String(a.skillType || "").toLowerCase();
+        valB = String(b.skillType || "").toLowerCase();
+      } else if (sortField === "type") {
+        valA = String(a.employmentType || "").toLowerCase();
+        valB = String(b.employmentType || "").toLowerCase();
+      } else if (sortField === "status") {
+        valA = String(a.status || "").toLowerCase();
+        valB = String(b.status || "").toLowerCase();
+      } else if (sortField === "dateOfJoining") {
+        valA = new Date(a.dateOfJoining || a.joinDate || 0).getTime();
+        valB = new Date(b.dateOfJoining || b.joinDate || 0).getTime();
+      }
+
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [employees, filterLocation, filterSkill, sortField, sortOrder]);
+
+  const totalPages = Math.ceil(processedEmployees.length / PAGE_SIZE);
+  const paginated  = processedEmployees.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
         <PageHeader
           title="Employees"
-          subtitle={`${employees.length} employee${employees.length !== 1 ? "s" : ""} found`}
+          subtitle={`${processedEmployees.length} employee${processedEmployees.length !== 1 ? "s" : ""} found`}
         >
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <button
@@ -468,11 +606,11 @@ export default function Employees() {
         {/* Filters */}
         <div
           style={{
-            display: "flex", gap: "12px", marginBottom: "20px",
+            display: "flex", gap: "10px", marginBottom: "20px",
             flexWrap: "wrap", alignItems: "center",
           }}
         >
-          <div style={{ position: "relative", flex: "1 1 260px", maxWidth: "380px" }}>
+          <div style={{ position: "relative", flex: "1 1 220px", maxWidth: "300px" }}>
             <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--subtext)", pointerEvents: "none" }} />
             <input
               id="employee-search"
@@ -481,10 +619,10 @@ export default function Employees() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
-                width: "100%", height: "38px",
+                width: "100%", height: "36px",
                 paddingLeft: "36px", paddingRight: "12px",
                 border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                fontSize: "13.5px", color: "var(--text)", outline: "none",
+                fontSize: "13px", color: "var(--text)", outline: "none",
                 background: "var(--card)", transition: "border-color 0.15s",
               }}
               onFocus={(e) => (e.target.style.borderColor = "var(--border-focus)")}
@@ -492,27 +630,78 @@ export default function Employees() {
             />
           </div>
 
-          <Filter size={16} style={{ color: "var(--subtext)" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+            <Filter size={15} style={{ color: "var(--subtext)" }} />
+            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--subtext)" }}>Filters:</span>
+          </div>
 
           <select
             id="filter-department"
             value={filterDept}
             onChange={(e) => setFilterDept(e.target.value)}
-            style={{ height: "38px", padding: "0 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
+            style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
           >
             <option value="">All Departments</option>
-            {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+            {dynamicDepts.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+
+          <select
+            id="filter-location"
+            value={filterLocation}
+            onChange={(e) => setFilterLocation(e.target.value)}
+            style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
+          >
+            <option value="">All Locations</option>
+            {dynamicLocations.map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+
+          <select
+            id="filter-skill"
+            value={filterSkill}
+            onChange={(e) => setFilterSkill(e.target.value)}
+            style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
+          >
+            <option value="">All Skill Tiers</option>
+            {dynamicSkills.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
 
           <select
             id="filter-status"
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            style={{ height: "38px", padding: "0 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
+            style={{ height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "12.5px", color: "var(--text)", background: "var(--card)", outline: "none", cursor: "pointer" }}
           >
             <option value="">All Statuses</option>
             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+
+          {(search || filterDept || filterLocation || filterSkill || filterStatus) && (
+            <button
+              onClick={() => {
+                setSearch("");
+                setFilterDept("");
+                setFilterLocation("");
+                setFilterSkill("");
+                setFilterStatus("");
+              }}
+              style={{
+                height: "36px",
+                padding: "0 12px",
+                background: "var(--background)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "var(--subtext)",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <X size={13} /> Reset
+            </button>
+          )}
         </div>
 
         {/* Table */}
@@ -538,19 +727,75 @@ export default function Employees() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {["Employee", "Designation", "Department", "Work Location", "Type", "Status", "Joined", ...(showActions ? ["Actions"] : [])].map((h) => (
-                      <th
-                        key={h}
-                        style={{
-                          padding: "11px 16px", textAlign: "left",
-                          fontSize: "11px", fontWeight: 700,
-                          color: "var(--subtext)", textTransform: "uppercase",
-                          letterSpacing: "0.5px", whiteSpace: "nowrap",
-                        }}
-                      >
-                        {h}
+                    <th
+                      onClick={() => handleSort("name")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Employee {renderSortIcon("name")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("designation")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Designation {renderSortIcon("designation")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("department")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Department {renderSortIcon("department")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("location")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Work Location {renderSortIcon("location")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("skillType")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Skill Tier {renderSortIcon("skillType")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("type")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Type {renderSortIcon("type")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("status")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Status {renderSortIcon("status")}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort("dateOfJoining")}
+                      style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", userSelect: "none" }}
+                    >
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        Joined {renderSortIcon("dateOfJoining")}
+                      </div>
+                    </th>
+                    {showActions && (
+                      <th style={{ padding: "11px 16px", textAlign: "right", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                        Actions
                       </th>
-                    ))}
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -582,6 +827,21 @@ export default function Employees() {
                       <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{dash(emp.department)}</td>
                       <td style={{ padding: "14px 16px", fontSize: "13.5px", color: "var(--label)" }}>{dash(emp.location)}</td>
                       <td style={{ padding: "14px 16px" }}>
+                        <span
+                          style={{
+                            fontSize: "11.5px",
+                            fontWeight: 600,
+                            padding: "2px 8px",
+                            borderRadius: "99px",
+                            background: getSkillBadge(emp.skillType).bg,
+                            color: getSkillBadge(emp.skillType).color,
+                            border: `1px solid ${getSkillBadge(emp.skillType).border}`,
+                          }}
+                        >
+                          {dash(emp.skillType || "General")}
+                        </span>
+                      </td>
+                      <td style={{ padding: "14px 16px" }}>
                         <span style={{ fontSize: "11.5px", color: emp.employmentType === "Contract" ? "var(--amber)" : "var(--label)", background: emp.employmentType === "Contract" ? "var(--amber-light)" : "var(--background)", padding: "2px 8px", borderRadius: "99px", fontWeight: 500 }}>
                           {dash(emp.employmentType)}
                         </span>
@@ -590,7 +850,7 @@ export default function Employees() {
                         <StatusBadge {...(EMPLOYEE_STATUS_META[emp.status] || EMPLOYEE_STATUS_META.Active)} />
                       </td>
                       <td style={{ padding: "14px 16px", fontSize: "12.5px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
-                        {emp.joinDate ? new Date(emp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-"}
+                        {emp.dateOfJoining || emp.joinDate ? new Date(emp.dateOfJoining || emp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-"}
                       </td>
 {showActions && (
                         <td style={{ padding: "14px 16px", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
@@ -650,7 +910,7 @@ export default function Employees() {
           )}
 
           {/* Pagination */}
-          {!loading && employees.length > PAGE_SIZE && (
+          {!loading && processedEmployees.length > PAGE_SIZE && (
             <div
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -658,7 +918,7 @@ export default function Employees() {
               }}
             >
               <span style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
-                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, employees.length)} of {employees.length}
+                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, processedEmployees.length)} of {processedEmployees.length}
               </span>
               <div style={{ display: "flex", gap: "6px" }}>
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (

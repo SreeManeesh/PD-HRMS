@@ -100,7 +100,7 @@ export async function getTeamSummary(filters: { month?: number; year?: number } 
         if (d.status === "Present") counts.present += 1;
         else if (d.status === "Late") counts.late += 1;
         else if (d.status === "WFH") counts.wfh += 1;
-        else if (d.status === "Leave") counts.onLeave += 1;
+        else if (d.status === "Leave" || d.status === "Approved Leave" || d.status === "Paid Leave") counts.onLeave += 1;
         else counts.absent += 1; // Absent + LOP (unpaid)
       }
     }
@@ -425,6 +425,10 @@ function rowCell(cells: string[], index: number): string {
 function classifyAttendanceStatus(value: string): string | null {
   const v = (value ?? "").trim();
   if (!v) return null;
+  if (/(^|\s)(half\s*[- ]?day|hd)(\s|$|\\r|\\)/i.test(v)) return "Half Day";
+  if (/(^|\s)(holiday\s*worked)(\s|$|\\r|\\)/i.test(v)) return "Holiday Worked";
+  if (/(^|\s)((weekly\s*off|weekend|sunday)\s*worked)(\s|$|\\r|\\)/i.test(v)) return "Weekly Off Worked";
+  if (/(^|\s)(night\s*shift)(\s|$|\\r|\\)/i.test(v)) return "Night Shift";
   if (/(^|\s)(on\s*[- ]?leave|leave|lwp|leave\s*without\s*pay)(\s|$|\\r|\\)/i.test(v)) return "Leave";
   if (/(^|\s)(wfh|work\s*from\s*home|remote|home\s*office)(\s|$|\\r|\\)/i.test(v)) return "WFH";
   if (/(^|\s)(present|in\s*office|office)(\s|$|\\r|\\)/i.test(v)) return "Present";

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Payslip Settings — company-wide attendance & pay rules that the payroll
  * engine uses to build payslips. These replace the old hardcoded rates:
  * every value here was previously a fixed constant in the backend. Saving
@@ -24,6 +24,14 @@ const DEFAULTS = {
   esiGrossCeiling: 21000,
   gratuityRate: 0.0481,
   overtimeMultiplier: 1.5,
+  weeklyOffWorkedMultiplier: 2.0,
+  holidayWorkedMultiplier: 2.0,
+  nightShiftAllowance: 100,
+  nightOtMultiplier: 2.0,
+  weeklyOffOtMultiplier: 2.0,
+  holidayOtMultiplier: 2.0,
+  minOtMinutesThreshold: 30,
+  maxOtHoursMonthly: 60,
   basicSalaryFactor: 0.5,
   hraFactor: 0.2,
   conveyanceAllowance: 400,
@@ -215,11 +223,21 @@ export default function PayrollSettings() {
             <Field label="Gratuity" value={form.gratuityRate * 100} suffix="%" onChange={(v) => upd("gratuityRate")(Number(v) / 100)} />
           </Section>
 
+          {/* Overtime & Shift Differentials (Scenario 5 & 7) */}
+          <Section title="Overtime & Differential Rates (Scenario 5 & 7)">
+            <Field label="Normal-Day OT Rate" value={form.overtimeMultiplier} suffix="x" onChange={upd("overtimeMultiplier")} />
+            <Field label="Weekly-Off OT Rate" value={form.weeklyOffOtMultiplier} suffix="x" onChange={upd("weeklyOffOtMultiplier")} />
+            <Field label="Holiday OT Rate" value={form.holidayOtMultiplier} suffix="x" onChange={upd("holidayOtMultiplier")} />
+            <Field label="Night OT Rate" value={form.nightOtMultiplier} suffix="x" onChange={upd("nightOtMultiplier")} />
+            <Field label="Night Shift Allowance (Per Shift)" value={form.nightShiftAllowance} suffix="INR/shift" onChange={upd("nightShiftAllowance")} />
+            <Field label="Minimum OT Threshold" value={form.minOtMinutesThreshold} suffix="minutes" onChange={upd("minOtMinutesThreshold")} />
+            <Field label="Maximum OT Hours (Monthly Cap)" value={form.maxOtHoursMonthly} suffix="hrs/mo" onChange={upd("maxOtHoursMonthly")} />
+          </Section>
+
           {/* Attendance */}
           <Section title="Attendance & Working Week">
             <Field label="Shift Start" value={toTime(form.shiftStartMinutes)} type="time" onChange={(v) => upd("shiftStartMinutes")(fromTime(v) || form.shiftStartMinutes)} />
             <Field label="Shift End" value={toTime(form.shiftEndMinutes)} type="time" onChange={(v) => upd("shiftEndMinutes")(fromTime(v) || form.shiftEndMinutes)} />
-            <Field label="Overtime Multiplier" value={form.overtimeMultiplier} suffix="x" onChange={upd("overtimeMultiplier")} />
             <div>
               <label style={label}>Weekly Off Days</label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

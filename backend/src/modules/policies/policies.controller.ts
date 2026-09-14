@@ -10,3 +10,7 @@ export const publish = asyncHandler(async (req: Request, res: Response) => sendS
 export const mine = asyncHandler(async (req: Request, res: Response) => sendSuccess(res, await service.getMyAcknowledgements(req.auth)));
 export const acknowledge = asyncHandler(async (req: Request, res: Response) => sendSuccess(res, await service.acknowledgePolicy(req.params.id, req.body.versionId, req.get("user-agent"), req.auth), undefined, 201));
 export const compliance = asyncHandler(async (req: Request, res: Response) => sendSuccess(res, await service.getComplianceData(req.auth)));
+export const upload = asyncHandler(async (req: Request, res: Response) => {
+  const result = await service.uploadPolicyDocument(req.file as Express.Multer.File);
+  sendSuccess(res, result);
+});

@@ -4,6 +4,12 @@ import { validate } from "../../middlewares/validate";
 import { authenticate } from "../../middlewares/auth";
 import { requirePermission } from "../../middlewares/rbac";
 import * as payrollController from "./payroll.controller";
+import * as wageRateController from "./wageRate.controller";
+import * as componentController from "./payrollComponent.controller";
+import * as advanceController from "./advance.controller";
+import * as productionController from "./production.controller";
+import * as contractorController from "./contractor.controller";
+import { attendanceUpload } from "../../middlewares/attendanceUpload";
 
 const router = Router();
 
@@ -92,6 +98,34 @@ router.post("/payslips/:id/view", authenticate, requirePermission("payroll:read"
 // POST /api/payroll/runs/:id/process — payroll:write (Admin only in frontend matrix)
 router.post("/runs/:id/process", authenticate, requirePermission("payroll:write"), payrollController.process);
 
+// POST /api/payroll/run-skill-group — payroll:write (run payroll for entire skill category or all)
+const runSkillGroupSchema = z.object({
+  skillType: z.string().min(1),
+  month: z.coerce.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2000).max(2100),
+});
+router.post(
+  "/run-skill-group",
+  authenticate,
+  requirePermission("payroll:write"),
+  validate({ body: runSkillGroupSchema }),
+  payrollController.runSkillGroup
+);
+
+// POST /api/payroll/run-employee — payroll:write (run payroll for individual worker)
+const runIndividualSchema = z.object({
+  employeeId: z.string().min(1),
+  month: z.coerce.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2000).max(2100),
+});
+router.post(
+  "/run-employee",
+  authenticate,
+  requirePermission("payroll:write"),
+  validate({ body: runIndividualSchema }),
+  payrollController.runIndividualEmployee
+);
+
 // POST /api/payroll/runs/:id/approve — payroll:approve (four-eyes)
 router.post("/runs/:id/approve", authenticate, requirePermission("payroll:approve"), payrollController.approve);
 
@@ -107,5 +141,33 @@ router.get("/payslips/:id/statement", authenticate, requirePermission("payroll:r
 
 // GET /api/payroll/distribution/history — payroll:read (past payslip transactions by month/year)
 router.get("/distribution/history", authenticate, requirePermission("payroll:read"), payrollController.distributionHistory);
+
+// ── Wage Rates (Category / Location / Contractor) ──────────────────────────
+router.get("/wage-rates", authenticate, requirePermission("payroll:read"), wageRateController.listWageRates);
+router.post("/wage-rates", authenticate, requirePermission("payroll:write"), wageRateController.createWageRate);
+router.put("/wage-rates/:id", authenticate, requirePermission("payroll:write"), wageRateController.updateWageRate);
+router.delete("/wage-rates/:id", authenticate, requirePermission("payroll:write"), wageRateController.deleteWageRate);
+
+// ── Configurable Payroll Components & Slabs ────────────────────────────────
+router.get("/components", authenticate, requirePermission("payroll:read"), componentController.listComponents);
+router.post("/components", authenticate, requirePermission("payroll:write"), componentController.createComponent);
+router.put("/components/:id", authenticate, requirePermission("payroll:write"), componentController.updateComponent);
+router.delete("/components/:id", authenticate, requirePermission("payroll:write"), componentController.deleteComponent);
+
+// ── Salary Advances & Loan Recovery ────────────────────────────────────────
+router.get("/advances", authenticate, requirePermission("payroll:read"), advanceController.listAdvances);
+router.post("/advances", authenticate, requirePermission("payroll:write"), advanceController.createAdvance);
+router.put("/advances/:id", authenticate, requirePermission("payroll:write"), advanceController.updateAdvance);
+
+// ── Production Records & Slabs ─────────────────────────────────────────────
+router.get("/production", authenticate, requirePermission("payroll:read"), productionController.listProduction);
+router.post("/production", authenticate, requirePermission("payroll:write"), productionController.createOrUpdateProduction);
+router.post("/production/upload", authenticate, requirePermission("payroll:write"), attendanceUpload.single("file"), productionController.uploadProductionFile);
+
+// ── Contractors & Contractor-wise Payroll Reports ──────────────────────────
+router.get("/contractors", authenticate, requirePermission("payroll:read"), contractorController.listContractors);
+router.post("/contractors", authenticate, requirePermission("payroll:write"), contractorController.createContractor);
+router.put("/contractors/:id", authenticate, requirePermission("payroll:write"), contractorController.updateContractor);
+router.get("/contractors/report", authenticate, requirePermission("payroll:read"), contractorController.getContractorPayrollReport);
 
 export default router;

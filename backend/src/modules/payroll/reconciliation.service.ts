@@ -4,13 +4,22 @@ import { countWeekdays } from "../../serializers/helpers";
 
 export interface AttendanceSummary {
   workingDays: number; // calendar working days in period
-  presentDays: number; // punches marked Present/Late/WFH
+  presentDays: number; // punches marked Present/Late/WFH (includes 0.5 for Half Day)
+  halfDays: number;
   lateDays: number;
-  paidLeaveDays: number; // approved paid leave overlapping the period (Mon-Fri only)
+  paidLeaveDays: number; // approved paid leave overlapping the period
   unpaidLeaveDays: number; // working days with no punch and no approved leave (LOP)
   holidayDays: number; // named holidays on working-week days
   weekendDays: number;
-  overtimeHours: number; // filled by the overtime step
+  weeklyOffWorkedDays: number; // weekend punches
+  holidayWorkedDays: number; // holiday punches
+  nightShiftCount: number; // night shifts worked
+  overtimeHours: number; // total OT hours (capped if monthly max set)
+  normalOtHours: number; // OT on normal working days
+  weeklyOffOtHours: number; // OT on weekly off days
+  holidayOtHours: number; // OT on public holidays
+  nightOtHours: number; // OT on night shifts
+  payableDays: number; // calculated business payable days
 }
 
 export interface EmployeeReconciliation {
@@ -31,12 +40,44 @@ export interface ShiftWindow {
   endMinutes: number;
 }
 
-type Punch = { punchDate: Date; status: string; punchIn: Date | null; punchOut: Date | null };
-type ApprovedLeave = { startDate: Date; endDate: Date };
+export interface OvertimeRuleConfig {
+  minOtMinutes?: number;
+  maxOtHoursMonthly?: number;
+}
+
+export type Punch = { punchDate: Date; status: string; punchIn: Date | null; punchOut: Date | null };
+
+export interface ApprovedLeave {
+  startDate: Date;
+  endDate: Date;
+  isPaid?: boolean;
+  leaveTypeCode?: string;
+  leaveTypeName?: string;
+}
+
+export function isLeavePaid(code?: string | null, name?: string | null): boolean {
+  const norm = `${code ?? ""} ${name ?? ""}`.toLowerCase();
+  if (
+    norm.includes("lop") ||
+    norm.includes("lwp") ||
+    norm.includes("unpaid") ||
+    norm.includes("loss of pay") ||
+    norm.includes("without pay")
+  ) {
+    return false;
+  }
+  return true;
+}
 
 type CompanyWithConfig = {
   weeklyOffDays: unknown;
-  companyConfig: { shiftStartMinutes: number; shiftEndMinutes: number; weeklyOffDays: unknown } | null;
+  companyConfig: {
+    shiftStartMinutes: number;
+    shiftEndMinutes: number;
+    weeklyOffDays: unknown;
+    minOtMinutesThreshold?: number;
+    maxOtHoursMonthly?: unknown;
+  } | null;
 };
 
 function filterDayNumbers(value: unknown): number[] {
@@ -58,84 +99,236 @@ function monthBounds(year: number, month: number): { start: Date; end: Date } {
 }
 
 /** Pure reconciliation logic — given punches, approved leaves, holiday/weekoff
- *  context and a joining date, derive working/present/paid-leave/LOP days, plus
- *  overtime hours clocked beyond the scheduled shift end on present days. */
+ *  context, joining/exit dates and OT configuration, derives working/present/paid-leave/LOP days,
+ *  weekly-off/holiday worked, night shifts, granular overtime hours and business payable days.
+ *  Scenario 4: Interconnects Attendance -> Leave Records -> Holiday Calendar -> Payroll.
+ *  Does not treat every absence as unpaid leave. Approved leave -> No LOP. Unauthorized absence -> LOP. */
 export function reconcile(
   punches: Punch[],
   leaves: ApprovedLeave[],
   holidays: DayInfo[],
   joiningDate: Date | null,
-  shift?: ShiftWindow | null
+  exitDate?: Date | null,
+  shift?: ShiftWindow | null,
+  otConfig?: OvertimeRuleConfig | null,
 ): { summary: AttendanceSummary; daily: Array<{ date: string; weekday: number; status: string }> } {
   const punchByDate = new Map<string, Punch>();
   for (const p of punches) punchByDate.set(dateKey(p.punchDate), p);
 
-  const leaveDaySet = new Set<string>();
+  const leaveDayMap = new Map<string, ApprovedLeave>();
   for (const l of leaves) {
     for (let d = new Date(l.startDate); d <= l.endDate; d.setUTCDate(d.getUTCDate() + 1)) {
-      leaveDaySet.add(dateKey(new Date(d)));
+      leaveDayMap.set(dateKey(new Date(d)), l);
     }
   }
 
   let presentDays = 0;
+  let halfDays = 0;
   let lateDays = 0;
   let paidLeaveDays = 0;
   let unpaidLeaveDays = 0;
-  let overtimeMinutes = 0;
+  let weeklyOffWorkedDays = 0;
+  let holidayWorkedDays = 0;
+  let nightShiftCount = 0;
+  let normalOtMinutes = 0;
+  let weeklyOffOtMinutes = 0;
+  let holidayOtMinutes = 0;
+  let nightOtMinutes = 0;
   const daily: Array<{ date: string; weekday: number; status: string }> = [];
 
   const hasRecordedPunches = punches.length > 0;
+  const shiftMinutes = shift ? Math.max(shift.endMinutes - shift.startMinutes, 60) : 8 * 60;
+  const minOtThresh = otConfig?.minOtMinutes ?? 30;
 
   for (const day of holidays) {
+    const dayDate = new Date(day.date);
+    const hired = joiningDate ? dayDate >= joiningDate : true;
+    const exited = exitDate ? dayDate > exitDate : false;
+    const inEmployment = hired && !exited;
+
+    if (!inEmployment) {
+      const status = !hired ? "Not Hired" : "Exited";
+      daily.push({ date: day.dateKey, weekday: day.weekday, status });
+      continue;
+    }
+
     const punch = punchByDate.get(day.dateKey);
-    const onLeave = leaveDaySet.has(day.dateKey);
-    const hired = joiningDate ? new Date(day.date) >= joiningDate : true;
+    const approvedLeave = leaveDayMap.get(day.dateKey);
+    const onLeave = Boolean(approvedLeave);
+    const isPaidLeave = approvedLeave ? approvedLeave.isPaid !== false : false;
 
     let status: string;
+
+    // Check night shift flag from punch status or punch hours (in IST 20:00 to 06:00)
+    let isNightShift = false;
+    if (punch !== undefined) {
+      if (punch.status === "Night Shift") {
+        isNightShift = true;
+      } else if (punch.punchIn !== null) {
+        const istMinutes = (punch.punchIn.getUTCHours() * 60 + punch.punchIn.getUTCMinutes() + 330) % 1440;
+        const istHour = istMinutes / 60;
+        if (istHour >= 20 || istHour < 6) {
+          isNightShift = true;
+        } else if (punch.punchOut !== null && punch.punchOut.getTime() < punch.punchIn.getTime()) {
+          isNightShift = true;
+        }
+      }
+    }
+    if (isNightShift) {
+      nightShiftCount += 1;
+    }
+
     if (!day.isWorkingDay) {
-      status = day.isWeekend ? "Weekend" : "Holiday";
-    } else if (onLeave) {
-      status = "Paid Leave";
-      paidLeaveDays += 1;
-    } else if (punch) {
-      status = punch.status;
-      if (punch.status === "Present" || punch.status === "WFH" || punch.status === "Late") {
-        presentDays += 1;
-        // Overtime: minutes worked past the scheduled shift end on a present day.
-        if (shift && punch.punchOut) {
-          const outMin = punch.punchOut.getUTCHours() * 60 + punch.punchOut.getUTCMinutes();
-          if (outMin > shift.endMinutes) overtimeMinutes += outMin - shift.endMinutes;
+      const isPresentKind =
+        punch !== undefined &&
+        (punch.status === "Present" ||
+          punch.status === "WFH" ||
+          punch.status === "Late" ||
+          punch.status === "Night Shift" ||
+          punch.status === "Half Day");
+
+      if (punch && (isPresentKind || punch.punchIn !== null)) {
+        if (day.isWeekend) {
+          status = "Weekly Off Worked";
+          weeklyOffWorkedDays += 1;
+          let workedMins = shiftMinutes;
+          if (punch.punchIn && punch.punchOut) {
+            workedMins = Math.max((punch.punchOut.getTime() - punch.punchIn.getTime()) / 60000, 0);
+          }
+          weeklyOffOtMinutes += workedMins;
+        } else {
+          status = "Holiday Worked";
+          holidayWorkedDays += 1;
+          let workedMins = shiftMinutes;
+          if (punch.punchIn && punch.punchOut) {
+            workedMins = Math.max((punch.punchOut.getTime() - punch.punchIn.getTime()) / 60000, 0);
+          }
+          holidayOtMinutes += workedMins;
         }
       } else {
-        // Working-day punch without a present status (Absent/Weekend/Holiday/etc.)
-        // still counts as an unpaid day for payroll purposes.
+        status = day.isWeekend ? "Weekend" : "Holiday";
+      }
+    } else {
+      // Normal working day:
+      // Scenario 4 pipeline: Attendance -> Leave Records -> Holiday Calendar -> Payroll
+      // Check leave records before treating any absence or no-show as unpaid LOP.
+      if (punch) {
+        const isPresentKind =
+          punch.status === "Present" ||
+          punch.status === "WFH" ||
+          punch.status === "Late" ||
+          punch.status === "Night Shift";
+
+        if (punch.status === "Half Day") {
+          status = "Half Day";
+          presentDays += 0.5;
+          halfDays += 1;
+        } else if (isPresentKind) {
+          status = punch.status;
+          presentDays += 1;
+          if (punch.status === "Late") lateDays += 1;
+
+          // Overtime minutes past scheduled shift end or working duration beyond shift
+          if (shift && punch.punchOut) {
+            let otMins = 0;
+            if (punch.punchIn && punch.punchOut) {
+              const workedMins = Math.max((punch.punchOut.getTime() - punch.punchIn.getTime()) / 60000, 0);
+              if (workedMins > shiftMinutes) {
+                otMins = workedMins - shiftMinutes;
+              }
+            } else if (!punch.punchIn && punch.punchOut && !isNightShift) {
+              const outMin = punch.punchOut.getUTCHours() * 60 + punch.punchOut.getUTCMinutes();
+              if (outMin > shift.endMinutes) {
+                otMins = outMin - shift.endMinutes;
+              }
+            }
+            if (otMins >= minOtThresh) {
+              if (isNightShift) nightOtMinutes += otMins;
+              else normalOtMinutes += otMins;
+            }
+          }
+        } else {
+          // Punch with non-present status (e.g. Absent) on working day
+          // Check if employee has an approved leave for this date
+          if (onLeave) {
+            if (isPaidLeave) {
+              // Kumar -> Approved Leave -> No LOP
+              status = "Paid Leave";
+              paidLeaveDays += 1;
+            } else {
+              // Approved LWP / LOP
+              status = "LOP";
+              unpaidLeaveDays += 1;
+            }
+          } else {
+            // Suresh -> Unauthorized Absence -> LOP
+            status = "LOP";
+            unpaidLeaveDays += 1;
+          }
+        }
+      } else if (onLeave) {
+        // Working day, no punch, but has approved leave record
+        if (isPaidLeave) {
+          // Approved Leave -> No LOP
+          status = "Paid Leave";
+          paidLeaveDays += 1;
+        } else {
+          status = "LOP";
+          unpaidLeaveDays += 1;
+        }
+      } else if (!hasRecordedPunches) {
+        status = "Scheduled";
+      } else {
+        // Working day, no punch, no approved leave -> Unauthorized Absence -> LOP
+        status = "LOP";
         unpaidLeaveDays += 1;
       }
-      if (punch.status === "Late") lateDays += 1;
-    } else if (!hasRecordedPunches) {
-      // Period has no attendance punch records logged yet — full monthly salary applies without LOP penalty
-      status = hired ? "Scheduled" : "Not Hired";
-    } else {
-      // Working day, no punch, not on leave -> LOP (skip if not yet hired)
-      status = hired ? "LOP" : "Not Hired";
-      if (hired) unpaidLeaveDays += 1;
     }
 
     daily.push({ date: day.dateKey, weekday: day.weekday, status });
   }
 
-  const workingDaysCount = holidays.filter((d) => d.isWorkingDay).length;
-  const hiredWorkingDaysCount = holidays.filter((d) => d.isWorkingDay && (joiningDate ? new Date(d.date) >= joiningDate : true)).length;
+  const workingDaysCount = holidays.filter((d) => {
+    const dt = new Date(d.date);
+    const hired = joiningDate ? dt >= joiningDate : true;
+    const exited = exitDate ? dt > exitDate : false;
+    return d.isWorkingDay && hired && !exited;
+  }).length;
+
+  const normalOtHours = Math.round((normalOtMinutes / 60) * 100) / 100;
+  const weeklyOffOtHours = Math.round((weeklyOffOtMinutes / 60) * 100) / 100;
+  const holidayOtHours = Math.round((holidayOtMinutes / 60) * 100) / 100;
+  const nightOtHours = Math.round((nightOtMinutes / 60) * 100) / 100;
+  let totalOt = Math.round((normalOtHours + weeklyOffOtHours + holidayOtHours + nightOtHours) * 100) / 100;
+
+  if (otConfig?.maxOtHoursMonthly && totalOt > otConfig.maxOtHoursMonthly) {
+    totalOt = otConfig.maxOtHoursMonthly;
+  }
+
+  // Business payable days: Present (inc 0.5 half) + Paid Leave + Weekly Off Worked + Holiday Worked
+  const payableDays =
+    !hasRecordedPunches
+      ? workingDaysCount
+      : Math.round((presentDays + paidLeaveDays + weeklyOffWorkedDays + holidayWorkedDays) * 100) / 100;
 
   const summary: AttendanceSummary = {
     workingDays: workingDaysCount,
-    presentDays: hasRecordedPunches ? presentDays : hiredWorkingDaysCount,
+    presentDays: hasRecordedPunches ? presentDays : workingDaysCount,
+    halfDays,
     lateDays,
     paidLeaveDays,
     unpaidLeaveDays,
     holidayDays: holidays.filter((d) => d.isHoliday && !d.isWeekend).length,
     weekendDays: holidays.filter((d) => d.isWeekend).length,
-    overtimeHours: Math.round((overtimeMinutes / 60) * 100) / 100,
+    weeklyOffWorkedDays,
+    holidayWorkedDays,
+    nightShiftCount,
+    overtimeHours: totalOt,
+    normalOtHours,
+    weeklyOffOtHours,
+    holidayOtHours,
+    nightOtHours,
+    payableDays,
   };
 
   return { summary, daily };
@@ -228,7 +421,7 @@ export async function reconcileEmployees(
       }),
       prisma.employee.findMany({
         where: { id: { in: idSet } },
-        select: { id: true, employeeCode: true, dateOfJoining: true, state: true, country: true },
+        select: { id: true, employeeCode: true, dateOfJoining: true, dateOfExit: true, state: true, country: true },
       }),
       prisma.attendancePunch.findMany({
         where: { employeeId: { in: idSet }, punchDate: { gte: start, lte: end } },
@@ -242,7 +435,12 @@ export async function reconcileEmployees(
           startDate: { lte: end },
           endDate: { gte: start },
         },
-        select: { employeeId: true, startDate: true, endDate: true },
+        select: {
+          employeeId: true,
+          startDate: true,
+          endDate: true,
+          leaveType: { select: { code: true, name: true } },
+        },
       }),
       prisma.attendanceShift.findFirst(),
     ]);
@@ -257,6 +455,11 @@ export async function reconcileEmployees(
   const weeklyOff: number[] = companyRow ? weeklyOffDays(companyRow as CompanyWithConfig) : [];
   const shift = parseShiftRow(shiftRow, defaultShiftWindow((companyRow as CompanyWithConfig)?.companyConfig ?? null));
   const shiftHours = (shift.endMinutes - shift.startMinutes) / 60;
+  const cfg = (companyRow as CompanyWithConfig)?.companyConfig;
+  const otConfig: OvertimeRuleConfig = {
+    minOtMinutes: cfg?.minOtMinutesThreshold ?? 30,
+    maxOtHoursMonthly: cfg?.maxOtHoursMonthly ? Number(cfg.maxOtHoursMonthly) : undefined,
+  };
 
   // Group punches / leaves by employeeId (O(M) where M = rows returned).
   const punchesByEmp = new Map<string, Punch[]>();
@@ -269,7 +472,14 @@ export async function reconcileEmployees(
   const leavesByEmp = new Map<string, ApprovedLeave[]>();
   for (const raw of allLeaves) {
     const arr = leavesByEmp.get(raw.employeeId) ?? [];
-    arr.push({ startDate: raw.startDate, endDate: raw.endDate });
+    const isPaid = isLeavePaid(raw.leaveType?.code, raw.leaveType?.name);
+    arr.push({
+      startDate: raw.startDate,
+      endDate: raw.endDate,
+      isPaid,
+      leaveTypeCode: raw.leaveType?.code,
+      leaveTypeName: raw.leaveType?.name,
+    });
     leavesByEmp.set(raw.employeeId, arr);
   }
 
@@ -294,8 +504,9 @@ export async function reconcileEmployees(
     const punches = punchesByEmp.get(emp.id) ?? [];
     const leaves = leavesByEmp.get(emp.id) ?? [];
     const joining = emp.dateOfJoining ? new Date(emp.dateOfJoining.toISOString()) : null;
+    const exiting = emp.dateOfExit ? new Date(emp.dateOfExit.toISOString()) : null;
 
-    const { summary, daily } = reconcile(punches, leaves, days, joining, shift);
+    const { summary, daily } = reconcile(punches, leaves, days, joining, exiting, shift, otConfig);
 
     const clipped = [...daily].filter(
       (d) => new Date(`${d.date}T00:00:00.000Z`) >= new Date(start) && new Date(`${d.date}T00:00:00.000Z`) <= end,

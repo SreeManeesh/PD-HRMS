@@ -1,13 +1,9 @@
-﻿/**
- * PageHeader — Standard header for every module page.
- *
- * Usage:
- *   <PageHeader title="Employees" subtitle="32 active employees">
- *     <button className="btn btn-primary">Add Employee</button>
- *   </PageHeader>
- */
+import AdminEditableText from "./AdminEditableText.jsx";
 
-export default function PageHeader({ title, subtitle, children }) {
+export default function PageHeader({ title, subtitle, titleKey, subtitleKey, children }) {
+  const autoTitleKey = titleKey || (typeof title === "string" ? `page.${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.title` : null);
+  const autoSubKey = subtitleKey || (typeof title === "string" ? `page.${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.subtitle` : null);
+
   return (
     <div
       style={{
@@ -29,12 +25,21 @@ export default function PageHeader({ title, subtitle, children }) {
           color: "var(--text)",
           letterSpacing: "-0.3px",
           lineHeight: 1.25,
+          margin: 0,
         }}>
-          {title}
+          {autoTitleKey ? (
+            <AdminEditableText labelKey={autoTitleKey} defaultText={title} />
+          ) : (
+            title
+          )}
         </h1>
         {subtitle && (
-          <p style={{ fontSize: "13.5px", color: "var(--subtext)", marginTop: "4px" }}>
-            {subtitle}
+          <p style={{ fontSize: "13.5px", color: "var(--subtext)", marginTop: "4px", marginBottom: 0 }}>
+            {autoSubKey ? (
+              <AdminEditableText labelKey={autoSubKey} defaultText={subtitle} />
+            ) : (
+              subtitle
+            )}
           </p>
         )}
       </div>

@@ -22,7 +22,14 @@ const applyBodySchema = z.object({
   leaveTypeId: z.string().min(1, "leaveTypeId is required"),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "startDate must be YYYY-MM-DD"),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "endDate must be YYYY-MM-DD"),
-  reason: z.string().max(1000).optional(),
+  reason: z.string().optional(),
+  days: z.number().optional(),
+  attachment: z.any().optional(),
+  reasonCategory: z.string().optional(),
+  isHalfDay: z.boolean().optional(),
+  halfDaySession: z.string().optional(),
+  handoverTo: z.string().optional(),
+  emergencyContact: z.string().optional(),
 });
 
 const approvalBodySchema = z.object({

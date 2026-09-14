@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Employee Profile Page
  * Route: /employees/:id
  * Six tabs mirroring the registration wizard steps (Identity & Contact,
@@ -14,7 +14,7 @@ import {
   ArrowLeft, Pencil, Save, X, Plus, Trash2,
   Mail, Phone, MapPin, Calendar, Building2, Briefcase,
   ShieldCheck, WalletCards, GraduationCap, Users, LockKeyhole,
-  UserRound, ClipboardCheck, CircleCheck,
+  UserRound, ClipboardCheck, CircleCheck, Factory,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -22,6 +22,7 @@ import Spinner from "../../components/shared/Spinner.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { getEmployee, updateEmployee } from "../../services/employeeService.js";
 import { createConsentPolicy } from "../../services/consentService.js";
+import { createProductionRecord } from "../../services/payrollService.js";
 import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 
 const EMPLOYEE_STATUS_META = {
@@ -356,6 +357,24 @@ export default function EmployeeProfile() {
       if (local.annualSalary !== "" && local.annualSalary != null) flat.annualSalary = Math.round(Number(local.annualSalary));
       const payload = { ...flat, wizardData: local };
       await updateEmployee(id, payload);
+
+      // Dynamically sync production target with payroll production engine
+      if (local.payRules?.productionTarget && id) {
+        try {
+          const now = new Date();
+          await createProductionRecord({
+            employeeId: id,
+            month: now.getMonth() + 1,
+            year: now.getFullYear(),
+            unitsProduced: 0,
+            targetUnits: Number(local.payRules.productionTarget),
+            remarks: `Dynamic target calibration (${local.payRules.productionTarget} units/mo)`
+          });
+        } catch {
+          // Non-blocking sync
+        }
+      }
+
       const res = await getEmployee(id);
       setEmployee(res.data);
       setLocal(buildLocal(res.data?.wizardData, res.data ?? {}));
@@ -579,13 +598,13 @@ export default function EmployeeProfile() {
                   <Input label="UPI ID" value={local.bank.upiId} onChange={(v) => setL("bank.upiId", v)} />
                 </Grid>
               </Section>
-              <Section title="Pay rules">
+              <Section title="Production Targets & Factory Output">
                 <Grid editing={editing}>
-                  <SelectInput label="Wage rate" value={local.payRules.wageRate} onChange={(v) => setL("payRules.wageRate", v)} options={WAGE_RATES} />
-                  <Toggle label="Salary advance" value={local.payRules.salaryAdvance} onChange={(v) => setL("payRules.salaryAdvance", v)} />
-                  <Input label="Production target" type="number" value={local.payRules.productionTarget || ""} onChange={(v) => setL("payRules.productionTarget", v === "" ? "" : Number(v))} />
-                  <SelectInput label="Contractors" value={local.payRules.contractor} onChange={(v) => setL("payRules.contractor", v)} options={CONTRACTORS} />
-                  <MultiSelect label="Earnings" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={EARNINGS} />
+                  <Input label="Monthly production target (Units)" type="number" placeholder="e.g. 1000" value={local.payRules.productionTarget || ""} onChange={(v) => setL("payRules.productionTarget", v === "" ? "" : Number(v))} />
+                  <SelectInput label="Assigned contractor / vendor" value={local.payRules.contractor} onChange={(v) => setL("payRules.contractor", v)} options={["Direct Company Worker", ...CONTRACTORS]} />
+                  <SelectInput label="Wage rate mode" value={local.payRules.wageRate} onChange={(v) => setL("payRules.wageRate", v)} options={WAGE_RATES} />
+                  <Toggle label="Salary advance eligible" value={local.payRules.salaryAdvance} onChange={(v) => setL("payRules.salaryAdvance", v)} />
+                  <MultiSelect label="Applicable earning allowances" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={EARNINGS} />
                 </Grid>
               </Section>
             </>

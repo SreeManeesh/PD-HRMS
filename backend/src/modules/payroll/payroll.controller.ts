@@ -132,3 +132,26 @@ export const payslipViewed = asyncHandler(async (req: Request, res: Response) =>
   });
   sendSuccess(res, result.data);
 });
+
+export const runSkillGroup = asyncHandler(async (req: Request, res: Response) => {
+  const { skillType, month, year } = req.body;
+  const result = await payrollService.runPayrollForSkillGroup(
+    skillType,
+    Number(month),
+    Number(year),
+    req.auth?.sub
+  );
+  sendSuccess(res, result.data);
+});
+
+export const runIndividualEmployee = asyncHandler(async (req: Request, res: Response) => {
+  const { employeeId, month, year } = req.body;
+  const result = await payrollService.runPayrollForIndividualEmployee(
+    employeeId,
+    Number(month),
+    Number(year),
+    req.auth?.sub
+  );
+  sendSuccess(res, result.data);
+});
+

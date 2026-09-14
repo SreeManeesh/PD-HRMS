@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Performance Page � Module 10
  * Tabs: Goals & OKRs � Review Cycle � Feedback � 1:1s � Ratings History
  */
@@ -15,7 +15,8 @@ import {
   Lock,
   CheckCircle2,
   Circle,
-  Sparkles,
+  UserCheck,
+  Users2,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -23,6 +24,8 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+import api from "../../services/api.js";
 import {
   getGoals,
   addGoal,
@@ -199,13 +202,19 @@ function TabNav({ tabs, active, onChange }) {
 /* ---------------------------------- Goals & OKRs tab ---------------------------------- */
 
 function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
+  const { user } = useAuth();
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("Technical");
   const [keyResults, setKeyResults] = useState([{ text: "" }]);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [target, setTarget] = useState("self"); // "self" | "employee" | "team"
+  const [selectedEmpId, setSelectedEmpId] = useState("");
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [loadingTeam, setLoadingTeam] = useState(false);
 
   const isEditing = Boolean(goal);
+  const isManagerOrAdmin = ["MANAGER", "ADMIN", "SUPER_ADMIN", "HR"].includes(user?.role);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -223,16 +232,42 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
           : [{ text: "", progress: 0 }]
       );
       setErrors({});
+      setTarget("self");
+      setSelectedEmpId("");
     } else {
       reset();
     }
-  }, [isOpen, goal]);
+
+    if (isManagerOrAdmin && !goal) {
+      setLoadingTeam(true);
+      api
+        .get("/employees?limit=500")
+        .then((res) => {
+          const list = res.data?.data || res.data || [];
+          if (user?.role === "MANAGER") {
+            const reports = list.filter(
+              (e) =>
+                e.reportingManagerId === user.employeeId ||
+                e.reportingManagerId === user.id ||
+                (user.email && e.reportingManager?.email === user.email)
+            );
+            setTeamMembers(reports.length > 0 ? reports : list);
+          } else {
+            setTeamMembers(list);
+          }
+        })
+        .catch(() => setTeamMembers([]))
+        .finally(() => setLoadingTeam(false));
+    }
+  }, [isOpen, goal, isManagerOrAdmin, user]);
 
   const reset = () => {
     setTitle("");
     setCategory("Technical");
     setKeyResults([{ text: "" }]);
     setErrors({});
+    setTarget("self");
+    setSelectedEmpId("");
   };
 
   const updateKR = (i, value) => {
@@ -251,44 +286,49 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
     if (!title.trim()) e.title = "Give this goal a title";
     const filledKRs = keyResults.filter((kr) => kr.text.trim());
     if (filledKRs.length === 0) e.keyResults = "Add at least one key result";
+    if (target === "employee" && !selectedEmpId) {
+      e.employeeId = "Please select an employee to assign this goal to";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  if (!validate()) return;
+    e.preventDefault();
+    if (!validate()) return;
 
-  setSaving(true);
+    setSaving(true);
 
-  try {
-    const payload = {
-      title: title.trim(),
-      category,
-      keyResults: keyResults
-        .filter((kr) => kr.text.trim())
-        .map((kr) => ({
-          ...(kr.id ? { id: kr.id } : {}),
-          text: kr.text.trim(),
-          progress: kr.progress || 0,
-        })),
-      ...(isEditing ? { status: "Pending Approval" } : {}),
-    };
+    try {
+      const payload = {
+        title: title.trim(),
+        category,
+        keyResults: keyResults
+          .filter((kr) => kr.text.trim())
+          .map((kr) => ({
+            ...(kr.id ? { id: kr.id } : {}),
+            text: kr.text.trim(),
+            progress: kr.progress || 0,
+          })),
+        ...(isEditing ? { status: "Pending Approval" } : {}),
+        target: isEditing ? undefined : target,
+        employeeId: !isEditing && target === "employee" ? selectedEmpId : undefined,
+      };
 
-    const res = isEditing
-      ? await updateGoal(goal.id, payload)
-      : await addGoal(payload);
+      const res = isEditing
+        ? await updateGoal(goal.id, payload)
+        : await addGoal(payload);
 
-    onSaved(res.data);
-    onClose();
-    reset();
-  } catch (error) {
-    console.error("Failed to save goal:", error);
-    alert(error?.message || "Unable to save goal");
-  } finally {
-    setSaving(false);
-  }
-};
+      onSaved(res.data);
+      onClose();
+      reset();
+    } catch (error) {
+      console.error("Failed to save goal:", error);
+      alert(error?.message || "Unable to save goal");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Modal
@@ -300,8 +340,82 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
         <p style={{ fontSize: "12.5px", color: "var(--subtext)", margin: 0 }}>
           {isEditing
             ? "Update the requested changes and resubmit this goal for manager approval."
-            : `This goal will need manager approval before it locks for ${cycleName}.`}
+            : `This goal will align with ${cycleName || "the active performance cycle"}.`}
         </p>
+
+        {isManagerOrAdmin && !isEditing && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {fieldLabel("Assign Goal To")}
+            <div style={{ display: "flex", gap: "8px" }}>
+              {[
+                { id: "self", label: "Myself", icon: null },
+                { id: "employee", label: "Team Member", icon: UserCheck },
+                { id: "team", label: "Entire Team", icon: Users2 },
+              ].map((opt) => {
+                const isSelected = target === opt.id;
+                const OptIcon = opt.icon;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTarget(opt.id)}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                      padding: "8px 12px",
+                      borderRadius: "var(--radius-sm)",
+                      border: `1px solid ${isSelected ? "var(--primary)" : "var(--border)"}`,
+                      background: isSelected ? "var(--primary-light)" : "var(--card)",
+                      color: isSelected ? "var(--primary)" : "var(--text)",
+                      fontWeight: isSelected ? 700 : 500,
+                      fontSize: "12.5px",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {OptIcon && <OptIcon size={14} />}
+                    <span>{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {target === "team" && (
+              <p style={{ fontSize: "11.5px", color: "var(--subtext)", margin: "2px 0 0 0" }}>
+                This goal will be assigned to all direct team reports and automatically approved.
+              </p>
+            )}
+
+            {target === "employee" && (
+              <div style={{ marginTop: "6px" }}>
+                <select
+                  value={selectedEmpId}
+                  onChange={(e) => setSelectedEmpId(e.target.value)}
+                  style={{
+                    ...inputStyle(errors.employeeId),
+                    height: "38px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="">-- Select Team Member --</option>
+                  {teamMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.firstName} {m.lastName} ({m.employeeCode || m.id}) {m.jobTitle ? `• ${m.jobTitle}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {errors.employeeId && (
+                  <span style={{ fontSize: "11px", color: "var(--red)" }}>
+                    {errors.employeeId}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
           {fieldLabel("Objective *")}
@@ -353,7 +467,7 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
               ? "Saving..."
               : isEditing
                 ? "Save & Resubmit"
-                : "Submit for Approval"}
+                : "Submit Goal"}
           </PrimaryButton>
         </div>
       </form>
@@ -408,15 +522,17 @@ function GoalCard({ goal, onEdit, canEdit }) {
 }
 
 function GoalsTab({ goals, cycle, onGoalAdded }) {
+  const { user } = useAuth();
+  const isManagerOrAdmin = ["MANAGER", "ADMIN", "SUPER_ADMIN", "HR"].includes(user?.role);
   const [showAdd, setShowAdd] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
-  const goalsLocked = cycle && cycle.phase !== "Goal Setting";
+  const goalsLocked = !isManagerOrAdmin && cycle && cycle.phase !== "Goal Setting";
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "8px" }}>
         <h2 style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>
-          My Goals � {cycle?.name?.replace(" Performance Review", "") || "This Cycle"}
+          {isManagerOrAdmin ? "Goals & OKRs" : "My Goals"} — {cycle?.name?.replace(" Performance Review", "") || "Current Cycle"}
         </h2>
         <PrimaryButton onClick={() => setShowAdd(true)} disabled={goalsLocked} title={goalsLocked ? "Goal-setting window is closed for this cycle" : undefined}>
           {goalsLocked ? <Lock size={14} /> : <Plus size={16} />}

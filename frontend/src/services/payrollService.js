@@ -127,3 +127,104 @@ export const updatePayrollConfig = async (payload) => {
   const res = await api.put("/company/payroll-config", payload);
   return res.data; // { data }
 };
+
+// ── Master Wage Rates ──────────────────────────────────────────────────
+export const getWageRates = async (params) => {
+  const res = await api.get("/payroll/wage-rates", { params });
+  return res.data;
+};
+
+export const createWageRate = async (data) => {
+  const res = await api.post("/payroll/wage-rates", data);
+  return res.data;
+};
+
+export const updateWageRate = async (id, data) => {
+  const res = await api.put(`/payroll/wage-rates/${id}`, data);
+  return res.data;
+};
+
+export const deleteWageRate = async (id) => {
+  const res = await api.delete(`/payroll/wage-rates/${id}`);
+  return res.data;
+};
+
+export const runPayrollForSkillGroup = async ({ skillType, month, year }) => {
+  const res = await api.post("/payroll/run-skill-group", { skillType, month, year });
+  return res.data;
+};
+
+export const runPayrollForIndividualEmployee = async ({ employeeId, month, year }) => {
+  const res = await api.post("/payroll/run-employee", { employeeId, month, year });
+  return res.data;
+};
+
+// ── Pay Rules & Incentive Slabs ────────────────────────────────────────
+export const getPayrollComponentConfigs = async () => {
+  const res = await api.get("/payroll/components");
+  return res.data;
+};
+
+export const createPayrollComponentConfig = async (data) => {
+  const res = await api.post("/payroll/components", data);
+  return res.data;
+};
+
+export const updatePayrollComponentConfig = async (id, data) => {
+  const res = await api.put(`/payroll/components/${id}`, data);
+  return res.data;
+};
+
+export const deletePayrollComponentConfig = async (id) => {
+  const res = await api.delete(`/payroll/components/${id}`);
+  return res.data;
+};
+
+// ── Salary Advances & Loan Recovery ────────────────────────────────────
+export const getSalaryAdvances = async (params) => {
+  const res = await api.get("/payroll/advances", { params });
+  return res.data;
+};
+
+export const createSalaryAdvance = async (data) => {
+  const res = await api.post("/payroll/advances", data);
+  return res.data;
+};
+
+export const updateSalaryAdvance = async (id, data) => {
+  const res = await api.put(`/payroll/advances/${id}`, data);
+  return res.data;
+};
+
+// ── Production Logs ────────────────────────────────────────────────────
+export const getProductionRecords = async (params) => {
+  const res = await api.get("/payroll/production", { params });
+  return res.data;
+};
+
+export const createProductionRecord = async (data) => {
+  const res = await api.post("/payroll/production", data);
+  return res.data;
+};
+
+// ── Contractor Billing & Summaries ────────────────────────────────────
+export const getContractors = async () => {
+  const res = await api.get("/payroll/contractors");
+  return res.data;
+};
+
+export const createContractor = async (data) => {
+  const res = await api.post("/payroll/contractors", data);
+  return res.data;
+};
+
+export const updateContractor = async (id, data) => {
+  const res = await api.put(`/payroll/contractors/${id}`, data);
+  return res.data;
+};
+
+export const getContractorPayrollReport = async (month, year) => {
+  const res = await api.get("/payroll/contractors/report", { params: { month, year } });
+  return res.data;
+};
+

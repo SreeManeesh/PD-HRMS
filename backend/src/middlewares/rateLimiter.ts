@@ -5,17 +5,17 @@ import { AppError } from "../lib/errors";
 /** Global API rate limiter (per IP). */
 export const globalRateLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.RATE_LIMIT_MAX,
+  max: env.NODE_ENV === "development" ? 5000 : env.RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many requests, please try again later." },
 });
 
-/** Stricter limiter for the login endpoint (brute-force protection).
+/** Stricter limiter for the login endpoint (for brute-force protection).
  *  Successful logins are skipped, so this only guards repeated FAILED
  *  attempts. Cap is per IP and reset at the end of each window. */
 export const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
+  windowMs: 15 * 60 * 1000, 
   max: 60, // 60 failed attempts / 15 min per IP (20 was too aggressive for shared/office IPs)
   standardHeaders: true,
   legacyHeaders: false,

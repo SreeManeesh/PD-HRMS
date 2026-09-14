@@ -37,12 +37,22 @@ export interface ThresholdConfig {
   transferTo?: string;
 }
 
+export interface ComponentSlab {
+  min: number;
+  max: number;
+  amount: number;
+}
+
 export interface ComponentLogic {
-  type: "fixed" | "percentage" | "formula";
+  type: "fixed" | "percentage" | "formula" | "per_day" | "per_hour" | "slab" | "threshold";
   value?: number;
   sourceField?: string;
   pct?: number;
   formula?: string;
+  metric?: string;
+  slabs?: ComponentSlab[];
+  minAttendanceDays?: number;
+  minThreshold?: number;
   calculationPriority?: number;
   isBalancing?: boolean;
   min?: ThresholdConfig;
@@ -224,16 +234,43 @@ export function calculatePayroll(input: CalcInput): CalcResult {
 
     let computed = 0;
     if (logic.type === "fixed") {
-      // Explicit value wins; otherwise pull from the base/context by id so
-      // components like "basic" (auto-configured as fixed with no literal)
-      // pick up the employee's actual salary from the base context.
       computed = logic.value !== undefined ? logic.value : (ctx()[id] ?? 0);
-    }
-    else if (logic.type === "percentage") {
+    } else if (logic.type === "percentage") {
       const b = logic.sourceField ? ctx()[logic.sourceField.toLowerCase()] ?? 0 : 0;
       computed = b * ((logic.pct ?? 0) / 100);
     } else if (logic.type === "formula") {
       computed = evaluateFormula(logic.formula || "0", ctx());
+    } else if (logic.type === "per_day") {
+      const days = ctx()["payabledays"] ?? ctx()["presentdays"] ?? 0;
+      computed = (logic.value ?? 0) * days;
+    } else if (logic.type === "per_hour") {
+      const hours = ctx()["overtimehours"] ?? 0;
+      computed = (logic.value ?? 0) * hours;
+    } else if (logic.type === "slab") {
+      const metricKey = (logic.metric || "payableDays").toLowerCase();
+      const metricVal = ctx()[metricKey] ?? 0;
+      let matchedAmount = 0;
+      if (Array.isArray(logic.slabs)) {
+        for (const slab of logic.slabs) {
+          if (metricVal >= slab.min && metricVal <= slab.max) {
+            matchedAmount = slab.amount;
+            break;
+          }
+        }
+      }
+      computed = matchedAmount;
+    } else if (logic.type === "threshold") {
+      const metricKey = (logic.metric || "payableDays").toLowerCase();
+      const metricVal = ctx()[metricKey] ?? 0;
+      const threshold = logic.minThreshold ?? 0;
+      computed = metricVal >= threshold ? (logic.value ?? 0) : 0;
+    }
+
+    if (logic.minAttendanceDays !== undefined && logic.minAttendanceDays > 0) {
+      const att = ctx()["payabledays"] ?? ctx()["presentdays"] ?? 0;
+      if (att < logic.minAttendanceDays) {
+        computed = 0;
+      }
     }
 
     let final = computed;
