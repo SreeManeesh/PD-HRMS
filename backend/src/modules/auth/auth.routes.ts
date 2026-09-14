@@ -28,6 +28,7 @@ router.post("/refresh", validate({ body: refreshSchema }), authController.refres
 // Authenticated
 router.post("/logout", authenticate, validate({ body: refreshSchema.partial() }), authController.logout);
 router.post("/change-password", authenticate, validate({ body: changePasswordSchema }), authController.changePassword);
+router.post("/revoke-sessions", authenticate, authController.revokeSessions);
 router.get("/me", authenticate, authController.me);
 
 export default router;

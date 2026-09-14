@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { captureException } from "../lib/apm";
 
 /** 404 handler for unmatched routes. */
 export function notFoundHandler(req: Request, _res: Response, next: NextFunction): void {
@@ -58,6 +59,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (process.env.NODE_ENV !== "production") body.details = details ?? error?.message;
 
   if (statusCode >= 500) {
+    captureException(err, { requestId, method: req.method, url: req.originalUrl });
     logger.error({ err, requestId, method: req.method, url: req.originalUrl }, message);
   } else {
     logger.warn({ requestId, method: req.method, url: req.originalUrl, code, status: statusCode }, message);

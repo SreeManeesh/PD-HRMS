@@ -45,6 +45,7 @@ import {
 import { getEmployees } from "../../services/employeeService.js";
 import { assetUrl } from "../../utils/assetUrl.js";
 import { useToast } from "../../context/ToastContext.jsx";
+import ClassicTablePayslip from "../../components/payslip/ClassicTablePayslip.jsx";
 
 const inputStyle = {
   width: "100%",
@@ -399,6 +400,25 @@ export function PayslipBrandingPanel() {
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [previewMonth, setPreviewMonth] = useState(new Date().getMonth() + 1);
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear());
+
+  // Payslip Builder & Custom Logo controls
+  const [templateFormat, setTemplateFormat] = useState("classic-table");
+  const [logoDisplaySize, setLogoDisplaySize] = useState(170);
+  const [payslipMonthText, setPayslipMonthText] = useState("July - 2026");
+  const [payslipTitleText, setPayslipTitleText] = useState("Payslip for the month of");
+  const [tableHeaderColor, setTableHeaderColor] = useState("#3478d4");
+  const [netPayColor, setNetPayColor] = useState("#1f7a32");
+  const [tableBorderColor, setTableBorderColor] = useState("#111111");
+  const [payslipVisibility, setPayslipVisibility] = useState({
+    info: true,
+    attendance: true,
+    salary: true,
+    leave: true,
+    net: true,
+    words: true,
+    note: true,
+  });
+  const logoUploadInputRef = useRef(null);
 
   useEffect(() => {
     getCompanyBranding()
@@ -917,6 +937,178 @@ export function PayslipBrandingPanel() {
         </div>
       </div>
 
+      {/* ── Payslip Builder & Table Controls ── */}
+      <div
+        style={{
+          background: "var(--card)",
+          borderRadius: "var(--radius-lg)",
+          border: "1px solid var(--border)",
+          padding: 22,
+          boxShadow: "var(--shadow-sm)",
+        }}
+      >
+        <input
+          type="file"
+          ref={logoUploadInputRef}
+          accept="image/png,image/jpeg,image/svg+xml"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleLogoUpload(f);
+          }}
+        />
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <Sparkles size={18} style={{ color: "var(--primary)" }} />
+          <p style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", margin: 0 }}>
+            Payslip Builder & Custom Logo Settings
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+          {/* Logo Display Size */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Logo Display Size on Payslip
+            <select
+              value={logoDisplaySize}
+              onChange={(e) => setLogoDisplaySize(Number(e.target.value))}
+              style={selectStyle}
+            >
+              <option value={140}>Small (140px)</option>
+              <option value={170}>Medium (170px — Standard)</option>
+              <option value={200}>Large (200px)</option>
+              <option value={230}>Extra Large (230px)</option>
+            </select>
+          </label>
+
+          {/* Payslip Month */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Payslip Month
+            <input
+              type="text"
+              value={payslipMonthText}
+              onChange={(e) => setPayslipMonthText(e.target.value)}
+              style={inputStyle}
+              placeholder="e.g. July - 2026"
+            />
+          </label>
+
+          {/* Title Text */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Payslip Title Prefix
+            <input
+              type="text"
+              value={payslipTitleText}
+              onChange={(e) => setPayslipTitleText(e.target.value)}
+              style={inputStyle}
+              placeholder="Payslip for the month of"
+            />
+          </label>
+        </div>
+
+        {/* Color Theme */}
+        <div style={{ marginTop: 18 }}>
+          <p style={{ fontSize: 12.5, fontWeight: 700, color: "var(--label)", marginBottom: 8 }}>
+            Color Theme
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Table Header Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={tableHeaderColor}
+                  onChange={(e) => setTableHeaderColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={tableHeaderColor}
+                  onChange={(e) => setTableHeaderColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Net Pay Highlight Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={netPayColor}
+                  onChange={(e) => setNetPayColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={netPayColor}
+                  onChange={(e) => setNetPayColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Table Border Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={tableBorderColor}
+                  onChange={(e) => setTableBorderColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={tableBorderColor}
+                  onChange={(e) => setTableBorderColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Section Visibility */}
+        <div style={{ marginTop: 18 }}>
+          <p style={{ fontSize: 12.5, fontWeight: 700, color: "var(--label)", marginBottom: 8 }}>
+            Section Visibility
+          </p>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {[
+              { key: "info", label: "Employee / Bank Details" },
+              { key: "attendance", label: "Attendance Details" },
+              { key: "salary", label: "Earnings & Deductions" },
+              { key: "leave", label: "Leave Balance" },
+              { key: "net", label: "Net Pay" },
+              { key: "words", label: "Amount in Words" },
+              { key: "note", label: "Generated Note" },
+            ].map(({ key, label }) => (
+              <label
+                key={key}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={payslipVisibility[key]}
+                  onChange={(e) =>
+                    setPayslipVisibility((prev) => ({ ...prev, [key]: e.target.checked }))
+                  }
+                  style={{ accentColor: "var(--primary)" }}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* ── Theme Customizer (Rich Dropdowns) ── */}
       <div
         style={{
@@ -1324,6 +1516,30 @@ export function PayslipBrandingPanel() {
               </select>
             </div>
 
+            {/* Template Format Selector */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <select
+                id="template-format-selector"
+                value={templateFormat}
+                onChange={(e) => setTemplateFormat(e.target.value)}
+                style={{
+                  height: 34,
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                }}
+              >
+                <option value="classic-table">Classic Table (Client Focus Style)</option>
+                <option value="corporate">Corporate Classic</option>
+                <option value="executive">Executive Formal</option>
+                <option value="modern-cards">Modern Cards</option>
+              </select>
+            </div>
+
             {/* Print / Save PDF Button */}
             <button
               onClick={handlePrint}
@@ -1346,11 +1562,64 @@ export function PayslipBrandingPanel() {
           </div>
         </div>
 
-        {/* ── PREMIUM DARK PAYSLIP TEMPLATE CONTAINER ── */}
-        <div
-          id="printable-payslip-voucher"
-          style={{
-            background: "#0f172a", // Dark Slate
+        {/* ── PAYSLIP TEMPLATE DISPLAY ── */}
+        {templateFormat !== "modern-cards" ? (
+          <div
+            id="printable-classic-payslip"
+            style={{
+              overflowX: "auto",
+              paddingBottom: 24,
+            }}
+          >
+            <ClassicTablePayslip
+              company={{
+                name: form?.companyName,
+                address: form?.address,
+                logoUrl: logoUrl,
+              }}
+              logoSize={logoDisplaySize}
+              employee={currentEmployee}
+              payroll={{
+                month:
+                  payslipMonthText ||
+                  `${[
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                  ][previewMonth - 1]} - ${previewYear}`,
+                title: payslipTitleText || "Payslip for the month of",
+                workingDays: 31,
+                presentDays: 22,
+                lopDays: 0,
+                netPaidDays: 31,
+                earnings: [
+                  { name: "BASIC", amount: Math.round(breakdown.basic) },
+                  { name: "HRA", amount: Math.round(breakdown.hra) },
+                  { name: "SPECIAL ALLOWANCE", amount: Math.round(breakdown.specialAllowance) },
+                  { name: "OTHER ALLOWANCE", amount: Math.round(breakdown.conveyance + breakdown.medical) },
+                ],
+                deductions: [
+                  { name: "PF", amount: Math.round(breakdown.pf) },
+                  { name: "PROF TAX", amount: Math.round(breakdown.pt) },
+                  { name: "MEDICAL INSURANCE", amount: Math.round(breakdown.insurance) },
+                ],
+                netPay: Math.round(breakdown.netPay),
+                netPayInWords: breakdown.netPayWords,
+                leaveBalance: "03",
+              }}
+              theme={{
+                primaryColor: tableHeaderColor,
+                accentColor: netPayColor,
+                tableBorderColor: tableBorderColor,
+              }}
+              visibility={payslipVisibility}
+              onLogoClick={() => logoUploadInputRef.current?.click()}
+            />
+          </div>
+        ) : (
+          <div
+            id="printable-payslip-voucher"
+            style={{
+              background: "#0f172a", // Dark Slate
             color: "#f8fafc",
             borderRadius: "16px",
             border: "1px solid #334155",
@@ -1959,21 +2228,36 @@ export function PayslipBrandingPanel() {
             </div>
           </div>
         </div>
+      )}
       </div>
 
       {/* Embedded print stylesheet */}
       <style>{`
         @media print {
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
+          .classic-payslip-paper, .classic-payslip-paper *,
           #printable-payslip-voucher, #printable-payslip-voucher * {
-            visibility: visible;
+            visibility: visible !important;
+          }
+          .classic-payslip-paper {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 30px !important;
+            box-shadow: none !important;
+            border: none !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           #printable-payslip-voucher {
-            position: absolute;
-            left: 0;
-            top: 0;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;

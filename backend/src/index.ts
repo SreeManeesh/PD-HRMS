@@ -2,6 +2,9 @@ import { env } from "./config/env";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { prisma } from "./lib/prisma";
+import { initBackendApm, captureException } from "./lib/apm";
+
+initBackendApm();
 
 const port = env.PORT;
 
@@ -24,10 +27,12 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 process.on("unhandledRejection", (reason) => {
+  captureException(reason, { type: "unhandledRejection" });
   logger.error({ reason }, "Unhandled promise rejection");
 });
 
 process.on("uncaughtException", (err) => {
+  captureException(err, { type: "uncaughtException" });
   logger.fatal({ err }, "Uncaught exception");
   process.exit(1);
 });

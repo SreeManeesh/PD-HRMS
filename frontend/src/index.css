@@ -35,6 +35,37 @@ input, textarea, select { font-family: inherit; }
 img { max-width: 100%; display: block; }
 a { text-decoration: none; color: inherit; }
 
+/* ─── Accessibility & Keyboard Navigation (a11y) ──────────────────────── */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary, #0f766e);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs, 4px);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary, #0f766e);
+  outline-offset: 2px;
+}
+
+/* Accessible reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ─── Scrollbar ────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

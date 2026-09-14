@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Navbar — Global search (Ctrl+K), notifications dropdown, user menu with logout.
  * Reads from SearchContext for unified search state.
  *
@@ -232,7 +232,7 @@ export default function Navbar({ onToggleSidebar, sidebarOpen }) {
                         onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
                       >
                         {entry.avatar ? (
-                          <img src={entry.avatar} alt="" style={{ width: "30px", height: "30px", borderRadius: "50%", objectFit: "cover", border: "1px solid var(--border)", flexShrink: 0 }} />
+                          <img loading="lazy" src={entry.avatar} alt="" style={{ width: "30px", height: "30px", borderRadius: "50%", objectFit: "cover", border: "1px solid var(--border)", flexShrink: 0 }} />
                         ) : (
                           <div style={{ width: "30px", height: "30px", borderRadius: "var(--radius-sm)", background: tc.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                             <span style={{ fontSize: "10px", fontWeight: 800, color: tc.color }}>{entry.type[0]}</span>

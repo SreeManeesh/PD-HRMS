@@ -585,7 +585,7 @@ function LeaveDetailsModal({ request, onClose }) {
             </div>
             {details.attachment.type?.startsWith("image/") && details.attachment.data && (
               <div style={{ marginTop: "8px", textAlign: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden", maxHeight: "250px", background: "#000" }}>
-                <img src={details.attachment.data} alt="Attachment preview" style={{ maxHeight: "250px", maxWidth: "100%", objectFit: "contain" }} />
+                <img loading="lazy" src={details.attachment.data} alt="Attachment preview" style={{ maxHeight: "250px", maxWidth: "100%", objectFit: "contain" }} />
               </div>
             )}
           </div>

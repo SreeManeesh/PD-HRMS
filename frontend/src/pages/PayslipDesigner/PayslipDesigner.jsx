@@ -30,12 +30,12 @@ import "./PayslipDesigner.css";
 
 const DEFAULT_THEME = {
   primaryColor: "#0f766e",
-  secondaryColor: "#0d1b2a",
+  secondaryColor: "#cbd5e1",
   accentColor: "#0891b2",
   font: "Helvetica",
   pageSize: "A4",
   orientation: "portrait",
-  margins: { top: 40, right: 40, bottom: 40, left: 40 },
+  margins: { top: 30, right: 35, bottom: 30, left: 35 },
 };
 
 const pdInputStyle = {

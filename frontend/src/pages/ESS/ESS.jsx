@@ -9,6 +9,7 @@
 
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   LayoutGrid,
   Receipt,
@@ -32,6 +33,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
 import {
   getOverview,
   getTaxDeclarations,
@@ -41,10 +43,9 @@ import {
 } from "../../services/essService.js";
 import { proofStatusMeta, EXPORT_THROTTLE_DAYS, EXPORT_EXPIRY_HOURS } from "../../mock/ess.js";
 
-// Identity is always this session's user � never taken from a route param,
-// query string, or form field, per the ESS scoping rule (16.6).
-const ME = { id: "EMP001", name: "Matsya Singh" };
-const currency = (n) => `?${Number(n).toLocaleString("en-IN")}`;
+// Identity is always this session's user — derived from the real JWT session,
+// never from a route param, query string, or form field (ESS scoping rule 16.6).
+const currency = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
 const fmtDateTime = (iso) => new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -378,7 +379,7 @@ function DataExportTab({ lastRequest, onRequested }) {
   const handleRequest = async () => {
     setRequesting(true);
     setError("");
-    const res = await requestDataExport(ME.id);
+    const res = await requestDataExport(meId);
     setRequesting(false);
     if (res.data?.error) {
       setError(res.data.error);
@@ -451,6 +452,11 @@ const TABS = [
 ];
 
 export default function SelfService() {
+  const { user } = useAuth();
+  // Derive employee ID from the real session — never a hardcoded constant.
+  const meId = user?.employeeCode || user?.id || "";
+  const meName = user ? `${user.firstName} ${user.lastName}` : "";
+
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState(null);
@@ -459,8 +465,9 @@ export default function SelfService() {
   const [lastExportRequest, setLastExportRequest] = useState(null);
 
   useEffect(() => {
+    if (!meId) return;
     setLoading(true);
-    Promise.all([getOverview(simulatePayrollDown), getTaxDeclarations(ME.id), getLastExportRequest(ME.id)])
+    Promise.all([getOverview(simulatePayrollDown), getTaxDeclarations(meId), getLastExportRequest(meId)])
       .then(([ov, td, exp]) => {
         setOverview(ov.data);
         setDeclarations(td.data);
@@ -481,7 +488,8 @@ export default function SelfService() {
   return (
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
-        <PageHeader title="Self Service" subtitle={`Welcome back, ${ME.name}`} />
+        <DemoBanner module="Employee Self Service" />
+        <PageHeader title="Self Service" subtitle={`Welcome back, ${meName}`} />
         <TabNav tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
         {activeTab === "overview" && (

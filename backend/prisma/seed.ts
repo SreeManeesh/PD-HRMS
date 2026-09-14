@@ -14,10 +14,33 @@ import { salaryStructureBreakdown } from "../src/lib/salaryStructure";
 
 const prisma = new PrismaClient();
 
+// ── Production safety guard ──────────────────────────────────────────────────
+// This script seeds DEMO/test data (shared passwords, sample employees, etc.)
+// and MUST NEVER run against a production database.
+//
+// To run seed in a non-production environment, either:
+//   - Set NODE_ENV=development (default)
+//   - Set ALLOW_SEED=true (explicit override for staging)
+//
+// To run against staging: ALLOW_SEED=true NODE_ENV=staging npx prisma db seed
+// ─────────────────────────────────────────────────────────────────────────────
+const nodeEnv = process.env.NODE_ENV ?? "development";
+const allowSeed = process.env.ALLOW_SEED === "true";
+
+if (nodeEnv === "production" && !allowSeed) {
+  console.error(
+    "❌ SEED BLOCKED: NODE_ENV is 'production' and ALLOW_SEED is not set.\n" +
+    "   This script seeds demo data with shared passwords — never run it against a production DB.\n" +
+    "   If you genuinely need to seed production, set ALLOW_SEED=true explicitly."
+  );
+  process.exit(1);
+}
+
 // Seed static demo records (org master, employees, attendance, payroll, leave,
 // recruitment, compliance, helpdesk, LMS, assets…) by default.
 // Can be disabled with SEED_DEMO_DATA=false.
 const SEED_DEMO_DATA = process.env.SEED_DEMO_DATA !== "false";
+
 
 // ── Permissions (mirrors frontend/src/context/AuthContext.jsx ROLE_PERMISSIONS) ──
 

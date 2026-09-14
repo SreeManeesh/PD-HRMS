@@ -14,8 +14,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force",
-    "test": "tsx src/modules/payslip/tests/payslip.test.ts"
+    "test:auth": "tsx src/modules/auth/tests/auth.smoke.test.ts",
+    "test:payslip": "tsx src/modules/payslip/tests/payslip.test.ts",
+    "test:payroll": "tsx src/modules/payroll/tests/payrollScenarios.test.ts",
+    "test": "tsx src/modules/auth/tests/auth.smoke.test.ts && tsx src/modules/payslip/tests/payslip.test.ts && tsx src/modules/payroll/tests/payrollScenarios.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

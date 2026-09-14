@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Recruitment (ATS) Page � Module 5
  * Tabs: Requisitions � Candidate Pipeline � Interviews � Offers
  */
@@ -587,8 +587,6 @@ function ScheduleInterviewModal({ isOpen, onClose, candidates, onSaved }) {
       try {
         const res = await getEmployees();
 
-        console.log("INTERVIEWERS:", res);
-
         setInterviewers(res.data || []);
       } catch (error) {
         console.error("Failed to load interviewers:", error);
@@ -1129,11 +1127,6 @@ export default function Recruitment() {
           getInterviews(),
           getOffers(),
         ]);
-
-        console.log("REQUISITIONS:", requisitionsRes);
-        console.log("CANDIDATES:", candidatesRes);
-        console.log("INTERVIEWS:", interviewsRes);
-        console.log("OFFERS:", offersRes);
 
         setRequisitions(requisitionsRes.data || []);
         setCandidates(candidatesRes.data || []);

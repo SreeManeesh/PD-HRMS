@@ -17,17 +17,50 @@ export async function writeAuditLog(input: {
   entityId?: string | null;
   oldValue?: unknown;
   newValue?: unknown;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }): Promise<void> {
   try {
+    let finalNewValue = input.newValue;
+    if (input.ipAddress || input.userAgent) {
+      if (finalNewValue && typeof finalNewValue === "object" && !Array.isArray(finalNewValue)) {
+        finalNewValue = {
+          ...(finalNewValue as Record<string, unknown>),
+          _meta: {
+            ipAddress: input.ipAddress || null,
+            userAgent: input.userAgent || null,
+          },
+        };
+      } else {
+        finalNewValue = {
+          data: finalNewValue,
+          _meta: {
+            ipAddress: input.ipAddress || null,
+            userAgent: input.userAgent || null,
+          },
+        };
+      }
+    }
+
     const data: Prisma.AuditLogCreateInput = {
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,
       oldValue: input.oldValue !== undefined ? (jsonSafe(input.oldValue) as Prisma.InputJsonValue) : Prisma.DbNull,
-      newValue: input.newValue !== undefined ? (jsonSafe(input.newValue) as Prisma.InputJsonValue) : Prisma.DbNull,
+      newValue: finalNewValue !== undefined ? (jsonSafe(finalNewValue) as Prisma.InputJsonValue) : Prisma.DbNull,
       actor: input.actorUserId ? { connect: { id: input.actorUserId } } : undefined,
     };
     await prisma.auditLog.create({ data });
+    logger.info(
+      {
+        actorUserId: input.actorUserId,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        ipAddress: input.ipAddress,
+      },
+      "Audit log recorded"
+    );
   } catch (err) {
     // Audit failures must never break the primary operation.
     logger.error({ err, input: { entityType: input.entityType, action: input.action } }, "Audit log write failed");

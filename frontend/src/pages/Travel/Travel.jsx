@@ -1,9 +1,10 @@
-﻿/**
+/**
  * Travel Management Page � Module 15
  * Tabs: My Travel � Approvals � Travel Desk
  */
 
 import { useState, useEffect } from "react";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   Plane,
   ClipboardCheck,
@@ -22,6 +23,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
 import {
   getAllRequests,
   raiseRequest,
@@ -37,9 +39,8 @@ import {
 } from "../../services/Travelservice.js";
 import { TRAVEL_MODES, requestStatusMeta, travelPolicy, employeeGradeDirectory } from "../../mock/Travel.js";
 
-const ME = { id: "EMP001", name: "Matsya Singh", grade: "L4" };
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-const fmtINR = (n) => `?${Number(n).toLocaleString("en-IN")}`;
+const fmtINR = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
 
 /* ---------------------------------- shared bits ---------------------------------- */
 
@@ -145,7 +146,7 @@ function RequestSummaryCard({ req, children }) {
 
 /* ---------------------------------- My Travel tab ---------------------------------- */
 
-function RaiseRequestModal({ isOpen, onClose, onSaved }) {
+function RaiseRequestModal({ isOpen, onClose, onSaved, meId, meName, meGrade }) {
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -158,16 +159,16 @@ function RaiseRequestModal({ isOpen, onClose, onSaved }) {
 
   useEffect(() => {
     if (isInternational) {
-      getMaskedPassportRef(ME.id).then((res) => setPassportRef(res.data));
+      getMaskedPassportRef(meId).then((res) => setPassportRef(res.data));
     }
-  }, [isInternational]);
+  }, [isInternational, meId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!destination.trim() || !startDate || !endDate || !purpose.trim() || !estimatedCost) return;
     setSaving(true);
     const res = await raiseRequest({
-      employeeId: ME.id, employeeName: ME.name, grade: ME.grade,
+      employeeId: meId, employeeName: meName, grade: meGrade,
       destination: destination.trim(), startDate, endDate, purpose: purpose.trim(),
       mode, estimatedCost, isInternational,
     });
@@ -270,11 +271,11 @@ function SubmitSettlementModal({ isOpen, onClose, request, onSaved }) {
   );
 }
 
-function MyTravelTab({ requests, onRequestAdded, onRequestUpdated }) {
+function MyTravelTab({ requests, onRequestAdded, onRequestUpdated, meId, meName, meGrade }) {
   const [showRaise, setShowRaise] = useState(false);
   const [settleTarget, setSettleTarget] = useState(null);
 
-  const myRequests = requests.filter((r) => r.employeeId === ME.id);
+  const myRequests = requests.filter((r) => r.employeeId === meId);
 
   return (
     <div>
@@ -299,7 +300,7 @@ function MyTravelTab({ requests, onRequestAdded, onRequestUpdated }) {
         </div>
       )}
 
-      <RaiseRequestModal isOpen={showRaise} onClose={() => setShowRaise(false)} onSaved={onRequestAdded} />
+      <RaiseRequestModal isOpen={showRaise} onClose={() => setShowRaise(false)} onSaved={onRequestAdded} meId={meId} meName={meName} meGrade={meGrade} />
       <SubmitSettlementModal isOpen={!!settleTarget} onClose={() => setSettleTarget(null)} request={settleTarget} onSaved={onRequestUpdated} />
     </div>
   );
@@ -640,6 +641,12 @@ const TABS = [
 ];
 
 export default function Travel() {
+  const { user } = useAuth();
+  // Derive employee identity from the real JWT session.
+  const meId = user?.employeeCode || user?.id || "";
+  const meName = user ? `${user.firstName} ${user.lastName}` : "";
+  const meGrade = user?.grade || "L4"; // fall back to L4 if grade not in token
+
   const [activeTab, setActiveTab] = useState("myTravel");
   const [loading, setLoading] = useState(true);
   const [requests, setRequests] = useState([]);
@@ -670,11 +677,12 @@ export default function Travel() {
   return (
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
+        <DemoBanner module="Travel Management" />
         <PageHeader title="Travel Management" subtitle="Requests, approvals, bookings, advances and expense settlement" />
         <TabNav tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
         {activeTab === "myTravel" && (
-          <MyTravelTab requests={requests} onRequestAdded={handleRequestAdded} onRequestUpdated={handleRequestUpdated} />
+          <MyTravelTab requests={requests} onRequestAdded={handleRequestAdded} onRequestUpdated={handleRequestUpdated} meId={meId} meName={meName} meGrade={meGrade} />
         )}
 
         {activeTab === "approvals" && (
