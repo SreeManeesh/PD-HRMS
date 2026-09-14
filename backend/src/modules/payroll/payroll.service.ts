@@ -937,6 +937,69 @@ function employerBlueprintAmounts(
 }
 
 /**
+ * State-specific statutory deductions resolver for Professional Tax (PT) and Labour Welfare Fund (LWF).
+ */
+export function resolveStateStatutoryDeductions(
+  stateName: string | null | undefined,
+  gross: number,
+  gender: string = "M",
+  month: number = 9
+) {
+  const normState = (stateName || "All States (Default)").toLowerCase().trim();
+  let pt = 0;
+  let lwf = 20;
+
+  if (normState.includes("delhi")) {
+    // Delhi NCT: No Professional Tax, LWF is ₹0.75/month
+    pt = 0;
+    lwf = 0.75;
+  } else if (normState.includes("haryana")) {
+    // Haryana: No PT, LWF is 0.2% of salary up to max ₹25/month
+    pt = 0;
+    lwf = round2(Math.min(Math.max(gross * 0.002, 5), 25));
+  } else if (normState.includes("karnataka")) {
+    // Karnataka: PT is ₹200 for gross > ₹15,000 (0 below)
+    pt = gross > 15000 ? 200 : 0;
+    lwf = month === 12 ? 20 : 6;
+  } else if (normState.includes("gujarat")) {
+    // Gujarat: PT is ₹200 for gross > ₹12,000 (0 below)
+    pt = gross > 12000 ? 200 : (gross > 9000 ? 150 : (gross > 6000 ? 80 : 0));
+    lwf = 6;
+  } else if (normState.includes("tamil nadu") || normState.includes("tamilnadu")) {
+    // Tamil Nadu: PT semi-annual slabs (approx ₹208/mo for gross > ₹15,000)
+    pt = gross > 15000 ? 208 : (gross > 10000 ? 150 : 0);
+    lwf = 20;
+  } else if (normState.includes("telangana") || normState.includes("andhra")) {
+    // Telangana / AP: PT ₹150 for 15k-20k, ₹200 for > 20k
+    pt = gross > 20000 ? 200 : (gross >= 15000 ? 150 : 0);
+    lwf = 20;
+  } else if (normState.includes("west bengal") || normState.includes("bengal")) {
+    // West Bengal: PT slabs: 10k-15k: 110, 15k-20k: 130, 20k-40k: 150, >40k: 200
+    pt = gross > 40000 ? 200 : (gross > 20000 ? 150 : (gross > 15000 ? 130 : (gross > 10000 ? 110 : 0)));
+    lwf = 3;
+  } else if (normState.includes("kerala")) {
+    pt = gross > 12500 ? 208 : (gross > 10000 ? 125 : 0);
+    lwf = 20;
+  } else if (normState.includes("uttar pradesh") || normState.includes("up")) {
+    pt = 0;
+    lwf = 10;
+  } else {
+    // Maharashtra & default:
+    // PT: ₹200/mo (Feb ₹300). Females earning up to ₹25,000 are exempt.
+    const isFemale = String(gender || "").toUpperCase().startsWith("F");
+    const ptExempt = isFemale && gross <= 25000;
+    if (ptExempt || gross <= 10000) {
+      pt = 0;
+    } else {
+      pt = month === 2 ? 300 : 200;
+    }
+    lwf = 20;
+  }
+
+  return { pt, lwf };
+}
+
+/**
  * Compute one employee's payslip from their salary structure/wage rate + reconciliation.
  * Dynamically supports Daily-wage, Monthly-salary with LOP, Overtime multipliers,
  * Configurable components & slabs, Salary advance recovery, and Mid-month join/exit.
@@ -954,6 +1017,8 @@ async function computeEmployeePayslip(
     locationId?: string | null;
     contractorId?: string | null;
     dateOfExit?: Date | null;
+    state?: string | null;
+    gender?: string | null;
   },
   structure: PaySourceStructure,
   year: number,
@@ -1107,18 +1172,12 @@ async function computeEmployeePayslip(
   const nightOtPay = (summary.nightOtHours || 0) * round2(baseHourlyRate * nightOtMult);
   const totalOtPay = round2(normalOtPay + weeklyOffOtPay + holidayOtPay + nightOtPay);
 
-  const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
-  const isOvertimeId = (id: string) => ["overtime", "ot"].map(normalizeCompId).includes(normalizeCompId(id));
-  const overtimeComp = visible.find((c) => isOvertimeId(c.id));
-  const overtimeBlueprintAmount = overtimeComp ? computed?.results?.[overtimeComp.id.toLowerCase()]?.final ?? 0 : 0;
-
-  earnings.overtime = round2(
-    overtimeComp && overtimeBlueprintAmount > 0
-      ? overtimeBlueprintAmount * ratio
-      : totalOtPay > 0
-      ? totalOtPay
-      : summary.overtimeHours * baseHourlyRate * normalOtMult,
-  );
+  // Overtime is purely variable based on actual hours or dynamic pay rules (NEVER static blueprint ratios)
+  earnings.overtime = totalOtPay > 0
+    ? totalOtPay
+    : summary.overtimeHours > 0
+    ? round2(summary.overtimeHours * baseHourlyRate * normalOtMult)
+    : 0;
 
   // Scenario 6, 7, 8, 10, 11: Dynamic Configurable Components & Slabs
   const customRules = extraContext?.customComponents ?? [];
@@ -1130,13 +1189,29 @@ async function computeEmployeePayslip(
     if (rule.effectiveFrom && new Date(rule.effectiveFrom) > periodEnd) continue;
     if (rule.effectiveTo && new Date(rule.effectiveTo) < periodStart) continue;
 
-    const appCat = (rule.applicableCategory || "ALL").toUpperCase();
-    const empSkill = (employee.skillType || "Skilled").toUpperCase();
+    const appCat = (rule.applicableCategory || "ALL").toUpperCase().replace(/[^A-Z]/g, "");
+    const empSkill = (employee.skillType || "Skilled").toUpperCase().replace(/[^A-Z]/g, "");
     if (appCat !== "ALL" && appCat !== empSkill) continue;
 
     if (rule.locationId && rule.locationId !== employee.locationId) continue;
     if (rule.contractorId && rule.contractorId !== employee.contractorId) continue;
-    if (rule.minAttendanceDays && Math.max(summary.presentDays, summary.payableDays) < rule.minAttendanceDays) continue;
+
+    const isOtRule =
+      rule.code === "ot_2026" ||
+      (rule.code || "").toLowerCase().includes("ot") ||
+      (rule.name || "").toLowerCase().includes("overtime") ||
+      (rule.name || "").toLowerCase().includes("over time");
+
+    // Enforce minimum attendance threshold (e.g. Min 24d att.)
+    const effectiveAtt = Math.max(summary.presentDays, summary.payableDays);
+    if (rule.minAttendanceDays && effectiveAtt < rule.minAttendanceDays) {
+      // If employee fails attendance threshold for an overtime rule, overtime pay from this rule is 0
+      if (isOtRule) {
+        earnings.overtime = 0;
+        if (rule.code) earnings[rule.code] = 0;
+      }
+      continue;
+    }
 
     let compAmount = 0;
     const calcType = rule.calcType;
@@ -1148,12 +1223,14 @@ async function computeEmployeePayslip(
       compAmount = round2(src * (toNumber(rule.pct) / 100));
     } else if (calcType === "per_day" || calcType === "per_shift") {
       const isNight = (rule.metric || "").toLowerCase().includes("night") || rule.code === "NIGHT_ALLOW";
-      const count = isNight ? (summary.nightShiftCount || 0) : summary.payableDays;
-      const minThresh = toNumber(rule.minThreshold) || 0;
-      if (count < minThresh) {
-        compAmount = 0;
+      if (isOtRule) {
+        // For overtime per_day rule, calculate by overtime days worked (or ot hours / 8)
+        const otDays = (summary as any).overtimeDays || (summary.overtimeHours > 0 ? Math.ceil(summary.overtimeHours / 8) : 0);
+        compAmount = otDays > 0 ? round2(toNumber(rule.value) * otDays) : 0;
       } else {
-        compAmount = round2(toNumber(rule.value) * count);
+        const count = isNight ? (summary.nightShiftCount || 0) : summary.payableDays;
+        const minThresh = toNumber(rule.minThreshold) || 0;
+        compAmount = count < minThresh ? 0 : round2(toNumber(rule.value) * count);
       }
     } else if (calcType === "per_hour") {
       compAmount = round2(toNumber(rule.value) * summary.overtimeHours);
@@ -1198,7 +1275,10 @@ async function computeEmployeePayslip(
     const isNightAllow = rule.code === "NIGHT_ALLOW" || rule.name?.toLowerCase().includes("night");
     const isProdInc = rule.code === "PROD_INC" || rule.name?.toLowerCase().includes("production");
 
-    if (isAttBonus) {
+    if (isOtRule) {
+      earnings.overtime = round2(compAmount);
+      if (rule.code) earnings[rule.code] = round2(compAmount);
+    } else if (isAttBonus) {
       earnings.attendanceBonus = round2(compAmount);
     } else if (isNightAllow) {
       earnings.nightShiftAllowance = round2(compAmount);
@@ -1263,14 +1343,21 @@ async function computeEmployeePayslip(
     withholding.healthInsurance = earnings.total <= 21000 ? round2(earnings.total * 0.0075) : 0;
   }
 
-  // Professional Tax (PT): State standard slab (₹200)
+  const stateDeductions = resolveStateStatutoryDeductions(
+    employee.state,
+    earnings.total,
+    employee.gender || "M",
+    month
+  );
+
+  // Professional Tax (PT): State-specific statutory computation
   if (withholding.professionalTax === undefined) {
-    withholding.professionalTax = earnings.total > 10000 ? 200 : (earnings.total > 7500 ? 175 : 0);
+    withholding.professionalTax = stateDeductions.pt;
   }
 
-  // Labour Welfare Fund (LWF): Standard ₹20
+  // Labour Welfare Fund (LWF): State-specific statutory computation
   if (withholding.lwf === undefined) {
-    withholding.lwf = 20;
+    withholding.lwf = stateDeductions.lwf;
   }
 
   // Net protection: total deductions cannot exceed gross earnings
@@ -1778,7 +1865,7 @@ function buildSummaryPayload(
   const pf = Math.round(comp.deductions.providentFund || 0);
   const esic = Math.round(comp.deductions.healthInsurance || comp.deductions.esic || 0);
   const pt = Math.round(comp.deductions.professionalTax || 0);
-  const lwf = Math.round(comp.deductions.lwf || 20);
+  const lwf = comp.deductions.lwf !== undefined ? round2(comp.deductions.lwf) : 20;
   const totalDeductions = Math.round(comp.deductions.total + (isDaily ? 0 : 0));
 
   const netPay = Math.round(comp.netPay);

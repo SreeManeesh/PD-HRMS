@@ -382,6 +382,13 @@ export interface ApplyLeaveInput {
   startDate: string;
   endDate: string;
   reason?: string;
+  days?: number;
+  attachment?: any;
+  reasonCategory?: string;
+  isHalfDay?: boolean;
+  halfDaySession?: string;
+  handoverTo?: string;
+  emergencyContact?: string;
 }
 
 export async function applyLeave(input: ApplyLeaveInput, actor?: AccessTokenPayload) {
@@ -389,8 +396,9 @@ export async function applyLeave(input: ApplyLeaveInput, actor?: AccessTokenPayl
   const end = new Date(`${input.endDate}T00:00:00Z`);
   if (end < start) throw AppError.badRequest("End date cannot be before start date");
 
-  const days = countWeekdays(start, end);
-  if (days <= 0) throw AppError.badRequest("Leave period contains no working days");
+  const fullDays = countWeekdays(start, end);
+  if (fullDays <= 0) throw AppError.badRequest("Leave period contains no working days");
+  const days = input.isHalfDay ? 0.5 : fullDays;
 
   // Never trust client: employee is resolved from the authenticated user unless
   // the caller is HR/admin and explicitly applies on behalf of someone.
@@ -434,13 +442,25 @@ export async function applyLeave(input: ApplyLeaveInput, actor?: AccessTokenPayl
     throw AppError.conflict(`Insufficient leave balance for ${leaveType.name} (${available} day(s) available, ${days} requested)`);
   }
 
+  const serializedReason = (input.reasonCategory || input.attachment || input.handoverTo || input.emergencyContact || input.isHalfDay)
+    ? JSON.stringify({
+        summary: input.reason || "",
+        category: input.reasonCategory || "General",
+        isHalfDay: input.isHalfDay || false,
+        halfDaySession: input.halfDaySession || "First Half",
+        handoverTo: input.handoverTo || "",
+        emergencyContact: input.emergencyContact || "",
+        attachment: input.attachment || null,
+      })
+    : input.reason ?? null;
+
   const request = await prisma.leaveRequest.create({
     data: {
       employeeId: employee.id,
       leaveTypeId: leaveType.id,
       startDate: start,
       endDate: end,
-      reason: input.reason ?? null,
+      reason: serializedReason,
       status: "Pending",
     },
     include: REQUEST_INCLUDE,

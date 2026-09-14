@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Leave Management Page — Module 6
  */
 
@@ -10,6 +10,15 @@ import {
   Clock3,
   XCircle,
   RotateCcw,
+  Paperclip,
+  FileText,
+  Download,
+  Eye,
+  Trash2,
+  UploadCloud,
+  User,
+  Phone,
+  Tag,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -33,6 +42,34 @@ import { leaveStatusMeta } from "../../mock/leave.js";
 import "./Leave.css";
 
 const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626", "#16a34a", "#db2777", "#ea580c", "#0ea5e9"];
+
+export function parseLeaveDetails(reason) {
+  if (!reason) return { summary: "", category: "General", isHalfDay: false, attachment: null };
+  if (typeof reason === "string" && reason.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(reason);
+      return {
+        summary: parsed.summary || "",
+        category: parsed.category || "General",
+        isHalfDay: Boolean(parsed.isHalfDay),
+        halfDaySession: parsed.halfDaySession || "First Half",
+        handoverTo: parsed.handoverTo || "",
+        emergencyContact: parsed.emergencyContact || "",
+        attachment: parsed.attachment || null,
+      };
+    } catch {
+      return { summary: reason, category: "General", isHalfDay: false, attachment: null };
+    }
+  }
+  return { summary: reason, category: "General", isHalfDay: false, attachment: null };
+}
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+};
 
 function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, onClear }) {
   const PAGE = 6;
@@ -150,7 +187,18 @@ function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, on
 }
 
 function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
-  const [form, setForm] = useState({ leaveTypeId: "", startDate: "", endDate: "", reason: "" });
+  const [form, setForm] = useState({
+    leaveTypeId: "",
+    reasonCategory: "General / Personal",
+    startDate: "",
+    endDate: "",
+    isHalfDay: false,
+    halfDaySession: "First Half (Morning)",
+    handoverTo: "",
+    emergencyContact: "",
+    reason: "",
+    attachment: null,
+  });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -158,8 +206,8 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
     const e = {};
     if (!form.leaveTypeId) e.leaveTypeId = "Select a leave type";
     if (!form.startDate) e.startDate = "Required";
-    if (!form.endDate) e.endDate = "Required";
-    if (form.startDate && form.endDate && form.endDate < form.startDate)
+    if (!form.isHalfDay && !form.endDate) e.endDate = "Required";
+    if (!form.isHalfDay && form.startDate && form.endDate && form.endDate < form.startDate)
       e.endDate = "End date must be after start date";
     if (!form.reason.trim()) e.reason = "Please provide a reason";
     setErrors(e);
@@ -167,8 +215,31 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
   };
 
   const daysBetween = () => {
+    if (form.isHalfDay) return 0.5;
     if (!form.startDate || !form.endDate) return 0;
     return Math.max(0, Math.round((new Date(form.endDate) - new Date(form.startDate)) / 86400000) + 1);
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File size exceeds 5 MB limit.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setForm((p) => ({
+        ...p,
+        attachment: {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          data: reader.result,
+        },
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e) => {
@@ -176,10 +247,36 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
     if (!validate()) return;
     setSaving(true);
     try {
-      await applyLeave({ ...form, employeeId, days: daysBetween() });
-      setForm({ leaveTypeId: "", startDate: "", endDate: "", reason: "" });
+      await applyLeave({
+        employeeId,
+        leaveTypeId: form.leaveTypeId,
+        startDate: form.startDate,
+        endDate: form.isHalfDay ? form.startDate : form.endDate,
+        reason: form.reason.trim(),
+        days: daysBetween(),
+        reasonCategory: form.reasonCategory,
+        isHalfDay: form.isHalfDay,
+        halfDaySession: form.halfDaySession,
+        handoverTo: form.handoverTo.trim(),
+        emergencyContact: form.emergencyContact.trim(),
+        attachment: form.attachment,
+      });
+      setForm({
+        leaveTypeId: "",
+        reasonCategory: "General / Personal",
+        startDate: "",
+        endDate: "",
+        isHalfDay: false,
+        halfDaySession: "First Half (Morning)",
+        handoverTo: "",
+        emergencyContact: "",
+        reason: "",
+        attachment: null,
+      });
       onClose();
       await onSaved?.();
+    } catch (err) {
+      alert(err?.response?.data?.message || err?.message || "Failed to submit leave request.");
     } finally {
       setSaving(false);
     }
@@ -194,47 +291,328 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
 
   return (
     <Modal isOpen={isOpen} title="Apply for Leave" onClose={onClose}>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-          <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave Type *</label>
-          <select value={form.leaveTypeId} onChange={(e) => setForm((p) => ({ ...p, leaveTypeId: e.target.value }))} style={inputStyle("leaveTypeId")}>
-            <option value="">Select type</option>
-            {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name} (max {t.maxDays} days)</option>)}
-          </select>
-          {errors.leaveTypeId && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.leaveTypeId}</span>}
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px", maxHeight: "80vh", overflowY: "auto", paddingRight: "4px" }}>
+        
+        {/* Row 1: Leave Type & Reason Category */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave Type *</label>
+            <select value={form.leaveTypeId} onChange={(e) => setForm((p) => ({ ...p, leaveTypeId: e.target.value }))} style={inputStyle("leaveTypeId")}>
+              <option value="">Select type</option>
+              {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name} (max {t.maxDays} days)</option>)}
+            </select>
+            {errors.leaveTypeId && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.leaveTypeId}</span>}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Reason Category</label>
+            <select value={form.reasonCategory} onChange={(e) => setForm((p) => ({ ...p, reasonCategory: e.target.value }))} style={inputStyle("reasonCategory")}>
+              <option value="General / Personal">General / Personal</option>
+              <option value="Medical / Health">Medical / Health</option>
+              <option value="Family Emergency">Family Emergency</option>
+              <option value="Vacation / Travel">Vacation / Travel</option>
+              <option value="Bereavement">Bereavement</option>
+              <option value="Maternity / Paternity">Maternity / Paternity</option>
+              <option value="Statutory / Legal">Statutory / Legal</option>
+            </select>
+          </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          {[["startDate", "Start Date *"], ["endDate", "End Date *"]].map(([key, label]) => (
-            <div key={key} style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{label}</label>
-              <input type="date" value={form[key]} onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))} style={inputStyle(key)} />
-              {errors[key] && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors[key]}</span>}
+        {/* Half Day Option */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--background)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, color: "var(--text)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={form.isHalfDay}
+              onChange={(e) => setForm((p) => ({ ...p, isHalfDay: e.target.checked, endDate: e.target.checked ? p.startDate : p.endDate }))}
+              style={{ width: "16px", height: "16px", accentColor: "var(--primary)", cursor: "pointer" }}
+            />
+            Apply as Half-Day Leave
+          </label>
+          {form.isHalfDay && (
+            <select
+              value={form.halfDaySession}
+              onChange={(e) => setForm((p) => ({ ...p, halfDaySession: e.target.value }))}
+              style={{ height: "30px", fontSize: "12px", padding: "0 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)" }}
+            >
+              <option value="First Half (Morning)">First Half (Morning)</option>
+              <option value="Second Half (Afternoon)">Second Half (Afternoon)</option>
+            </select>
+          )}
+        </div>
+
+        {/* Dates */}
+        <div style={{ display: "grid", gridTemplateColumns: form.isHalfDay ? "1fr" : "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{form.isHalfDay ? "Leave Date *" : "Start Date *"}</label>
+            <input
+              type="date"
+              value={form.startDate}
+              onChange={(e) => setForm((p) => ({ ...p, startDate: e.target.value, ...(p.isHalfDay ? { endDate: e.target.value } : {}) }))}
+              style={inputStyle("startDate")}
+            />
+            {errors.startDate && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.startDate}</span>}
+          </div>
+
+          {!form.isHalfDay && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>End Date *</label>
+              <input type="date" value={form.endDate} onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))} style={inputStyle("endDate")} />
+              {errors.endDate && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.endDate}</span>}
             </div>
-          ))}
+          )}
         </div>
 
         {daysBetween() > 0 && (
-          <div style={{ background: "var(--primary-light)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: "13px", color: "var(--primary)", fontWeight: 600 }}>
-            Duration: {daysBetween()} day{daysBetween() > 1 ? "s" : ""}
+          <div style={{ background: "var(--primary-light)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: "13px", color: "var(--primary)", fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
+            <span>Duration: {daysBetween()} day{daysBetween() > 1 ? "s" : ""}</span>
+            {form.isHalfDay && <span style={{ fontSize: "12px", opacity: 0.9 }}>Session: {form.halfDaySession}</span>}
           </div>
         )}
 
+        {/* Handover and Emergency Contact */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Handover / Reliever Colleague</label>
+            <input
+              type="text"
+              placeholder="e.g. Robert King (EMP010)"
+              value={form.handoverTo}
+              onChange={(e) => setForm((p) => ({ ...p, handoverTo: e.target.value }))}
+              style={inputStyle("handoverTo")}
+            />
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Emergency Contact Number</label>
+            <input
+              type="tel"
+              placeholder="+91 98765 43210"
+              value={form.emergencyContact}
+              onChange={(e) => setForm((p) => ({ ...p, emergencyContact: e.target.value }))}
+              style={inputStyle("emergencyContact")}
+            />
+          </div>
+        </div>
+
+        {/* Reason */}
         <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Reason *</label>
-          <textarea value={form.reason} onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))} rows={3}
-            placeholder="Briefly describe the reason for leave…"
-            style={{ width: "100%", padding: "10px 12px", border: `1px solid ${errors.reason ? "var(--red)" : "var(--border)"}`, borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", outline: "none", resize: "vertical", fontFamily: "inherit" }} />
+          <textarea
+            value={form.reason}
+            onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))}
+            rows={3}
+            placeholder="Provide context for your leave request…"
+            style={{ width: "100%", padding: "10px 12px", border: `1px solid ${errors.reason ? "var(--red)" : "var(--border)"}`, borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+          />
           {errors.reason && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.reason}</span>}
         </div>
 
-        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-          <button type="button" onClick={onClose} style={{ padding: "9px 20px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--label)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>Cancel</button>
-          <button type="submit" disabled={saving} style={{ padding: "9px 20px", border: "none", borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}>
-            {saving ? "Submitting…" : "Submit Request"}
+        {/* Document / File Upload */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Paperclip size={13} /> Supporting Document or Medical Certificate (Optional)
+          </label>
+          
+          {form.attachment ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", overflow: "hidden" }}>
+                <FileText size={20} style={{ color: "var(--primary)", flexShrink: 0 }} />
+                <div style={{ overflow: "hidden" }}>
+                  <p style={{ margin: 0, fontSize: "13px", fontWeight: 600, color: "var(--text)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                    {form.attachment.name}
+                  </p>
+                  <span style={{ fontSize: "11px", color: "var(--subtext)" }}>
+                    {formatFileSize(form.attachment.size)} · {form.attachment.type || "Document"}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setForm((p) => ({ ...p, attachment: null }))}
+                style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center" }}
+                title="Remove attachment"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ) : (
+            <label style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+              padding: "16px", border: "1px dashed var(--border)", borderRadius: "var(--radius-sm)",
+              background: "var(--card)", cursor: "pointer", transition: "border-color 0.2s",
+            }}>
+              <UploadCloud size={18} style={{ color: "var(--subtext)" }} />
+              <span style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
+                Click to attach file <b style={{ color: "var(--primary)" }}>PDF, PNG, JPG or DOC</b> (max 5 MB)
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.webp"
+                onChange={handleFileChange}
+                style={{ display: "none" }}
+              />
+            </label>
+          )}
+        </div>
+
+        {/* Buttons */}
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "6px" }}>
+          <button type="button" onClick={onClose} style={{ padding: "9px 20px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--label)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button type="submit" disabled={saving} style={{ padding: "9px 22px", border: "none", borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}>
+            {saving ? "Submitting…" : "Submit Leave Application"}
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function LeaveDetailsModal({ request, onClose }) {
+  if (!request) return null;
+  const details = parseLeaveDetails(request.reason);
+  const meta = leaveStatusMeta[request.status] || leaveStatusMeta.Pending;
+
+  const handleDownload = () => {
+    if (!details.attachment?.data) return;
+    const a = document.createElement("a");
+    a.href = details.attachment.data;
+    a.download = details.attachment.name || "leave_attachment";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  return (
+    <Modal isOpen={Boolean(request)} title="Leave Request Details" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+        
+        {/* Header Summary */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "14px 18px", background: "var(--background)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 4px 0", color: "var(--text)" }}>
+              {request.employeeName}
+            </h3>
+            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
+              Employee ID: {request.employeeId} · Applied on {request.appliedOn ? new Date(request.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+            </span>
+          </div>
+          <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} />
+        </div>
+
+        {/* Grid info */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ background: "var(--card)", padding: "12px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Leave Type & Category</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+              <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>{request.leaveTypeName || "—"}</span>
+              {details.category && (
+                <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "99px", background: "var(--primary-light)", color: "var(--primary)" }}>
+                  {details.category}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div style={{ background: "var(--card)", padding: "12px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Leave Period</span>
+            <div style={{ marginTop: "4px", fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>
+              {new Date(request.startDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+              {request.startDate !== request.endDate && ` – ${new Date(request.endDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`}
+              <span style={{ display: "block", fontSize: "12px", color: "var(--primary)", fontWeight: 700, marginTop: "2px" }}>
+                {request.days} day{request.days === 1 ? "" : "s"} {details.isHalfDay ? `(${details.halfDaySession})` : ""}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Handover & Emergency Contact */}
+        {(details.handoverTo || details.emergencyContact) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            {details.handoverTo && (
+              <div style={{ background: "var(--card)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Handover Colleague</span>
+                <p style={{ margin: "4px 0 0 0", fontSize: "13px", fontWeight: 600, color: "var(--text)" }}>{details.handoverTo}</p>
+              </div>
+            )}
+            {details.emergencyContact && (
+              <div style={{ background: "var(--card)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Emergency Contact</span>
+                <p style={{ margin: "4px 0 0 0", fontSize: "13px", fontWeight: 600, color: "var(--text)", fontFamily: "monospace" }}>{details.emergencyContact}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Reason Text */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Reason for Absence</span>
+          <div style={{ padding: "12px 14px", background: "var(--background)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", fontSize: "13.5px", color: "var(--text)", lineHeight: 1.5 }}>
+            {details.summary || request.reason || "No detailed notes provided."}
+          </div>
+        </div>
+
+        {/* Supporting Document */}
+        {details.attachment && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Paperclip size={13} /> Attached Document
+            </span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <FileText size={24} style={{ color: "var(--primary)" }} />
+                <div>
+                  <p style={{ margin: 0, fontSize: "13.5px", fontWeight: 700, color: "var(--text)" }}>{details.attachment.name}</p>
+                  <span style={{ fontSize: "11.5px", color: "var(--subtext)" }}>
+                    {formatFileSize(details.attachment.size)} · {details.attachment.type || "Document"}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownload}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "6px",
+                  padding: "7px 14px", background: "var(--primary)", color: "#fff",
+                  border: "none", borderRadius: "var(--radius-sm)", fontSize: "12.5px",
+                  fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                <Download size={14} /> Download File
+              </button>
+            </div>
+            {details.attachment.type?.startsWith("image/") && details.attachment.data && (
+              <div style={{ marginTop: "8px", textAlign: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden", maxHeight: "250px", background: "#000" }}>
+                <img src={details.attachment.data} alt="Attachment preview" style={{ maxHeight: "250px", maxWidth: "100%", objectFit: "contain" }} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Decision details */}
+        {request.status !== "Pending" && request.status !== "Absent" && (
+          <div style={{ padding: "12px 14px", background: request.status === "Approved" ? "rgba(22,163,74,0.08)" : "rgba(220,38,38,0.08)", border: `1px solid ${request.status === "Approved" ? "#86efac" : "#fca5a5"}`, borderRadius: "var(--radius-sm)" }}>
+            <span style={{ fontSize: "11.5px", fontWeight: 700, color: request.status === "Approved" ? "#15803d" : "#b91c1c", textTransform: "uppercase" }}>
+              Decision by {request.approverName || "Approver"} {request.approvedOn ? `on ${new Date(request.approvedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}` : ""}
+            </span>
+            {request.comments && (
+              <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "var(--text)" }}>{request.comments}</p>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: "8px 20px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", fontWeight: 600, color: "var(--text)", cursor: "pointer" }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -329,6 +707,8 @@ export default function Leave() {
   // Deleting uploaded attendance + synced leave requests is an ADMIN/HR action
   // (matches the backend clear-upload route guard).
   const canClear = user.role === "ADMIN" || user.role === "HR";
+
+  const [selectedDetail, setSelectedDetail] = useState(null);
 
   const handleClear = async () => {
     if (!window.confirm("Clear uploaded attendance data and all pending leave requests? This permanently removes attendance records imported from files, upload-synced leave requests and any stale pending approvals. Approved leave balances are restored.")) return;
@@ -491,7 +871,7 @@ export default function Leave() {
         <div className="leave-request-header">
           <div>
             <h2>{canApprove ? "Leave Requests & Approvals" : "My Leave Requests"}</h2>
-            <p>{canApprove ? "Review team requests and record clear decisions." : "Track every request and the decision reason."}</p>
+            <p>{canApprove ? "Review team requests, attached documents, and record clear decisions." : "Track every request, document attachments, and decision reasons."}</p>
           </div>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ height: "34px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
@@ -537,7 +917,7 @@ export default function Leave() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {["Employee", "Leave Type", "Dates", "Days", "Reason", "Status", "Decision Details", "Applied On", ...(canApprove ? ["Actions"] : [])].map((h) => (
+                    {["Employee", "Leave Type", "Dates", "Days", "Category & Reason", "Document", "Status", "Decision Details", "Applied On", "Actions"].map((h) => (
                       <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -545,16 +925,51 @@ export default function Leave() {
                 <tbody>
                   {filtered.map((req, i) => {
                     const meta = leaveStatusMeta[req.status] || leaveStatusMeta.Pending;
+                    const details = parseLeaveDetails(req.reason);
                     return (
                       <tr key={`${req.id}-${req.employeeId}-${req.startDate}-${req.status}`} style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none" }}>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>{req.employeeName}</td>
+                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>
+                          {req.employeeName}
+                          <span style={{ display: "block", fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{req.employeeId}</span>
+                        </td>
                         <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)" }}>{req.leaveTypeName || "—"}</td>
                         <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--text)", whiteSpace: "nowrap" }}>
                           {new Date(req.startDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
                           {req.startDate !== req.endDate && ` – ${new Date(req.endDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
+                          {details.isHalfDay && <span style={{ display: "block", fontSize: "10.5px", color: "var(--primary)", fontWeight: 600 }}>Half Day</span>}
                         </td>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", textAlign: "center" }}>{req.days}</td>
-                        <td style={{ padding: "13px 16px", fontSize: "13px", color: "var(--subtext)", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{req.reason || "—"}</td>
+                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", textAlign: "center", fontWeight: 600 }}>{req.days}</td>
+                        <td style={{ padding: "13px 16px", maxWidth: "220px" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                            {details.category && (
+                              <span style={{ display: "inline-block", alignSelf: "flex-start", fontSize: "10.5px", fontWeight: 700, padding: "1px 6px", borderRadius: "4px", background: "var(--primary-light)", color: "var(--primary)" }}>
+                                {details.category}
+                              </span>
+                            )}
+                            <span style={{ fontSize: "12.5px", color: "var(--subtext)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {details.summary || req.reason || "—"}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "13px 16px", whiteSpace: "nowrap" }}>
+                          {details.attachment ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDetail(req)}
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: "5px",
+                                padding: "4px 9px", background: "rgba(99, 102, 241, 0.1)",
+                                border: "1px solid rgba(99, 102, 241, 0.3)", borderRadius: "4px",
+                                fontSize: "11.5px", color: "var(--primary)", fontWeight: 600, cursor: "pointer",
+                              }}
+                              title={details.attachment.name}
+                            >
+                              <Paperclip size={12} /> {details.attachment.name.length > 12 ? details.attachment.name.slice(0, 10) + "…" : details.attachment.name}
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>—</span>
+                          )}
+                        </td>
                         <td style={{ padding: "13px 16px" }}><StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /></td>
                         <td className="leave-decision-cell">
                           {req.status === "Absent" ? (
@@ -572,16 +987,28 @@ export default function Leave() {
                         <td style={{ padding: "13px 16px", fontSize: "12px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
                           {new Date(req.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                         </td>
-                        {canApprove && (
-                          <td style={{ padding: "13px 16px" }}>
-                            {(req.status === "Pending" || req.status === "Absent") && req.employeeId !== user.id ? (
+                        <td style={{ padding: "13px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDetail(req)}
+                              title="View Full Details"
+                              style={{
+                                padding: "6px", background: "var(--background)", border: "1px solid var(--border)",
+                                borderRadius: "4px", color: "var(--subtext)", cursor: "pointer", display: "flex", alignItems: "center",
+                              }}
+                            >
+                              <Eye size={14} />
+                            </button>
+
+                            {canApprove && (req.status === "Pending" || req.status === "Absent") && req.employeeId !== user.id && (
                               <div className="leave-row-actions">
                                 <button type="button" className="leave-approve-button" onClick={() => setDecision({ request: req, action: "approve" })}>Approve</button>
                                 <button type="button" className="leave-reject-button" onClick={() => setDecision({ request: req, action: "reject" })}>Reject</button>
                               </div>
-                            ) : req.status === "Pending" ? <span className="leave-self-note">Own request</span> : null}
-                          </td>
-                        )}
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -604,6 +1031,10 @@ export default function Leave() {
         action={decision.action}
         onClose={() => setDecision({ request: null, action: "" })}
         onCompleted={loadData}
+      />
+      <LeaveDetailsModal
+        request={selectedDetail}
+        onClose={() => setSelectedDetail(null)}
       />
     </MainLayout>
   );

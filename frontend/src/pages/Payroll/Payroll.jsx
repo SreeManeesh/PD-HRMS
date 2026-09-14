@@ -27,6 +27,8 @@ import SalaryAdvancesPanel from "../../components/payroll/SalaryAdvancesPanel.js
 import ProductionRecordsPanel from "../../components/payroll/ProductionRecordsPanel.jsx";
 import ContractorBillingPanel from "../../components/payroll/ContractorBillingPanel.jsx";
 import BlueCollarPayrollPanel from "../../components/payroll/BlueCollarPayrollPanel.jsx";
+import EarningsPanel from "../../components/payroll/EarningsPanel.jsx";
+import DeductionsPanel from "../../components/payroll/DeductionsPanel.jsx";
 import AdminEditableText from "../../components/shared/AdminEditableText.jsx";
 import { getLocations } from "../../services/Orgmanagementservice.js";
 import {
@@ -506,13 +508,14 @@ export default function Payroll() {
       { id: "monthly",      label: "Monthly Payroll"      },
       { id: "employee",     label: "Employee Payroll"     },
       { id: "wagerates",    label: "Wage Rates & Overrides"},
+      { id: "earnings",     label: "Earnings"             },
+      { id: "deductions",   label: "Deductions"           },
       { id: "components",   label: "Pay Rules & Slabs"    },
       { id: "advances",     label: "Salary Advances"      },
       { id: "production",   label: "Production Units"     },
       { id: "contractors",  label: "Contractors & Billing"},
       { id: "payslips",     label: "My Payslips"          },
       { id: "distribution", label: "Payslip Distribution" },
-      { id: "designer",     label: "Nesting Manager"      },
       { id: "branding",     label: "Payslip Branding"     },
     ];
   } else if (isManager) {
@@ -614,8 +617,9 @@ export default function Payroll() {
                                 initialMonth={mo}
                                 initialYear={year}
                                 years={YEARS}
-                                title={`${MONTHS_FULL[mo - 1]} ${year} — Workforce Payroll Breakdown`}
-                                subtitle="Integrated 20-column statutory payroll dynamically computed from attendance and state minimum wages"
+                                isAnnual={true}
+                                title={`${MONTHS_FULL[mo - 1]} ${year} — Annual Workforce Payroll Breakdown`}
+                                subtitle="Integrated 20-column statutory annual payroll with live attendance mapping and payslip downloads"
                                 onViewEmployeeSlip={(slipId) => setPreviewId(slipId)}
                               />
                             </td>
@@ -1029,8 +1033,11 @@ export default function Payroll() {
         {/* ═══ Payslip Distribution ═══ */}
         {effectiveTab === "distribution" && <PayslipDistributionPanel />}
 
-        {/* ═══ Nesting Manager ═══ */}
-        {effectiveTab === "designer" && <PayslipDesignerPanel />}
+        {/* ═══ Earnings (Wage Rates UI) ═══ */}
+        {(effectiveTab === "earnings" || effectiveTab === "designer") && <EarningsPanel />}
+
+        {/* ═══ Deductions (Wage Rates UI) ═══ */}
+        {effectiveTab === "deductions" && <DeductionsPanel />}
 
         {/* ═══ Payslip Branding ═══ */}
         {effectiveTab === "branding" && <PayslipBrandingPanel />}

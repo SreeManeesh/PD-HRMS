@@ -73,6 +73,13 @@ type RequestWithRelations = LeaveRequest & {
  *    approvedOn, comments }`.
  */
 export function serializeLeaveRequest(req: RequestWithRelations) {
+  let isHalf = false;
+  try {
+    if (req.reason && req.reason.startsWith("{")) {
+      const parsed = JSON.parse(req.reason);
+      if (parsed.isHalfDay) isHalf = true;
+    }
+  } catch {}
   return {
     id: req.id,
     employeeId: req.employee?.employeeCode ?? "",
@@ -81,7 +88,7 @@ export function serializeLeaveRequest(req: RequestWithRelations) {
     leaveTypeName: req.leaveType?.name ?? "",
     startDate: formatDate(req.startDate),
     endDate: formatDate(req.endDate),
-    days: countWeekdays(req.startDate, req.endDate),
+    days: isHalf ? 0.5 : countWeekdays(req.startDate, req.endDate),
     reason: req.reason ?? "",
     status: req.status,
     appliedOn: formatDate(req.createdAt),

@@ -262,10 +262,7 @@ export default function EmployeeSalaryBreakdown({
                 >
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{ fontSize: "11px", fontWeight: 800, background: "#2563eb", color: "#fff", padding: "2px 8px", borderRadius: "4px" }}>
-                        SCENARIO 3: MONTHLY SALARY ENGINE
-                      </span>
-                      <span style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--text)" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>
                         Monthly Salary + Attendance LOP Deduction
                       </span>
                     </div>
@@ -712,14 +709,14 @@ export default function EmployeeSalaryBreakdown({
                       </div>
                     </div>
 
-                    {/* Scenario 10 Dynamic Configuration metadata footer */}
-                    <div style={{ fontSize: "11.5px", color: "var(--subtext)", background: "var(--card)", padding: "8px 12px", borderRadius: "6px", border: "1px dashed #6ee7b7", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                    {/* Dynamic Configuration metadata footer */}
+                    <div style={{ fontSize: "11.5px", color: "var(--subtext)", background: "var(--card)", padding: "8px 12px", borderRadius: "6px", border: "1px dashed var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <span style={{ fontSize: "12px" }}>⚙️</span>
-                        <strong style={{ color: "var(--text)" }}>Scenario 10 Engine:</strong>
-                        <span>Food Allowance (Skilled, Factory A, Min 25d, Cap ₹1k, Eff: 01-Apr-2026)</span>
+                        <strong style={{ color: "var(--text)" }}>Configured Allowances:</strong>
+                        <span>Food Allowance</span>
                         <span>·</span>
-                        <span>Transport Allowance (Fixed ₹1,500)</span>
+                        <span>Transport Allowance</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <span style={{ color: "var(--subtext)" }}>Net Calculation:</span>

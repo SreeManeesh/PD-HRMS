@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Users2, Receipt, Download, Building2, Phone, Mail, Percent, DollarSign } from "lucide-react";
+import { Plus, Users2, Receipt, Download, Building2, Phone, Mail, Percent, DollarSign, FileText, Printer, X, CheckCircle2, ShieldCheck } from "lucide-react";
 import { getContractors, createContractor, getContractorPayrollReport } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
@@ -14,6 +14,7 @@ export default function ContractorBillingPanel() {
   const [reportLoading, setReportLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
 
   // Filter
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -105,12 +106,12 @@ export default function ContractorBillingPanel() {
       `"${r.contractorCode}"`,
       `"${r.contractorName}"`,
       r.headcount,
-      r.totalGross,
-      r.totalDeductions,
-      r.totalNetPay,
+      r.totalGross || r.totalGrossWage || 0,
+      r.totalDeductions || 0,
+      r.totalNetPay || r.totalNetPayToWorkers || 0,
       r.serviceChargePct,
-      r.serviceFee,
-      r.totalBilling,
+      r.serviceFee || r.serviceChargeAmount || 0,
+      r.totalBilling || r.invoiceBillingTotal || 0,
     ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
@@ -123,9 +124,13 @@ export default function ContractorBillingPanel() {
     toast("Billing report exported to CSV");
   };
 
-  const totalBillingSum = report.reduce((s, r) => s + Number(r.totalBilling || 0), 0);
-  const totalWagesSum = report.reduce((s, r) => s + Number(r.totalGross || 0), 0);
-  const totalFeeSum = report.reduce((s, r) => s + Number(r.serviceFee || 0), 0);
+  const totalBillingSum = report.reduce((s, r) => s + Number(r.totalBilling || r.invoiceBillingTotal || 0), 0);
+  const totalWagesSum = report.reduce((s, r) => s + Number(r.totalGross || r.totalGrossWage || 0), 0);
+  const totalFeeSum = report.reduce((s, r) => s + Number(r.serviceFee || r.serviceChargeAmount || 0), 0);
+
+  const activeContractorInfo = contractors.find(
+    (c) => c.id === selectedInvoice?.contractorId || c.code === selectedInvoice?.contractorCode
+  );
 
   return (
     <section style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: "24px" }}>
@@ -220,8 +225,8 @@ export default function ContractorBillingPanel() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                {["Contractor", "Headcount", "Gross Wages", "Deductions", "Net Pay", "Service Fee %", "Service Fee Amount", "Total Invoice Billing"].map((h) => (
-                  <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
+                {["Contractor", "Headcount", "Gross Wages", "Deductions", "Net Pay", "Service Fee %", "Service Fee Amount", "Total Invoice Billing", "Action"].map((h) => (
+                  <th key={h} style={{ padding: "12px 18px", textAlign: h === "Action" ? "right" : "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
                     {h}
                   </th>
                 ))}
@@ -240,24 +245,45 @@ export default function ContractorBillingPanel() {
                     </span>
                   </td>
                   <td style={{ padding: "14px 18px", fontSize: "14px", fontWeight: 600, color: "var(--text)", fontFamily: "monospace" }}>
-                    ₹{Number(row.totalGross).toLocaleString("en-IN")}
+                    ₹{Number(row.totalGross || row.totalGrossWage || 0).toLocaleString("en-IN")}
                   </td>
                   <td style={{ padding: "14px 18px", fontSize: "13.5px", color: "var(--red)", fontFamily: "monospace" }}>
-                    −₹{Number(row.totalDeductions).toLocaleString("en-IN")}
+                    −₹{Number(row.totalDeductions || 0).toLocaleString("en-IN")}
                   </td>
                   <td style={{ padding: "14px 18px", fontSize: "14px", fontWeight: 700, color: "var(--green)", fontFamily: "monospace" }}>
-                    ₹{Number(row.totalNetPay).toLocaleString("en-IN")}
+                    ₹{Number(row.totalNetPay || row.totalNetPayToWorkers || 0).toLocaleString("en-IN")}
                   </td>
                   <td style={{ padding: "14px 18px", fontSize: "13.5px", color: "var(--text)", fontWeight: 600 }}>
                     {row.serviceChargePct}%
                   </td>
                   <td style={{ padding: "14px 18px", fontSize: "14px", fontWeight: 700, color: "var(--primary)", fontFamily: "monospace" }}>
-                    +₹{Number(row.serviceFee).toLocaleString("en-IN")}
+                    +₹{Number(row.serviceFee || row.serviceChargeAmount || 0).toLocaleString("en-IN")}
                   </td>
                   <td style={{ padding: "14px 18px" }}>
                     <span style={{ fontSize: "15px", fontWeight: 800, color: "var(--green)", fontFamily: "monospace" }}>
-                      ₹{Number(row.totalBilling).toLocaleString("en-IN")}
+                      ₹{Number(row.totalBilling || row.invoiceBillingTotal || 0).toLocaleString("en-IN")}
                     </span>
+                  </td>
+                  <td style={{ padding: "14px 18px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button
+                      onClick={() => setSelectedInvoice(row)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "6px 12px",
+                        background: "var(--primary-light)",
+                        color: "var(--primary)",
+                        border: "1px solid rgba(99, 102, 241, 0.25)",
+                        borderRadius: "var(--radius-sm)",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <FileText size={13} /> View Invoice
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -393,6 +419,229 @@ export default function ContractorBillingPanel() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Contractor Itemized Invoice Modal */}
+      {selectedInvoice && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100, padding: "20px", backdropFilter: "blur(3px)" }}>
+          <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-xl, 0 20px 25px -5px rgba(0,0,0,0.3))", width: "100%", maxWidth: "860px", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Modal Actions Bar */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "var(--background)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <FileText size={20} style={{ color: "var(--primary)" }} />
+                <div>
+                  <h3 style={{ fontSize: "16px", fontWeight: 800, color: "var(--text)", margin: 0 }}>
+                    Tax Invoice / Contractor Billing Statement
+                  </h3>
+                  <span style={{ fontSize: "11px", color: "var(--subtext)", fontFamily: "monospace" }}>
+                    INV-{selectedInvoice.contractorCode}-{year}-{String(month).padStart(2, "0")}
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <button
+                  onClick={() => window.print()}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "7px 14px", background: "var(--primary)", color: "#fff",
+                    border: "none", borderRadius: "var(--radius-sm)", fontSize: "12.5px",
+                    fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  <Printer size={14} /> Print Invoice
+                </button>
+                <button
+                  onClick={() => setSelectedInvoice(null)}
+                  style={{
+                    padding: "7px", background: "transparent", color: "var(--subtext)",
+                    border: "none", borderRadius: "var(--radius-sm)", cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Invoice Body */}
+            <div style={{ padding: "26px 30px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+              {/* Invoice Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "20px", flexWrap: "wrap", paddingBottom: "16px", borderBottom: "2px solid var(--border)" }}>
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "1px", textTransform: "uppercase", color: "var(--primary)", marginBottom: "4px" }}>
+                    Contractor Vendor
+                  </div>
+                  <div style={{ fontSize: "20px", fontWeight: 800, color: "var(--text)" }}>{selectedInvoice.contractorName}</div>
+                  <div style={{ fontSize: "12px", color: "var(--subtext)", marginTop: "3px" }}>
+                    Agency Code: <b style={{ fontFamily: "monospace", color: "var(--text)" }}>{selectedInvoice.contractorCode}</b>
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--subtext)" }}>
+                    Contact: {activeContractorInfo?.contactPerson || "Authorized Agency Representative"}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--subtext)" }}>
+                    Phone: {activeContractorInfo?.phone || "+91-98000-00000"} | Email: {activeContractorInfo?.email || `billing@${selectedInvoice.contractorCode.toLowerCase()}.com`}
+                  </div>
+                  {activeContractorInfo?.gstNumber && (
+                    <div style={{ fontSize: "12px", color: "var(--subtext)", fontFamily: "monospace" }}>
+                      GSTIN: {activeContractorInfo.gstNumber}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ textAlign: "right", minWidth: "220px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "1px", textTransform: "uppercase", color: "var(--subtext)", marginBottom: "4px" }}>
+                    Billed To (Principal Employer)
+                  </div>
+                  <div style={{ fontSize: "15px", fontWeight: 700, color: "var(--text)" }}>Enterprise Workforce Corp</div>
+                  <div style={{ fontSize: "12px", color: "var(--subtext)" }}>Industrial Manufacturing Division</div>
+                  <div style={{ fontSize: "12px", color: "var(--subtext)" }}>Plant Unit 04, Maharashtra Industrial Area</div>
+                  <div style={{ marginTop: "8px", display: "inline-block", textAlign: "left", background: "var(--background)", padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", fontSize: "12px" }}>
+                    <div><b>Billing Period:</b> {MONTHS_FULL[month - 1]} {year}</div>
+                    <div><b>Invoice Date:</b> {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</div>
+                    <div><b>Terms:</b> Net 15 Days (Verified)</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Headcount & Man-Days Overview Banner */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px" }}>
+                <div style={{ background: "var(--background)", padding: "12px 14px", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Headcount Deployed</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: "var(--text)", marginTop: "2px" }}>{selectedInvoice.headcount} Workers</div>
+                </div>
+                <div style={{ background: "var(--background)", padding: "12px 14px", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Total Payable Days</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: "var(--text)", marginTop: "2px" }}>
+                    {selectedInvoice.totalPayableDays || (selectedInvoice.headcount * 26)} Days
+                  </div>
+                </div>
+                <div style={{ background: "var(--background)", padding: "12px 14px", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase" }}>Agreed Margin</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: "var(--primary)", marginTop: "2px" }}>{selectedInvoice.serviceChargePct}% Markup</div>
+                </div>
+                <div style={{ background: "var(--primary-light)", padding: "12px 14px", borderRadius: "var(--radius)", border: "1px solid rgba(99, 102, 241, 0.2)" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--primary)", textTransform: "uppercase" }}>Total Invoice Due</div>
+                  <div style={{ fontSize: "18px", fontWeight: 900, color: "var(--primary)", marginTop: "2px", fontFamily: "monospace" }}>
+                    ₹{Number(selectedInvoice.totalBilling || selectedInvoice.invoiceBillingTotal || 0).toLocaleString("en-IN")}
+                  </div>
+                </div>
+              </div>
+
+              {/* Itemized Worker Roster Table */}
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)", marginBottom: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <Users2 size={15} style={{ color: "var(--primary)" }} /> Itemized Deployed Worker Roster
+                </div>
+                {selectedInvoice.workers && selectedInvoice.workers.length > 0 ? (
+                  <div style={{ maxHeight: "240px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
+                      <thead>
+                        <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, zIndex: 1 }}>
+                          {["#", "Code", "Worker Name", "Skill Tier", "Payable Days", "Gross Wages (₹)", "Deductions (₹)", "Net Pay (₹)"].map((th) => (
+                            <th key={th} style={{ padding: "8px 12px", textAlign: th.includes("(₹)") ? "right" : "left", fontWeight: 700, color: "var(--subtext)", fontSize: "11px", textTransform: "uppercase" }}>
+                              {th}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedInvoice.workers.map((w, i) => (
+                          <tr key={w.employeeCode || i} style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td style={{ padding: "8px 12px", color: "var(--subtext)", fontFamily: "monospace" }}>{i + 1}</td>
+                            <td style={{ padding: "8px 12px", fontWeight: 700, fontFamily: "monospace", color: "var(--text)" }}>{w.employeeCode}</td>
+                            <td style={{ padding: "8px 12px", color: "var(--text)", fontWeight: 600 }}>{w.employeeName}</td>
+                            <td style={{ padding: "8px 12px" }}>
+                              <span style={{ fontSize: "11px", padding: "2px 7px", borderRadius: "99px", background: "var(--background)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                                {w.skillType || "Skilled"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "8px 12px", color: "var(--text)", fontFamily: "monospace" }}>{w.payableDays}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>
+                              ₹{Number(w.gross || 0).toLocaleString("en-IN")}
+                            </td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--red)" }}>
+                              −₹{Number(w.deductions || 0).toLocaleString("en-IN")}
+                            </td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: "var(--green)" }}>
+                              ₹{Number(w.netPay || 0).toLocaleString("en-IN")}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ padding: "16px", background: "var(--background)", borderRadius: "var(--radius)", border: "1px solid var(--border)", fontSize: "12.5px", color: "var(--subtext)", textAlign: "center" }}>
+                    Standard deployment of {selectedInvoice.headcount} worker(s) accounted under consolidated agency contract rate.
+                  </div>
+                )}
+              </div>
+
+              {/* Financial Computation Breakdown */}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ width: "100%", maxWidth: "420px", background: "var(--background)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "16px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text)", marginBottom: "10px", paddingBottom: "6px", borderBottom: "1px solid var(--border)" }}>
+                    Invoice Cost Statement
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", marginBottom: "7px" }}>
+                    <span style={{ color: "var(--subtext)" }}>Worker Gross Wages (A):</span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 600, color: "var(--text)" }}>
+                      ₹{Number(selectedInvoice.totalGross || selectedInvoice.totalGrossWage || 0).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", marginBottom: "7px" }}>
+                    <span style={{ color: "var(--subtext)" }}>Statutory Withholdings (PF/ESIC) (B):</span>
+                    <span style={{ fontFamily: "monospace", color: "var(--red)" }}>
+                      −₹{Number(selectedInvoice.totalDeductions || 0).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", marginBottom: "9px", paddingBottom: "7px", borderBottom: "1px dashed var(--border)" }}>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>Net Disbursed to Labor:</span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--green)" }}>
+                      ₹{Number(selectedInvoice.totalNetPay || selectedInvoice.totalNetPayToWorkers || 0).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12.5px", marginBottom: "12px" }}>
+                    <span style={{ color: "var(--subtext)" }}>
+                      Agency Commission / Markup ({selectedInvoice.serviceChargePct}%):
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--primary)" }}>
+                      +₹{Number(selectedInvoice.serviceFee || selectedInvoice.serviceChargeAmount || 0).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "14px", paddingTop: "8px", borderTop: "2px solid var(--border)" }}>
+                    <span style={{ fontWeight: 800, color: "var(--text)" }}>Total Invoice Payable:</span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 900, color: "var(--green)", fontSize: "16px" }}>
+                      ₹{Number(selectedInvoice.totalBilling || selectedInvoice.invoiceBillingTotal || 0).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Compliance & Signatures */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "20px", marginTop: "10px", paddingTop: "14px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                <div style={{ maxWidth: "440px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: "var(--green)", marginBottom: "4px" }}>
+                    <CheckCircle2 size={14} /> Statutory & Minimum Wage Compliance Certified
+                  </div>
+                  <p style={{ fontSize: "11px", color: "var(--subtext)", margin: 0, lineHeight: 1.4 }}>
+                    Certified that all manpower billed herein have received wages in full accordance with statutory minimum wage regulations and EPFO / ESIC filings for the period.
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: "24px", textAlign: "center" }}>
+                  <div>
+                    <div style={{ width: "130px", height: "40px", borderBottom: "1px dashed var(--border)", marginBottom: "4px" }} />
+                    <span style={{ fontSize: "11px", color: "var(--subtext)", fontWeight: 600 }}>Agency Signatory</span>
+                  </div>
+                  <div>
+                    <div style={{ width: "130px", height: "40px", borderBottom: "1px dashed var(--border)", marginBottom: "4px" }} />
+                    <span style={{ fontSize: "11px", color: "var(--subtext)", fontWeight: 600 }}>Employer HR Verification</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

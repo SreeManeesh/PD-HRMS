@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
-import { Plus, CreditCard, CheckCircle2, Clock, AlertCircle, ArrowUpRight } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Plus, CreditCard, CheckCircle2, Clock, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { getSalaryAdvances, createSalaryAdvance } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
 import EmptyState from "../shared/EmptyState";
-import { fmt } from "../../utils/payrollFormatters";
 
 export default function SalaryAdvancesPanel({ employees = [] }) {
   const toast = useToast();
@@ -13,7 +12,13 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Form
+  // Search, Filter & Sort State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [sortField, setSortField] = useState("disbursedOn");
+  const [sortOrder, setSortOrder] = useState("desc");
+
+  // Form State
   const [employeeId, setEmployeeId] = useState("");
   const [amount, setAmount] = useState("");
   const [monthlyDeduction, setMonthlyDeduction] = useState("");
@@ -44,7 +49,7 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
       return;
     }
     if (isNaN(amt) || amt <= 0 || isNaN(emi) || emi <= 0) {
-      toast("Please enter positive loan amount and EMI deduction", "error");
+      toast("Please enter valid positive numbers for amount and EMI", "error");
       return;
     }
     setSaving(true);
@@ -54,12 +59,14 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
         amount: amt,
         monthlyDeduction: emi,
         reason,
+        disbursedOn: new Date().toISOString(),
       });
       toast("Salary advance sanctioned successfully!");
       setShowAddModal(false);
       setAmount("");
       setMonthlyDeduction("");
       setReason("");
+      setEmployeeId("");
       loadAdvances();
     } catch (err) {
       toast(err.response?.data?.message || err.message || "Failed to sanction advance", "error");
@@ -67,6 +74,77 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
       setSaving(false);
     }
   };
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
+
+  const renderSortIcon = (field) => {
+    if (sortField !== field) return <ArrowUpDown size={12} style={{ opacity: 0.4 }} />;
+    return sortOrder === "asc" ? <ArrowUp size={12} style={{ color: "var(--primary)" }} /> : <ArrowDown size={12} style={{ color: "var(--primary)" }} />;
+  };
+
+  // Filtered & Sorted advances
+  const processedAdvances = useMemo(() => {
+    let list = [...advances];
+
+    // Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter((a) => {
+        const name = (a.employeeName || (a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : "")).toLowerCase();
+        const code = (a.employeeCode || a.employee?.employeeCode || "").toLowerCase();
+        const rsn = (a.reason || "").toLowerCase();
+        const dept = (a.department || a.employee?.department?.name || "").toLowerCase();
+        return name.includes(q) || code.includes(q) || rsn.includes(q) || dept.includes(q);
+      });
+    }
+
+    // Status Filter
+    if (statusFilter !== "ALL") {
+      list = list.filter((a) => {
+        const outstanding = Math.max(0, Number(a.amount || 0) - Number(a.recoveredAmount || 0));
+        const isCompleted = outstanding === 0 || a.status === "Completed";
+        return statusFilter === "Active" ? !isCompleted : isCompleted;
+      });
+    }
+
+    // Sort
+    list.sort((a, b) => {
+      let valA = 0;
+      let valB = 0;
+      if (sortField === "employee") {
+        valA = (a.employeeName || a.employee?.firstName || "").toLowerCase();
+        valB = (b.employeeName || b.employee?.firstName || "").toLowerCase();
+      } else if (sortField === "amount") {
+        valA = Number(a.amount || 0);
+        valB = Number(b.amount || 0);
+      } else if (sortField === "monthlyDeduction") {
+        valA = Number(a.monthlyDeduction || 0);
+        valB = Number(b.monthlyDeduction || 0);
+      } else if (sortField === "recovered") {
+        valA = Number(a.recoveredAmount || 0);
+        valB = Number(b.recoveredAmount || 0);
+      } else if (sortField === "outstanding") {
+        valA = Math.max(0, Number(a.amount || 0) - Number(a.recoveredAmount || 0));
+        valB = Math.max(0, Number(b.amount || 0) - Number(b.recoveredAmount || 0));
+      } else if (sortField === "disbursedOn") {
+        valA = new Date(a.disbursedOn || a.createdAt || 0).getTime();
+        valB = new Date(b.disbursedOn || b.createdAt || 0).getTime();
+      }
+
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [advances, searchQuery, statusFilter, sortField, sortOrder]);
 
   const totalSanctioned = advances.reduce((s, a) => s + Number(a.amount || 0), 0);
   const totalRecovered = advances.reduce((s, a) => s + Number(a.recoveredAmount || 0), 0);
@@ -102,7 +180,7 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
       </div>
 
       {/* KPI Stats */}
-      <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", marginBottom: "22px" }}>
+      <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", marginBottom: "20px" }}>
         <div style={{ background: "var(--background)", borderRadius: "var(--radius)", padding: "14px 18px", flex: "1 1 180px", border: "1px solid var(--border)" }}>
           <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", margin: "0 0 6px 0" }}>Total Advances Sanctioned</p>
           <p style={{ fontSize: "20px", fontWeight: 800, color: "var(--text)", margin: 0, fontFamily: "monospace" }}>₹{totalSanctioned.toLocaleString("en-IN")}</p>
@@ -117,26 +195,149 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
         </div>
       </div>
 
+      {/* Search and Filters Bar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          flexWrap: "wrap",
+          marginBottom: "16px",
+          padding: "10px 14px",
+          background: "var(--background)",
+          borderRadius: "var(--radius)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <div style={{ position: "relative", flex: "1 1 240px" }}>
+          <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "var(--subtext)" }} />
+          <input
+            type="text"
+            placeholder="Search employee name, code, reason…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: "100%",
+              height: "34px",
+              paddingLeft: "32px",
+              paddingRight: "10px",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              fontSize: "12.5px",
+              background: "var(--card)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <Filter size={13} style={{ color: "var(--subtext)" }} />
+          <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--subtext)" }}>Status:</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{
+              height: "34px",
+              padding: "0 8px",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--card)",
+              color: "var(--text)",
+              fontSize: "12.5px",
+              fontWeight: 600,
+              cursor: "pointer",
+              outline: "none",
+            }}
+          >
+            <option value="ALL">All Advances</option>
+            <option value="Active">Active / Repaying</option>
+            <option value="Completed">Completed / Cleared</option>
+          </select>
+        </div>
+
+        {(searchQuery || statusFilter !== "ALL") && (
+          <button
+            onClick={() => { setSearchQuery(""); setStatusFilter("ALL"); }}
+            style={{
+              padding: "6px 12px",
+              background: "transparent",
+              color: "var(--primary)",
+              border: "1px solid var(--primary-light)",
+              borderRadius: "var(--radius-sm)",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
       {loading ? (
         <Spinner />
-      ) : advances.length === 0 ? (
-        <EmptyState title="No active salary advances" subtitle="Click 'Sanction Advance' to disburse a loan to an employee." />
+      ) : processedAdvances.length === 0 ? (
+        <EmptyState title="No salary advances found" subtitle="Click 'Sanction Advance' to disburse a loan to an employee." />
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                {["Employee", "Sanctioned Amount", "Monthly EMI", "Recovered", "Outstanding", "Repayment Progress", "Status"].map((h) => (
-                  <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
-                    {h}
-                  </th>
-                ))}
+                <th
+                  onClick={() => handleSort("employee")}
+                  style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    Employee {renderSortIcon("employee")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("amount")}
+                  style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    Sanctioned Amount {renderSortIcon("amount")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("monthlyDeduction")}
+                  style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    Monthly EMI {renderSortIcon("monthlyDeduction")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("recovered")}
+                  style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    Recovered {renderSortIcon("recovered")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("outstanding")}
+                  style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    Outstanding {renderSortIcon("outstanding")}
+                  </div>
+                </th>
+                <th style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
+                  Repayment Progress
+                </th>
+                <th style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody>
-              {advances.map((adv, idx) => {
-                const empName = adv.employee ? `${adv.employee.firstName} ${adv.employee.lastName}` : "Employee";
-                const empCode = adv.employee?.employeeCode || "";
+              {processedAdvances.map((adv, idx) => {
+                // Dynamically resolve real employee name and code
+                const empName = adv.employeeName || (adv.employee ? `${adv.employee.firstName} ${adv.employee.lastName}`.trim() : "Employee");
+                const empCode = adv.employeeCode || adv.employee?.employeeCode || "";
+                const deptName = adv.department || adv.employee?.department?.name || "";
                 const total = Number(adv.amount || 0);
                 const recovered = Number(adv.recoveredAmount || 0);
                 const outstanding = Math.max(0, total - recovered);
@@ -144,10 +345,13 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
                 const isDone = outstanding === 0 || adv.status === "Completed";
 
                 return (
-                  <tr key={adv.id} style={{ borderBottom: idx < advances.length - 1 ? "1px solid var(--border)" : "none" }}>
+                  <tr key={adv.id} style={{ borderBottom: idx < processedAdvances.length - 1 ? "1px solid var(--border)" : "none" }}>
                     <td style={{ padding: "14px 18px" }}>
-                      <div style={{ fontWeight: 600, color: "var(--text)", fontSize: "13.5px" }}>{empName}</div>
-                      <div style={{ fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{empCode}</div>
+                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: "13.5px" }}>{empName}</div>
+                      <div style={{ fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace", display: "flex", gap: "6px" }}>
+                        <span>{empCode}</span>
+                        {deptName && deptName !== "—" && <span>• {deptName}</span>}
+                      </div>
                     </td>
                     <td style={{ padding: "14px 18px", fontSize: "14px", fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
                       ₹{total.toLocaleString("en-IN")}
@@ -170,8 +374,21 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
                       </div>
                     </td>
                     <td style={{ padding: "14px 18px" }}>
-                      <span style={{ fontSize: "11.5px", fontWeight: 700, padding: "3px 10px", borderRadius: "99px", background: isDone ? "#f0fdf4" : "#fffbeb", color: isDone ? "#16a34a" : "#d97706", border: isDone ? "1px solid #bbf7d0" : "1px solid #fde68a" }}>
-                        {isDone ? "Completed (Paid Off)" : "Active Recovery"}
+                      <span
+                        style={{
+                          fontSize: "11.5px",
+                          fontWeight: 700,
+                          padding: "3px 10px",
+                          borderRadius: "99px",
+                          background: isDone ? "#ecfdf5" : "#fffbeb",
+                          color: isDone ? "#059669" : "#d97706",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        {isDone ? <CheckCircle2 size={12} /> : <Clock size={12} />}
+                        {isDone ? "Settled" : "Deducting"}
                       </span>
                     </td>
                   </tr>
@@ -213,7 +430,7 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   required
-                  style={{ width: "100%", height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--background)", color: "var(--text)", fontSize: "13px" }}
+                  style={{ width: "100%", height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--background)", color: "var(--text)", fontSize: "13px", fontFamily: "monospace" }}
                 />
               </div>
 
@@ -225,16 +442,16 @@ export default function SalaryAdvancesPanel({ employees = [] }) {
                   value={monthlyDeduction}
                   onChange={(e) => setMonthlyDeduction(e.target.value)}
                   required
-                  style={{ width: "100%", height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--background)", color: "var(--text)", fontSize: "13px" }}
+                  style={{ width: "100%", height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--background)", color: "var(--text)", fontSize: "13px", fontFamily: "monospace" }}
                 />
-                <span style={{ fontSize: "11px", color: "var(--subtext)" }}>Deducted automatically from gross wages until balance is ₹0.</span>
+                <span style={{ fontSize: "11px", color: "var(--subtext)" }}>Deducted automatically from gross wages until balance reaches ₹0.</span>
               </div>
 
               <div>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "var(--text)", marginBottom: "4px" }}>Reason / Remarks</label>
                 <input
                   type="text"
-                  placeholder="e.g. Home renovation or emergency advance"
+                  placeholder="e.g. Home emergency advance"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   style={{ width: "100%", height: "36px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--background)", color: "var(--text)", fontSize: "13px" }}

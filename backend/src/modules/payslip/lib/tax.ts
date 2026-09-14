@@ -100,8 +100,8 @@ export function calculateTax(
 
   let taxBeforeRebate = tax;
   let rebate = 0;
-  if (rebateRule && taxable <= (rebateRule.slabMax ?? 500000)) {
-    rebate = Math.min(rebateRule.amount ?? 12500, tax);
+  if (rebateRule && taxable <= (rebateRule.slabMax ?? (regime === "NEW" ? 1200000 : 500000))) {
+    rebate = Math.min(rebateRule.amount ?? (regime === "NEW" ? 60000 : 12500), tax);
     tax -= rebate;
   }
 
@@ -147,8 +147,8 @@ export function compareRegimes(input: TaxInput): {
 }
 
 /**
- * Baseline India tax slabs (FY 2026-27) — kept as data, must ship as DB
- * TaxRule rows in production so they can be versioned/updated without code.
+ * Baseline India tax slabs (FY 2025-26 / FY 2026-27 New Tax Regime Section 115BAC)
+ * Standard Deduction: ₹75,000 | Sec 87A Rebate: up to ₹12,00,000 taxable income (Net tax Nil)
  */
 export const INDIA_TAX_URL_BASELINE: Record<"OLD" | "NEW", TaxRuleRow[]> = {
   OLD: [
@@ -164,14 +164,15 @@ export const INDIA_TAX_URL_BASELINE: Record<"OLD" | "NEW", TaxRuleRow[]> = {
     { regime: "OLD", ruleType: "SURCHARGE", name: "Surcharge", slabMin: 5000000, rate: 10 },
   ],
   NEW: [
-    { regime: "NEW", ruleType: "SLAB", name: "0-3L", slabOrder: 1, slabMin: 0, slabMax: 300000, rate: 0 },
-    { regime: "NEW", ruleType: "SLAB", name: "3-7L", slabOrder: 2, slabMin: 300000, slabMax: 700000, rate: 5 },
-    { regime: "NEW", ruleType: "SLAB", name: "7-10L", slabOrder: 3, slabMin: 700000, slabMax: 1000000, rate: 10 },
-    { regime: "NEW", ruleType: "SLAB", name: "10-12L", slabOrder: 4, slabMin: 1000000, slabMax: 1200000, rate: 15 },
-    { regime: "NEW", ruleType: "SLAB", name: "12-15L", slabOrder: 5, slabMin: 1200000, slabMax: 1500000, rate: 20 },
-    { regime: "NEW", ruleType: "SLAB", name: ">15L", slabOrder: 6, slabMin: 1500000, rate: 30 },
+    { regime: "NEW", ruleType: "SLAB", name: "0-4L", slabOrder: 1, slabMin: 0, slabMax: 400000, rate: 0 },
+    { regime: "NEW", ruleType: "SLAB", name: "4-8L", slabOrder: 2, slabMin: 400000, slabMax: 800000, rate: 5 },
+    { regime: "NEW", ruleType: "SLAB", name: "8-12L", slabOrder: 3, slabMin: 800000, slabMax: 1200000, rate: 10 },
+    { regime: "NEW", ruleType: "SLAB", name: "12-16L", slabOrder: 4, slabMin: 1200000, slabMax: 1600000, rate: 15 },
+    { regime: "NEW", ruleType: "SLAB", name: "16-20L", slabOrder: 5, slabMin: 1600000, slabMax: 2000000, rate: 20 },
+    { regime: "NEW", ruleType: "SLAB", name: "20-24L", slabOrder: 6, slabMin: 2000000, slabMax: 2400000, rate: 25 },
+    { regime: "NEW", ruleType: "SLAB", name: ">24L", slabOrder: 7, slabMin: 2400000, rate: 30 },
     { regime: "NEW", ruleType: "STD_DEDUCTION", name: "Standard Deduction", amount: 75000 },
-    { regime: "NEW", ruleType: "REBATE", name: "87A Rebate", slabMax: 700000, amount: 25000 },
+    { regime: "NEW", ruleType: "REBATE", name: "87A Rebate", slabMax: 1200000, amount: 60000 },
     { regime: "NEW", ruleType: "CESS", name: "Health & Edu Cess", rate: 4 },
     { regime: "NEW", ruleType: "SURCHARGE", name: "Surcharge", slabMin: 5000000, rate: 15 },
   ],

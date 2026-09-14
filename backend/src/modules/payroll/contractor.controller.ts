@@ -130,40 +130,43 @@ export async function getContractorPayrollReport(req: Request, res: Response, ne
       },
     });
 
+    // Fetch active employees assigned to contractors for dynamic preview when runs are not yet finalized
+    const activeContractorEmps = await prisma.employee.findMany({
+      where: {
+        status: { in: ["Active", "ACTIVE", "active"] },
+        contractorId: { not: null },
+      },
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        skillType: true,
+        dailyWageRate: true,
+        annualSalary: true,
+        contractorId: true,
+      },
+    });
+
     const report = contractors.map((c) => {
       const contractorSlips = (run?.payslips ?? []).filter((s) => s.employee.contractorId === c.id);
       let totalGross = 0;
       let totalDeductions = 0;
       let totalNet = 0;
       let totalPayableDays = 0;
+      let workersList: any[] = [];
 
-      for (const slip of contractorSlips) {
-        const earnings = (slip.earnings as Record<string, number>) || {};
-        const deductions = (slip.deductions as Record<string, number>) || {};
-        const att = (slip.attendanceSummary as Record<string, number>) || {};
-        totalGross += earnings.total || 0;
-        totalDeductions += deductions.total || 0;
-        totalNet += toNumber(slip.netPay);
-        totalPayableDays += att.payableDays || att.presentDays || 0;
-      }
-
-      const serviceChargePct = toNumber(c.serviceChargePct);
-      const serviceChargeAmount = round2((totalGross * serviceChargePct) / 100);
-      const invoiceTotal = round2(totalGross + serviceChargeAmount);
-
-      return {
-        contractorId: c.id,
-        contractorName: c.name,
-        contractorCode: c.code,
-        serviceChargePct,
-        headcount: contractorSlips.length,
-        totalPayableDays: round2(totalPayableDays),
-        totalGrossWage: round2(totalGross),
-        totalDeductions: round2(totalDeductions),
-        totalNetPayToWorkers: round2(totalNet),
-        serviceChargeAmount,
-        invoiceBillingTotal: invoiceTotal,
-        workers: contractorSlips.map((s) => {
+      if (contractorSlips.length > 0) {
+        for (const slip of contractorSlips) {
+          const earnings = (slip.earnings as Record<string, number>) || {};
+          const deductions = (slip.deductions as Record<string, number>) || {};
+          const att = (slip.attendanceSummary as Record<string, number>) || {};
+          totalGross += earnings.total || 0;
+          totalDeductions += deductions.total || 0;
+          totalNet += toNumber(slip.netPay);
+          totalPayableDays += att.payableDays || att.presentDays || 0;
+        }
+        workersList = contractorSlips.map((s) => {
           const e = (s.earnings as Record<string, number>) || {};
           const d = (s.deductions as Record<string, number>) || {};
           const att = (s.attendanceSummary as Record<string, number>) || {};
@@ -176,7 +179,51 @@ export async function getContractorPayrollReport(req: Request, res: Response, ne
             deductions: d.total || 0,
             netPay: toNumber(s.netPay),
           };
-        }),
+        });
+      } else {
+        const assignedEmps = activeContractorEmps.filter((e) => e.contractorId === c.id);
+        for (const emp of assignedEmps) {
+          const daily = toNumber(emp.dailyWageRate) || 750;
+          const monthly = toNumber(emp.annualSalary) ? round2(toNumber(emp.annualSalary) / 12) : round2(daily * 26);
+          const ded = round2(monthly * 0.12);
+          const net = round2(monthly - ded);
+          totalGross += monthly;
+          totalDeductions += ded;
+          totalNet += net;
+          totalPayableDays += 26;
+          workersList.push({
+            employeeCode: emp.employeeCode,
+            employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+            skillType: emp.skillType || "Skilled",
+            payableDays: 26,
+            gross: monthly,
+            deductions: ded,
+            netPay: net,
+          });
+        }
+      }
+
+      const serviceChargePct = toNumber(c.serviceChargePct);
+      const serviceChargeAmount = round2((totalGross * serviceChargePct) / 100);
+      const invoiceTotal = round2(totalGross + serviceChargeAmount);
+
+      return {
+        contractorId: c.id,
+        contractorName: c.name,
+        contractorCode: c.code,
+        serviceChargePct,
+        headcount: workersList.length,
+        totalPayableDays: round2(totalPayableDays),
+        totalGrossWage: round2(totalGross),
+        totalGross: round2(totalGross),
+        totalDeductions: round2(totalDeductions),
+        totalNetPayToWorkers: round2(totalNet),
+        totalNetPay: round2(totalNet),
+        serviceChargeAmount,
+        serviceFee: serviceChargeAmount,
+        invoiceBillingTotal: invoiceTotal,
+        totalBilling: invoiceTotal,
+        workers: workersList,
       };
     });
 

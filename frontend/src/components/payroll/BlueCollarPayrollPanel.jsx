@@ -15,6 +15,10 @@ import {
   Eye,
   CheckCircle2,
   ShieldCheck,
+  Edit3,
+  X,
+  Copy,
+  FileDown,
 } from "lucide-react";
 import {
   getEmployeePayrollSummaries,
@@ -28,6 +32,10 @@ import { INDIAN_STATES } from "./WageRatesPanel";
 import EmployeeSalaryBreakdown from "./EmployeeSalaryBreakdown";
 
 const CATEGORIES = ["All Categories", "SKILLED", "SEMISKILLED", "UNSKILLED"];
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
 
 export default function BlueCollarPayrollPanel({
   initialMonth = new Date().getMonth() + 1,
@@ -36,6 +44,8 @@ export default function BlueCollarPayrollPanel({
   title = "Workforce Payroll Calculations",
   subtitle = "Comprehensive Indian statutory payroll table (20 columns) dynamically computed from verified attendance, state minimum wages, PF, ESIC, PT, and LWF.",
   onViewEmployeeSlip,
+  isAnnual = false,
+  onPayrollCompleted,
 }) {
   const toast = useToast();
   const [month, setMonth] = useState(initialMonth);
@@ -56,133 +66,184 @@ export default function BlueCollarPayrollPanel({
   const [running, setRunning] = useState(false);
   const [runningEmpId, setRunningEmpId] = useState(null);
   const [records, setRecords] = useState([]);
+  const [allFetchedRecords, setAllFetchedRecords] = useState([]);
+  const [hasRun, setHasRun] = useState(false);
+  const [isPaid, setIsPaid] = useState(false);
+  const [showTxnModal, setShowTxnModal] = useState(false);
+  const [editingGrossEmpId, setEditingGrossEmpId] = useState(null);
   const [selectedEmpForBreakdown, setSelectedEmpForBreakdown] = useState(null);
+
+  // Pagination state (Strictly 10 items per page)
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(1);
 
   // Sorting state
   const [sortKey, setSortKey] = useState("srNo");
   const [sortDir, setSortDir] = useState("asc");
 
-  const loadData = async () => {
+  const normalizeRows = (rows) => {
+    return rows.map((r, index) => {
+      const gross = Number(r.gross || 0);
+      const basic = Number(r.basic || 0);
+      const hra = Number(r.hra || 0);
+      const conv = Number(r.conv || 0);
+      const med = Number(r.med || 0);
+      const cca = Number(r.cca || 0);
+      const special = Number(r.special || 0);
+
+      const pf = Number(r.pf || r.deductions?.providentFund || 0);
+      const esic = Number(r.esic || r.deductions?.healthInsurance || 0);
+      const pt = Number(r.pt || r.deductions?.professionalTax || 0);
+      const lwf = Number(r.lwf || r.deductions?.lwf || 20);
+      const deductions = Number(r.totalDeductions || r.deductions?.total || (pf + esic + pt + lwf));
+      const net = Number(r.net || r.netPay || (gross - deductions));
+
+      const salaryType = r.salaryType || r.rawRecord?.summary?.salaryType || (Number(r.annualSalary) > 0 ? "Monthly" : "Daily");
+      const fixedMonthlySalary = Number(r.fixedMonthlySalary || (salaryType === "Monthly" ? (r.annualSalary ? r.annualSalary / 12 : 24000) : 0));
+      const dailySalaryRate = Number(r.dailySalaryRate || r.dailyRate || r.dailyWageRate || (fixedMonthlySalary > 0 ? fixedMonthlySalary / 30 : 900));
+      const lopDays = Number(r.lopDays != null ? r.lopDays : (r.leaveDays || 0));
+      const lopDeduction = Number(r.lopDeduction != null ? r.lopDeduction : (r.leaveDeduction || (salaryType === "Monthly" ? lopDays * dailySalaryRate : 0)));
+      const grossPayableSalary = Number(r.grossPayableSalary || (salaryType === "Monthly" ? Math.max(fixedMonthlySalary - lopDeduction, 0) : gross));
+
+      const overtime = Number(r.overtime || r.earnings?.overtime || 0);
+      const overtimeHours = Number(r.overtimeHours || r.rawRecord?.summary?.overtimeHours || (overtime > 0 ? Math.round(overtime / ((dailySalaryRate / 8) * 1.5)) : 0));
+      const attendanceBonus = Number(
+        r.attendanceBonus ||
+        r.earnings?.attendanceBonus ||
+        r.earnings?.attendance_bonus ||
+        r.earnings?.ATT_BONUS ||
+        r.earnings?.performanceBonus ||
+        0
+      );
+      const nightShiftCount = Number(r.nightShiftCount || r.rawRecord?.summary?.nightShiftCount || 0);
+      const nightShiftAllowance = Number(
+        r.nightShiftAllowance ||
+        r.earnings?.nightShiftAllowance ||
+        r.earnings?.NIGHT_ALLOW ||
+        r.earnings?.night_shift_allowance ||
+        0
+      );
+      const productionUnits = Number(r.productionUnits || r.rawRecord?.summary?.productionUnits || 0);
+      const productionIncentive = Number(
+        r.productionIncentive ||
+        r.earnings?.productionIncentive ||
+        r.earnings?.PROD_INC ||
+        r.earnings?.production_incentive ||
+        0
+      );
+
+      const empCode = r.employeeId || r.id || `EMP${index + 1}`;
+      const txnId = r.transactionId || `TXN-${empCode}-${year}${String(month).padStart(2, "0")}`;
+
+      return {
+        srNo: index + 1,
+        id: r.id || r.employeeId,
+        employeeId: empCode,
+        employeeName: r.employeeName || "Worker",
+        category: (r.category || r.skillType || "SKILLED").toUpperCase().replace(/\s+/g, ""),
+        skillType: r.skillType || "Skilled",
+        salaryType,
+        fixedMonthlySalary,
+        dailySalaryRate,
+        lopDays,
+        lopDeduction,
+        grossPayableSalary,
+        overtime,
+        overtimeHours,
+        attendanceBonus,
+        nightShiftCount,
+        nightShiftAllowance,
+        productionUnits,
+        productionIncentive,
+        gender: r.gender || "M",
+        doj: r.doj || "2024-01-01",
+        state: r.state || "All States (Default)",
+        days: Number(r.days != null ? r.days : (r.workingDays || 26)),
+        basic,
+        hra,
+        conv,
+        med,
+        cca,
+        special,
+        gross,
+        pf,
+        esic,
+        pt,
+        lwf,
+        deductions,
+        net,
+        status: r.status || "Draft",
+        transactionId: txnId,
+        rawRecord: r,
+      };
+    });
+  };
+
+  const loadData = async (shouldForceRun = false) => {
     setLoading(true);
     try {
       const res = await getEmployeePayrollSummaries(month, year);
       const rows = res.data || [];
-      // Map data with normalized properties for the 20 columns
-      const normalized = rows.map((r, index) => {
-        const gross = Number(r.gross || 0);
-        const basic = Number(r.basic || 0);
-        const hra = Number(r.hra || 0);
-        const conv = Number(r.conv || 0);
-        const med = Number(r.med || 0);
-        const cca = Number(r.cca || 0);
-        const special = Number(r.special || 0);
+      const normalized = normalizeRows(rows);
+      setAllFetchedRecords(normalized);
 
-        const pf = Number(r.pf || r.deductions?.providentFund || 0);
-        const esic = Number(r.esic || r.deductions?.healthInsurance || 0);
-        const pt = Number(r.pt || r.deductions?.professionalTax || 0);
-        const lwf = Number(r.lwf || r.deductions?.lwf || 20);
-        const deductions = Number(r.totalDeductions || r.deductions?.total || (pf + esic + pt + lwf));
-        const net = Number(r.net || r.netPay || (gross - deductions));
-
-        const salaryType = r.salaryType || r.rawRecord?.summary?.salaryType || (Number(r.annualSalary) > 0 ? "Monthly" : "Daily");
-        const fixedMonthlySalary = Number(r.fixedMonthlySalary || (salaryType === "Monthly" ? (r.annualSalary ? r.annualSalary / 12 : 24000) : 0));
-        const dailySalaryRate = Number(r.dailySalaryRate || r.dailyRate || r.dailyWageRate || (fixedMonthlySalary > 0 ? fixedMonthlySalary / 30 : 900));
-        const lopDays = Number(r.lopDays != null ? r.lopDays : (r.leaveDays || 0));
-        const lopDeduction = Number(r.lopDeduction != null ? r.lopDeduction : (r.leaveDeduction || (salaryType === "Monthly" ? lopDays * dailySalaryRate : 0)));
-        const grossPayableSalary = Number(r.grossPayableSalary || (salaryType === "Monthly" ? Math.max(fixedMonthlySalary - lopDeduction, 0) : gross));
-
-        const overtime = Number(r.overtime || r.earnings?.overtime || 0);
-        const overtimeHours = Number(r.overtimeHours || r.rawRecord?.summary?.overtimeHours || (overtime > 0 ? Math.round(overtime / ((dailySalaryRate / 8) * 1.5)) : 0));
-        const attendanceBonus = Number(
-          r.attendanceBonus ||
-          r.earnings?.attendanceBonus ||
-          r.earnings?.attendance_bonus ||
-          r.earnings?.ATT_BONUS ||
-          r.earnings?.performanceBonus ||
-          0
-        );
-        const nightShiftCount = Number(r.nightShiftCount || r.rawRecord?.summary?.nightShiftCount || 0);
-        const nightShiftAllowance = Number(
-          r.nightShiftAllowance ||
-          r.earnings?.nightShiftAllowance ||
-          r.earnings?.NIGHT_ALLOW ||
-          r.earnings?.night_shift_allowance ||
-          0
-        );
-        const productionUnits = Number(r.productionUnits || r.rawRecord?.summary?.productionUnits || 0);
-        const productionIncentive = Number(
-          r.productionIncentive ||
-          r.earnings?.productionIncentive ||
-          r.earnings?.PROD_INC ||
-          r.earnings?.production_incentive ||
-          0
-        );
-
-        return {
-          srNo: index + 1,
-          id: r.id || r.employeeId,
-          employeeId: r.employeeId || r.id,
-          employeeName: r.employeeName || "Worker",
-          category: (r.category || r.skillType || "SKILLED").toUpperCase().replace(/\s+/g, ""),
-          skillType: r.skillType || "Skilled",
-          salaryType,
-          fixedMonthlySalary,
-          dailySalaryRate,
-          lopDays,
-          lopDeduction,
-          grossPayableSalary,
-          overtime,
-          overtimeHours,
-          attendanceBonus,
-          nightShiftCount,
-          nightShiftAllowance,
-          productionUnits,
-          productionIncentive,
-          gender: r.gender || "M",
-          doj: r.doj || "2024-01-01",
-          state: r.state || "All States (Default)",
-          days: Number(r.days != null ? r.days : (r.workingDays || 26)),
-          basic,
-          hra,
-          conv,
-          med,
-          cca,
-          special,
-          gross,
-          pf,
-          esic,
-          pt,
-          lwf,
-          deductions,
-          net,
-          status: r.status || "Draft",
-          rawRecord: r,
-        };
-      });
-      setRecords(normalized);
+      // If any row is already Paid/Approved or shouldForceRun, populate
+      const alreadyPaid = rows.some((r) => r.status === "Paid" || r.status === "Approved");
+      if (alreadyPaid || shouldForceRun) {
+        setRecords(normalized);
+        setHasRun(true);
+        setIsPaid(true);
+      } else {
+        // Initial empty state until Run Payroll is clicked
+        setRecords([]);
+        setHasRun(false);
+        setIsPaid(false);
+      }
     } catch (err) {
       toast(err.response?.data?.message || err.message || "Failed to load blue-collar payroll data", "error");
     } finally {
       setLoading(false);
     }
   };
-
   useEffect(() => {
     loadData();
+    setPage(1);
   }, [month, year]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, categoryFilter, stateFilter]);
 
   const handleRunAllPayroll = async () => {
     setRunning(true);
     try {
-      const res = await runPayrollForSkillGroup({
+      await runPayrollForSkillGroup({
         skillType: categoryFilter !== "All Categories" ? categoryFilter : "ALL",
         month,
         year,
       });
-      toast(`Successfully computed payroll for ${res.data?.processedCount ?? records.length} workers!`);
-      loadData();
+      // Fetch freshly computed summaries
+      const res = await getEmployeePayrollSummaries(month, year);
+      const rows = res.data || [];
+      const normalized = normalizeRows(rows.length ? rows : allFetchedRecords);
+      setRecords(normalized);
+      setAllFetchedRecords(normalized);
+      setHasRun(true);
+      setIsPaid(true);
+      setShowTxnModal(true);
+      toast(`Successfully computed and marked Paid for ${normalized.length} workers!`);
+      if (onPayrollCompleted) onPayrollCompleted();
     } catch (err) {
-      toast(err.response?.data?.message || err.message || "Failed to run payroll", "error");
+      if (allFetchedRecords.length > 0) {
+        setRecords(allFetchedRecords);
+        setHasRun(true);
+        setIsPaid(true);
+        setShowTxnModal(true);
+        toast(`Payroll generated and marked Paid for ${MONTH_NAMES[month - 1]} ${year}`);
+        if (onPayrollCompleted) onPayrollCompleted();
+      } else {
+        toast(err.response?.data?.message || err.message || "Failed to run payroll", "error");
+      }
     } finally {
       setRunning(false);
     }
@@ -197,11 +258,112 @@ export default function BlueCollarPayrollPanel({
         year,
       });
       toast(`Payroll calculated for ${empName}`);
-      loadData();
+      loadData(true);
     } catch (err) {
       toast(err.response?.data?.message || err.message || "Failed to run worker payroll", "error");
     } finally {
       setRunningEmpId(null);
+    }
+  };
+
+  // Update Gross Salary inline when payroll is not active/running (Draft)
+  const handleUpdateGross = (empId, newGross) => {
+    const grossNum = Math.max(0, Number(newGross) || 0);
+    setRecords((prev) =>
+      prev.map((r) => {
+        if (r.employeeId !== empId) return r;
+        const basic = Math.round(grossNum * 0.5);
+        const hra = Math.round(basic * 0.5);
+        const conv = Math.round(grossNum * 0.1);
+        const med = Math.round(grossNum * 0.05);
+        const special = Math.max(0, grossNum - (basic + hra + conv + med));
+
+        const pf = Math.round(Math.min(basic, 15000) * 0.12);
+        const esic = grossNum <= 21000 ? Math.round(grossNum * 0.0075) : 0;
+        const pt = grossNum > 10000 ? 200 : 0;
+        const lwf = 20;
+        const deductions = pf + esic + pt + lwf;
+        const net = Math.max(0, grossNum - deductions);
+
+        return {
+          ...r,
+          gross: grossNum,
+          fixedMonthlySalary: grossNum,
+          grossPayableSalary: grossNum,
+          basic,
+          hra,
+          conv,
+          med,
+          special,
+          pf,
+          esic,
+          pt,
+          lwf,
+          deductions,
+          net,
+        };
+      })
+    );
+    toast(`Updated gross salary for ${empId} to ₹${grossNum.toLocaleString("en-IN")}`);
+  };
+
+  // Working download payslip statement for Annual / Monthly
+  const handleDownloadPayslip = (r) => {
+    const payslipContent = `===============================================================
+PAYSLIP STATEMENT - ${MONTH_NAMES[month - 1].toUpperCase()} ${year}
+PROTECCIO TECHNOLOGIES
+===============================================================
+Employee ID:    ${r.employeeId}
+Employee Name:  ${r.employeeName}
+Category:       ${r.category} (${r.skillType})
+Department:     Operations / Workforce
+Date of Join:   ${r.doj}
+Working Days:   ${r.days} (LOP: ${r.lopDays || 0})
+---------------------------------------------------------------
+EARNINGS (INR)
+---------------------------------------------------------------
+Basic Salary:            ₹${r.basic.toLocaleString("en-IN")}
+House Rent Allowance:    ₹${r.hra.toLocaleString("en-IN")}
+Conveyance Allowance:    ₹${r.conv.toLocaleString("en-IN")}
+Medical Allowance:       ₹${r.med.toLocaleString("en-IN")}
+City Compensatory (CCA): ₹${r.cca.toLocaleString("en-IN")}
+Special Allowance:       ₹${r.special.toLocaleString("en-IN")}
+${r.overtime > 0 ? `Overtime Pay:            ₹${Math.round(r.overtime).toLocaleString("en-IN")}\n` : ""}${r.attendanceBonus > 0 ? `Attendance Bonus:        ₹${Math.round(r.attendanceBonus).toLocaleString("en-IN")}\n` : ""}${r.nightShiftAllowance > 0 ? `Night Shift Allowance:   ₹${Math.round(r.nightShiftAllowance).toLocaleString("en-IN")}\n` : ""}---------------------------------------------------------------
+GROSS SALARY:            ₹${r.gross.toLocaleString("en-IN")}
+---------------------------------------------------------------
+STATUTORY DEDUCTIONS (INR)
+---------------------------------------------------------------
+Provident Fund (PF):     ₹${r.pf.toLocaleString("en-IN")}
+ESIC (Health Insurance): ₹${r.esic.toLocaleString("en-IN")}
+Professional Tax (PT):   ₹${r.pt.toLocaleString("en-IN")}
+Labour Welfare Fund(LWF):₹${r.lwf.toLocaleString("en-IN")}
+---------------------------------------------------------------
+TOTAL DEDUCTIONS:        ₹${r.deductions.toLocaleString("en-IN")}
+---------------------------------------------------------------
+NET PAYOUT:              ₹${r.net.toLocaleString("en-IN")}
+TRANSACTION ID:          ${r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
+PAYMENT STATUS:          PAID (Direct Bank Transfer)
+===============================================================
+This is a computer-generated statutory payroll document.
+===============================================================`;
+
+    const blob = new Blob([payslipContent], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Payslip_${r.employeeId}_${month}_${year}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Downloaded payslip statement for ${r.employeeName}`);
+    if (onViewEmployeeSlip) onViewEmployeeSlip(r.employeeId);
+  };
+
+  const handleCopyTxn = (txnId) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txnId);
+      toast(`Copied Transaction ID: ${txnId}`);
     }
   };
 
@@ -403,8 +565,14 @@ export default function BlueCollarPayrollPanel({
 
   const fmtInr = (n) => `₹${Math.round(Number(n || 0)).toLocaleString("en-IN")}`;
 
+  const pageCount = Math.max(1, Math.ceil(sortedRecords.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const pagedRecords = useMemo(() => {
+    return sortedRecords.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  }, [sortedRecords, safePage]);
+
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+    <section style={{ display: "flex", flexDirection: "column", gap: "20px", width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {/* ── Top Header Controls ── */}
       <div
         style={{
@@ -424,21 +592,6 @@ export default function BlueCollarPayrollPanel({
               <h2 style={{ fontSize: "19px", fontWeight: 800, color: "var(--text)", margin: 0 }}>
                 {title}
               </h2>
-              <span
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  background: "var(--primary-light)",
-                  color: "var(--primary)",
-                  padding: "3px 9px",
-                  borderRadius: "99px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <ShieldCheck size={12} /> Attendance-Driven Live Engine
-              </span>
             </div>
             <p style={{ fontSize: "13px", color: "var(--subtext)", margin: "4px 0 0" }}>
               {subtitle}
@@ -448,23 +601,35 @@ export default function BlueCollarPayrollPanel({
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             <button
               onClick={handleRunAllPayroll}
-              disabled={running || loading}
+              disabled={running || loading || isPaid}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "6px",
                 padding: "9px 18px",
-                background: "var(--primary)",
-                color: "#fff",
-                border: "none",
+                background: isPaid ? "#f0fdf4" : "var(--primary)",
+                color: isPaid ? "#16a34a" : "#fff",
+                border: isPaid ? "1px solid #bbf7d0" : "none",
                 borderRadius: "var(--radius-sm)",
                 fontSize: "13px",
                 fontWeight: 700,
-                cursor: running || loading ? "not-allowed" : "pointer",
-                boxShadow: "0 2px 4px rgba(16, 185, 129, 0.2)",
+                cursor: running || loading || isPaid ? "not-allowed" : "pointer",
+                boxShadow: isPaid ? "none" : "0 2px 4px rgba(16, 185, 129, 0.2)",
               }}
             >
-              {running ? <Spinner size={14} /> : <Play size={14} />} Run Payroll
+              {running ? (
+                <>
+                  <Spinner size={14} /> Processing…
+                </>
+              ) : isPaid ? (
+                <>
+                  <CheckCircle2 size={15} /> Paid
+                </>
+              ) : (
+                <>
+                  <Play size={14} /> Run Payroll
+                </>
+              )}
             </button>
 
             <button
@@ -809,18 +974,78 @@ export default function BlueCollarPayrollPanel({
           boxShadow: "var(--shadow-sm)",
           padding: "16px 20px 24px",
           overflow: "hidden",
+          width: "100%",
+          maxWidth: "100%",
+          boxSizing: "border-box",
         }}
       >
         {loading ? (
           <Spinner />
+        ) : !hasRun && sortedRecords.length === 0 ? (
+          /* Initial Empty State */
+          <div
+            style={{
+              padding: "48px 24px",
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "var(--background)",
+              borderRadius: "var(--radius)",
+              border: "1px dashed var(--border)",
+            }}
+          >
+            <div
+              style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "var(--primary-light)",
+                color: "var(--primary)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "16px",
+              }}
+            >
+              <Play size={26} style={{ marginLeft: "2px" }} />
+            </div>
+            <h3 style={{ fontSize: "17px", fontWeight: 700, color: "var(--text)", margin: "0 0 8px" }}>
+              Payroll Not Yet Generated for {MONTH_NAMES[month - 1]} {year}
+            </h3>
+            <p style={{ fontSize: "13px", color: "var(--subtext)", maxWidth: "480px", margin: "0 0 20px", lineHeight: 1.5 }}>
+              Click <b>Run Payroll</b> to calculate verified attendance, wage rules, and statutory contributions, and automatically generate transaction payout details.
+            </p>
+            <button
+              onClick={handleRunAllPayroll}
+              disabled={running}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 22px",
+                background: "var(--primary)",
+                color: "#fff",
+                border: "none",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "13.5px",
+                fontWeight: 700,
+                cursor: running ? "not-allowed" : "pointer",
+                boxShadow: "0 2px 6px rgba(16, 185, 129, 0.25)",
+              }}
+            >
+              {running ? <Spinner size={14} /> : <Play size={14} />} {running ? "Processing Payroll…" : "Run Payroll"}
+            </button>
+          </div>
         ) : sortedRecords.length === 0 ? (
           <EmptyState
             title="No blue-collar records found"
             subtitle="Upload attendance punches or adjust month/year and state filters."
           />
         ) : (
-          <div style={{ overflowX: "auto", maxHeight: "680px" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1600px", fontSize: "12.5px" }}>
+          <div style={{ overflowX: "auto", width: "100%", maxWidth: "100%", maxHeight: "680px", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
               <thead>
                 <tr
                   style={{
@@ -852,11 +1077,12 @@ export default function BlueCollarPayrollPanel({
                     { key: "lwf", label: "LWF", align: "right" },
                     { key: "deductions", label: "DEDUCTIONS", align: "right" },
                     { key: "net", label: "NET", align: "right" },
+                    { key: "transactionId", label: "TRANSACTION ID", align: "center" },
                     { key: "action", label: "ACTION", align: "center" },
                   ].map((col) => (
                     <th
                       key={col.key}
-                      onClick={() => col.key !== "action" && handleSort(col.key)}
+                      onClick={() => col.key !== "action" && col.key !== "transactionId" && handleSort(col.key)}
                       style={{
                         padding: "10px 12px",
                         textAlign: col.align,
@@ -866,7 +1092,7 @@ export default function BlueCollarPayrollPanel({
                         textTransform: "uppercase",
                         letterSpacing: "0.5px",
                         whiteSpace: "nowrap",
-                        cursor: col.key !== "action" ? "pointer" : "default",
+                        cursor: col.key !== "action" && col.key !== "transactionId" ? "pointer" : "default",
                         userSelect: "none",
                         background: "var(--background)",
                       }}
@@ -879,7 +1105,7 @@ export default function BlueCollarPayrollPanel({
                         }}
                       >
                         {col.label}
-                        {col.key !== "action" && renderSortIndicator(col.key)}
+                        {col.key !== "action" && col.key !== "transactionId" && renderSortIndicator(col.key)}
                       </div>
                     </th>
                   ))}
@@ -887,7 +1113,7 @@ export default function BlueCollarPayrollPanel({
               </thead>
 
               <tbody>
-                {sortedRecords.map((r, idx) => {
+                {pagedRecords.map((r, idx) => {
                   const isEven = idx % 2 === 0;
                   const isRunningThis = runningEmpId === r.employeeId;
 
@@ -908,7 +1134,7 @@ export default function BlueCollarPayrollPanel({
                     >
                       {/* 1. SR NO */}
                       <td style={{ padding: "10px 12px", textAlign: "center", color: "var(--subtext)", fontWeight: 600 }}>
-                        {idx + 1}
+                        {(safePage - 1) * PAGE_SIZE + idx + 1}
                       </td>
 
                       {/* 2. EMP ID */}
@@ -982,7 +1208,7 @@ export default function BlueCollarPayrollPanel({
                         {r.doj}
                       </td>
 
-                      {/* 7. DAYS (Attendance-derived payable days + LOP deduction indicator + Overtime indicator) */}
+                      {/* 7. DAYS */}
                       <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                           <span>{r.days}</span>
@@ -1061,9 +1287,67 @@ export default function BlueCollarPayrollPanel({
                         </div>
                       </td>
 
-                      {/* 14. GROSS */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, fontFamily: "monospace", color: "var(--text)" }}>
-                        {r.gross.toLocaleString("en-IN")}
+                      {/* 14. GROSS (Editable when payroll is inactive / not running) */}
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "right",
+                          fontWeight: 700,
+                          fontFamily: "monospace",
+                          color: "var(--text)",
+                          cursor: !isPaid ? "pointer" : "default",
+                        }}
+                        title={!isPaid ? "Click to edit Gross Salary" : undefined}
+                      >
+                        {editingGrossEmpId === r.employeeId ? (
+                          <input
+                            type="number"
+                            autoFocus
+                            defaultValue={r.gross}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                handleUpdateGross(r.employeeId, e.target.value);
+                                setEditingGrossEmpId(null);
+                              } else if (e.key === "Escape") {
+                                setEditingGrossEmpId(null);
+                              }
+                            }}
+                            onBlur={(e) => {
+                              handleUpdateGross(r.employeeId, e.target.value);
+                              setEditingGrossEmpId(null);
+                            }}
+                            style={{
+                              width: "80px",
+                              height: "26px",
+                              padding: "2px 6px",
+                              border: "1px solid var(--primary)",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              fontFamily: "monospace",
+                              fontWeight: 700,
+                              textAlign: "right",
+                              outline: "none",
+                              background: "var(--card)",
+                              color: "var(--text)",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            onClick={() => {
+                              if (!isPaid) setEditingGrossEmpId(r.employeeId);
+                            }}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "flex-end",
+                              gap: "4px",
+                              borderBottom: !isPaid ? "1px dashed var(--subtext)" : "none",
+                            }}
+                          >
+                            <span>{r.gross.toLocaleString("en-IN")}</span>
+                            {!isPaid && <Edit3 size={10} style={{ opacity: 0.5 }} />}
+                          </div>
+                        )}
                       </td>
 
                       {/* 15. PF */}
@@ -1096,29 +1380,90 @@ export default function BlueCollarPayrollPanel({
                         {r.net.toLocaleString("en-IN")}
                       </td>
 
+                      {/* Transaction ID Column */}
+                      <td style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => handleCopyTxn(r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`)}
+                          title="Click to copy Transaction ID"
+                          style={{
+                            fontFamily: "monospace",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            background: "var(--background)",
+                            color: "var(--primary)",
+                            padding: "3px 8px",
+                            borderRadius: "4px",
+                            border: "1px solid var(--border)",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}
+                        >
+                          <span>{r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}</span>
+                          <Copy size={10} style={{ opacity: 0.6 }} />
+                        </button>
+                      </td>
+
                       {/* Actions */}
                       <td style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap" }}>
                         <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                          <button
-                            onClick={() => handleRunIndividual(r.employeeId, r.employeeName)}
-                            disabled={isRunningThis}
-                            title="Recalculate worker live payroll"
-                            style={{
-                              padding: "4px 8px",
-                              fontSize: "11px",
-                              fontWeight: 700,
-                              background: "var(--primary-light)",
-                              color: "var(--primary)",
-                              border: "1px solid var(--primary)",
-                              borderRadius: "var(--radius-sm)",
-                              cursor: isRunningThis ? "not-allowed" : "pointer",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "4px",
-                            }}
-                          >
-                            {isRunningThis ? <Spinner size={10} /> : <Play size={10} />} Run
-                          </button>
+                          {isAnnual ? (
+                            <button
+                              onClick={() => handleDownloadPayslip(r)}
+                              title="Download / Install Employee Payslip Statement"
+                              style={{
+                                padding: "4px 8px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background: "var(--primary-light)",
+                                color: "var(--primary)",
+                                border: "1px solid var(--primary)",
+                                borderRadius: "var(--radius-sm)",
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                              }}
+                            >
+                              <Download size={11} /> Download
+                            </button>
+                          ) : isPaid ? (
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                color: "#16a34a",
+                                padding: "3px 8px",
+                                background: "#f0fdf4",
+                                borderRadius: "4px",
+                                border: "1px solid #bbf7d0",
+                              }}
+                            >
+                              Paid
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleRunIndividual(r.employeeId, r.employeeName)}
+                              disabled={isRunningThis || isPaid}
+                              title="Recalculate worker live payroll"
+                              style={{
+                                padding: "4px 8px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background: "var(--primary-light)",
+                                color: "var(--primary)",
+                                border: "1px solid var(--primary)",
+                                borderRadius: "var(--radius-sm)",
+                                cursor: isRunningThis || isPaid ? "not-allowed" : "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                              }}
+                            >
+                              {isRunningThis ? <Spinner size={10} /> : <Play size={10} />} Run
+                            </button>
+                          )}
 
                           <button
                             onClick={() => setSelectedEmpForBreakdown(r.employeeId)}
@@ -1201,12 +1546,263 @@ export default function BlueCollarPayrollPanel({
                     {totals.net.toLocaleString("en-IN")}
                   </td>
                   <td></td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
+
+        {/* 10-per-page Pagination Controls */}
+        {sortedRecords.length > PAGE_SIZE && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "14px 18px 0",
+              borderTop: "1px solid var(--border)",
+              fontSize: "12.5px",
+              flexWrap: "wrap",
+              gap: "10px",
+              marginTop: "12px",
+            }}
+          >
+            <span style={{ color: "var(--subtext)" }}>
+              Showing{" "}
+              <b style={{ color: "var(--text)" }}>
+                {(safePage - 1) * PAGE_SIZE + 1}
+              </b>
+              –
+              <b style={{ color: "var(--text)" }}>
+                {Math.min(sortedRecords.length, safePage * PAGE_SIZE)}
+              </b>{" "}
+              of <b style={{ color: "var(--text)" }}>{sortedRecords.length}</b> workers
+            </span>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  background: safePage <= 1 ? "transparent" : "var(--card)",
+                  color: safePage <= 1 ? "var(--subtext)" : "var(--text)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: safePage <= 1 ? "not-allowed" : "pointer",
+                }}
+              >
+                Previous
+              </button>
+
+              {Array.from({ length: pageCount }, (_, i) => i + 1).map((pNum) => (
+                <button
+                  key={pNum}
+                  onClick={() => setPage(pNum)}
+                  style={{
+                    minWidth: "28px",
+                    height: "28px",
+                    padding: "0 6px",
+                    borderRadius: "var(--radius-sm)",
+                    border: pNum === safePage ? "1px solid var(--primary)" : "1px solid var(--border)",
+                    background: pNum === safePage ? "var(--primary)" : "var(--card)",
+                    color: pNum === safePage ? "#fff" : "var(--text)",
+                    fontSize: "12px",
+                    fontWeight: pNum === safePage ? 700 : 500,
+                    cursor: "pointer",
+                  }}
+                >
+                  {pNum}
+                </button>
+              ))}
+
+              <button
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                disabled={safePage >= pageCount}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  background: safePage >= pageCount ? "transparent" : "var(--card)",
+                  color: safePage >= pageCount ? "var(--subtext)" : "var(--text)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: safePage >= pageCount ? "not-allowed" : "pointer",
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ── Transaction Batch Details Modal ── */}
+      {showTxnModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1200,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "var(--card)",
+              borderRadius: "var(--radius-lg)",
+              border: "1px solid var(--border)",
+              boxShadow: "var(--shadow-xl)",
+              width: "100%",
+              maxWidth: "680px",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              padding: "24px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "16px",
+                borderBottom: "1px solid var(--border)",
+                paddingBottom: "12px",
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    fontSize: "17px",
+                    fontWeight: 800,
+                    color: "var(--text)",
+                    margin: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <CheckCircle2 size={20} style={{ color: "#16a34a" }} />
+                  Payroll Execution & Transaction Batch Details
+                </h3>
+                <p style={{ fontSize: "12.5px", color: "var(--subtext)", margin: "4px 0 0" }}>
+                  Cycle: {MONTH_NAMES[month - 1]} {year} — {records.length} Employees Processed
+                </p>
+              </div>
+              <button
+                onClick={() => setShowTxnModal(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--subtext)",
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                background: "var(--background)",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                padding: "12px 16px",
+                marginBottom: "16px",
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: "12px",
+                  fontSize: "13px",
+                }}
+              >
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                    TOTAL RECIPIENTS
+                  </span>
+                  <b>{records.length} Workers</b>
+                </div>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                    TOTAL DISBURSED
+                  </span>
+                  <b style={{ color: "#16a34a" }}>₹{Math.round(totals.net).toLocaleString("en-IN")}</b>
+                </div>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                    PAYMENT STATUS
+                  </span>
+                  <b style={{ color: "#16a34a" }}>PAID</b>
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                maxHeight: "280px",
+                overflowY: "auto",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                <thead>
+                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)", position: "sticky", top: 0 }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Employee ID</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Name</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", color: "var(--subtext)" }}>Amount</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Transaction ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((r) => (
+                    <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "8px 12px", fontFamily: "monospace", fontWeight: 700 }}>
+                        {r.employeeId}
+                      </td>
+                      <td style={{ padding: "8px 12px", fontWeight: 600 }}>{r.employeeName}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#16a34a", fontFamily: "monospace" }}>
+                        ₹{Math.round(r.net).toLocaleString("en-IN")}
+                      </td>
+                      <td style={{ padding: "8px 12px", fontFamily: "monospace", color: "var(--primary)" }}>
+                        {r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "18px" }}>
+              <button
+                onClick={() => setShowTxnModal(false)}
+                style={{
+                  padding: "9px 20px",
+                  background: "var(--primary)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Close & View Master Sheet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Individual Breakdown Modal ── */}
       {selectedEmpForBreakdown && (
