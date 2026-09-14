@@ -8,7 +8,7 @@
  * (the full payload captured when the employee was registered).
  */
 
-import { useState, useEffect, useMemo, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, useRef, createContext, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Pencil, Save, X, Plus, Trash2,
@@ -46,8 +46,21 @@ const SKILL_TYPES = ["Skilled", "Semi Skilled", "Unskilled"];
 const GENDERS = ["MALE", "FEMALE", "OTHER", "PREFER_NOT_TO_SAY"];
 const MARITAL = ["SINGLE", "MARRIED", "DIVORCED", "WIDOWED"];
 const STATUSES = ["ACTIVE", "ON_NOTICE", "RESIGNED", "TERMINATED", "RETIRED", "INACTIVE", "ON_LONG_LEAVE"];
+const STATUS_MAP = {
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+  TERMINATED: "Terminated",
+  ON_NOTICE: "On Leave",
+  ON_LONG_LEAVE: "On Leave",
+  RESIGNED: "Inactive",
+  RETIRED: "Inactive",
+};
+const DISPLAY_STATUSES = ["Active", "On Leave", "Inactive", "Terminated"];
 const LOC_TYPES = ["OFFICE", "REMOTE", "HYBRID", "CLIENT_SITE"];
 const REGIMES = ["OLD", "NEW"];
+const WAGE_RATES = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "ANNUAL"];
+const CONTRACTORS = ["M/s Sharma Constructions", "Green Leaf Facility Services", "Bright Logistics", "KK Electrical Works", "Sai Textiles India"];
+const EARNINGS = ["BASIC", "HRA", "SPECIAL_ALLOWANCE", "TRANSPORT_ALLOWANCE", "MEDICAL_ALLOWANCE", "LEAVE_TRAVEL_ALLOWANCE", "PERFORMANCE_BONUS", "INCENTIVE", "OVERTIME", "OTHER"];
 
 const WZ_DEFAULTS = {
   employeeCode: "", firstName: "", middleName: "", lastName: "", dateOfBirth: "",
@@ -73,6 +86,8 @@ const WZ_DEFAULTS = {
     bankName: "", accountNumber: "", ifscCode: "", bankBranch: "",
     accountHolderName: "", accountType: "", salaryPaymentMode: "", upiId: "",
   },
+  payRules: { wageRate: "", salaryAdvance: false, productionTarget: "", contractor: "", earnings: [] },
+  annualSalary: "", monthlyGross: "",
   family: [], education: [], skills: [], certifications: [], languages: [], experience: [],
   consents: [], role: "EMPLOYEE",
 };
@@ -108,11 +123,17 @@ function buildLocal(wizardData, emp) {
   merged.personalEmail = merged.personalEmail || emp.email || "";
   merged.personalMobile = merged.personalMobile || emp.phone || "";
   merged.country = merged.country || emp.country || "";
+  merged.annualSalary = merged.annualSalary || emp.annualSalary || emp.salary || merged.statutory.annualSalary || "";
+  if (merged.annualSalary !== "" && merged.annualSalary != null) {
+    merged.statutory.annualSalary = Number(merged.annualSalary);
+    merged.monthlyGross = Math.round(Number(merged.annualSalary) / 12) || "";
+  }
   merged.job.employmentType = merged.job.employmentType || emp.employmentType || "";
   merged.job.skillType = merged.job.skillType || emp.skillType || "";
   merged.job.dateOfJoining = merged.job.dateOfJoining || emp.joinDate || "";
   merged.job.designationTitle = merged.job.designationTitle || "";
   merged.job.departmentTitle = merged.job.departmentTitle || "";
+  merged.job.status = (merged.job.status && STATUS_MAP[merged.job.status]) || merged.job.status || emp.status || "";
   return merged;
 }
 
@@ -158,6 +179,92 @@ function SelectInput({ label, value, onChange, options }) {
 }
 
 const EditCtx = createContext(false);
+
+const toggleBase = { display: "inline-block", width: "42px", height: "23px", borderRadius: "999px", background: "#e7edf2", border: "1px solid var(--border)", position: "relative", transition: "all .15s", padding: 0, flexShrink: 0 };
+const toggleOn = { background: "var(--primary)", borderColor: "var(--primary)" };
+const toggleKnob = { position: "absolute", top: "2px", left: "2px", width: "17px", height: "17px", borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(15,23,42,.3)", transition: "transform .18s" };
+
+function Toggle({ label, value, onChange }) {
+  const editing = useContext(EditCtx);
+  const isOn = !!value;
+  return (
+    <label className="ep-field">
+      <span>{label}</span>
+      <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <button
+          type="button"
+          disabled={!editing}
+          aria-checked={isOn}
+          role="switch"
+          onClick={() => onChange(!isOn)}
+          style={{ ...toggleBase, ...(isOn ? toggleOn : {}), cursor: editing ? "pointer" : "not-allowed", opacity: editing ? 1 : 0.6 }}
+        >
+          <span style={{ ...toggleKnob, transform: isOn ? "translateX(19px)" : "none" }} />
+        </button>
+        <span style={{ fontSize: "12.5px", fontWeight: 600, color: "var(--label)" }}>{isOn ? "Enabled" : "Disabled"}</span>
+      </span>
+    </label>
+  );
+}
+
+const fmtEarning = (o) => String(o).replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+function MultiSelect({ label, value, onChange, options }) {
+  const editing = useContext(EditCtx);
+  const vals = Array.isArray(value) ? value : [];
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  if (!editing) {
+    const text = vals.map(fmtEarning).join(", ");
+    return (
+      <label className="ep-field">
+        <span>{label}</span>
+        <span style={text ? {} : { color: "var(--subtext)" }}>{text || "-"}</span>
+      </label>
+    );
+  }
+  const toggle = (o) => onChange(vals.includes(o) ? vals.filter((x) => x !== o) : [...vals, o]);
+  return (
+    <div className="ep-field" ref={ref} style={{ position: "relative" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        {label}
+        {vals.length > 0 && <em style={{ fontStyle: "normal", fontSize: "11px", color: "var(--primary)", fontWeight: 700 }}>{vals.length} selected</em>}
+      </span>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", width: "100%", padding: "9px 12px", border: `1px solid ${open ? "var(--primary)" : "var(--border)"}`, borderRadius: "10px", background: "#fff", fontSize: "13px", color: "var(--text)", cursor: "pointer", textAlign: "left" }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: vals.length ? "var(--text)" : "var(--subtext)" }}>
+          {vals.length ? vals.map(fmtEarning).join(", ") : "None selected"}
+        </span>
+        <span style={{ fontSize: "10px", color: "var(--subtext)", flexShrink: 0 }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60, background: "#fff", border: "1px solid var(--border)", borderRadius: "12px", boxShadow: "0 12px 32px rgba(15,23,42,.14)", maxHeight: "240px", overflowY: "auto", padding: "6px" }}>
+          {options.map((o) => {
+            const sel = vals.includes(o);
+            return (
+              <label
+                key={o}
+                onClick={(e) => { e.preventDefault(); toggle(o); }}
+                style={{ display: "flex", alignItems: "center", gap: "9px", padding: "8px 10px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", color: sel ? "var(--primary)" : "var(--text)", fontWeight: sel ? 700 : 500 }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "17px", height: "17px", border: `1px solid ${sel ? "var(--primary)" : "#c9d3dd"}`, borderRadius: "5px", background: sel ? "var(--primary)" : "#fff", color: "#fff", flexShrink: 0, fontSize: "11px" }}>{sel ? "✓" : ""}</span>
+                <span>{fmtEarning(o)}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function InfoRow({ icon: Icon, label, value }) {
   return (
@@ -245,6 +352,8 @@ export default function EmployeeProfile() {
       const flat = {};
       if (local.job.designationTitle && local.job.designationTitle !== (employee.designation || "")) flat.designation = local.job.designationTitle;
       if (local.job.departmentTitle && local.job.departmentTitle !== (employee.department || "")) flat.department = local.job.departmentTitle;
+      if (local.job.status && local.job.status !== (employee.status || "")) flat.status = local.job.status;
+      if (local.annualSalary !== "" && local.annualSalary != null) flat.annualSalary = Math.round(Number(local.annualSalary));
       const payload = { ...flat, wizardData: local };
       await updateEmployee(id, payload);
       const res = await getEmployee(id);
@@ -401,6 +510,7 @@ export default function EmployeeProfile() {
                       <Input label="State" value={local[addrKey].stateCode} onChange={(v) => setL(`${addrKey}.stateCode`, v)} />
                       <Input label="Pincode" value={local[addrKey].pincode} onChange={(v) => setL(`${addrKey}.pincode`, v)} />
                       <Input label="Country code" value={local[addrKey].countryCode} onChange={(v) => setL(`${addrKey}.countryCode`, v)} />
+                      <Input label="Proof type" value={local[addrKey].proofType} onChange={(v) => setL(`${addrKey}.proofType`, v)} />
                     </Grid>
                   </div>
                 ))}
@@ -419,7 +529,7 @@ export default function EmployeeProfile() {
                 <Input label="Date of joining" type="date" value={local.job.dateOfJoining || undefined} onChange={(v) => setL("job.dateOfJoining", v)} />
                 <Input label="Confirmation date" type="date" value={local.job.confirmationDate || undefined} onChange={(v) => setL("job.confirmationDate", v)} />
                 <Input label="Probation (months)" type="number" value={local.job.probationMonths || ""} onChange={(v) => setL("job.probationMonths", v === "" ? "" : Number(v))} />
-                <SelectInput label="Status" value={local.job.status} onChange={(v) => setL("job.status", v)} options={STATUSES} />
+                <SelectInput label="Status" value={local.job.status} onChange={(v) => setL("job.status", v)} options={DISPLAY_STATUSES} />
                 <SelectInput label="Location type" value={local.job.workLocationType} onChange={(v) => setL("job.workLocationType", v)} options={LOC_TYPES} />
                 <Input label="Sub-department" value={local.job.subDepartment} onChange={(v) => setL("job.subDepartment", v)} />
                 <Input label="Business unit" value={local.job.businessUnit} onChange={(v) => setL("job.businessUnit", v)} />
@@ -451,6 +561,12 @@ export default function EmployeeProfile() {
                   <Input label="Tax declaration" value={local.statutory.taxDeclarationStatus} onChange={(v) => setL("statutory.taxDeclarationStatus", v)} />
                 </Grid>
               </Section>
+              <Section title="Compensation">
+                <Grid editing={editing}>
+                  <Input label="Yearly salary package (₹)" type="number" value={local.annualSalary || ""} onChange={(v) => { const n = v === "" ? "" : Math.round(Number(v)); setL("annualSalary", n); setL("statutory.annualSalary", n === "" ? "" : Number(n)); setL("monthlyGross", n === "" ? "" : Math.round(Number(n) / 12)); }} />
+                  <Input label="Monthly gross (₹)" type="number" value={local.monthlyGross || ""} onChange={(v) => { const n = v === "" ? "" : Math.round(Number(v)); setL("monthlyGross", n); const y = n === "" ? "" : n * 12; setL("annualSalary", y); setL("statutory.annualSalary", y === "" ? "" : y); }} />
+                </Grid>
+              </Section>
               <Section title="Bank & payment">
                 <Grid editing={editing}>
                   <Input label="Bank name" value={local.bank.bankName} onChange={(v) => setL("bank.bankName", v)} />
@@ -461,12 +577,15 @@ export default function EmployeeProfile() {
                   <Input label="Account type" value={local.bank.accountType} onChange={(v) => setL("bank.accountType", v)} />
                   <Input label="Salary payment mode" value={local.bank.salaryPaymentMode} onChange={(v) => setL("bank.salaryPaymentMode", v)} />
                   <Input label="UPI ID" value={local.bank.upiId} onChange={(v) => setL("bank.upiId", v)} />
-                  {!editing && (
-                    <>
-                      <InfoRow icon={WalletCards} label="Yearly salary package" value={`₹${(employee.salary ?? 0).toLocaleString("en-IN")}`} />
-                      <InfoRow icon={WalletCards} label="Monthly gross" value={`₹${Math.round((employee.salary ?? 0) / 12).toLocaleString("en-IN")}`} />
-                    </>
-                  )}
+                </Grid>
+              </Section>
+              <Section title="Pay rules">
+                <Grid editing={editing}>
+                  <SelectInput label="Wage rate" value={local.payRules.wageRate} onChange={(v) => setL("payRules.wageRate", v)} options={WAGE_RATES} />
+                  <Toggle label="Salary advance" value={local.payRules.salaryAdvance} onChange={(v) => setL("payRules.salaryAdvance", v)} />
+                  <Input label="Production target" type="number" value={local.payRules.productionTarget || ""} onChange={(v) => setL("payRules.productionTarget", v === "" ? "" : Number(v))} />
+                  <SelectInput label="Contractors" value={local.payRules.contractor} onChange={(v) => setL("payRules.contractor", v)} options={CONTRACTORS} />
+                  <MultiSelect label="Earnings" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={EARNINGS} />
                 </Grid>
               </Section>
             </>

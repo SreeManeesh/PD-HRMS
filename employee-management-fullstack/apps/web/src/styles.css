@@ -595,3 +595,30 @@ button:disabled { opacity: 0.55; cursor: not-allowed; transform: none !important
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 860px) { .doc-grid { grid-template-columns: 1fr 1fr; } }
+/* Pay rules: salary-advance toggle + earnings multi-select dropdown */
+.toggle-field { display: flex; flex-direction: column; gap: 8px; }
+.toggle-field > span { font-size: 12.5px; font-weight: 600; color: var(--label); display: flex; align-items: center; gap: 8px; }
+.toggle-field > span em { font-style: normal; font-size: 11px; color: var(--subtext); }
+.toggle-field .toggle { width: 44px; height: 24px; border-radius: 999px; border: 1px solid var(--border); background: #e7edf2; cursor: pointer; position: relative; transition: all .15s; padding: 0; }
+.toggle-field .toggle span { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.25); transition: transform .18s; }
+.toggle-field .toggle.on { background: var(--primary); border-color: var(--primary); }
+.toggle-field .toggle.on span { transform: translateX(20px); }
+.toggle-field.toggle-disabled { opacity: .6; }
+.toggle-field.toggle-disabled .toggle { cursor: not-allowed; }
+.toggle-field .toggle-offnote { font-style: normal; font-size: 11px; color: var(--subtext); font-weight: 500; }
+.ms-dropdown { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.ms-dropdown .ms-label { font-size: 12.5px; font-weight: 600; color: var(--label); display: flex; align-items: center; gap: 8px; }
+.ms-dropdown .ms-label .ms-count { font-style: normal; font-size: 11px; color: var(--primary); font-weight: 700; }
+.ms-dropdown .ms-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 9px 12px; border: 1px solid #dfe7ef; border-radius: 10px; background: #fff; font-size: 13px; color: var(--text); cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.ms-dropdown .ms-trigger:hover { border-color: #c3d0de; }
+.ms-dropdown.ms-open .ms-trigger { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(15,118,110,0.14); }
+.ms-dropdown .ms-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-dropdown .ms-value.ms-placeholder { color: #9db1c0; }
+.ms-dropdown .ms-caret { font-size: 11px; color: var(--subtext); flex-shrink: 0; }
+.ms-dropdown .ms-panel { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; background: #fff; border: 1px solid #dfe7ef; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,.14); max-height: 260px; overflow-y: auto; padding: 6px; }
+.ms-dropdown .ms-option { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background .12s; font-size: 13px; color: var(--text); }
+.ms-dropdown .ms-option:hover { background: #f4f7fa; }
+.ms-dropdown .ms-checkbox { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border: 1px solid #c9d3dd; border-radius: 5px; background: #fff; flex-shrink: 0; color: #fff; }
+.ms-dropdown .ms-option-checked .ms-checkbox { background: var(--primary); border-color: var(--primary); }
+.ms-dropdown .ms-option-check { margin-left: auto; color: var(--primary); width: 15px; height: 15px; }
+.ms-dropdown .ms-option-checked { color: var(--primary); font-weight: 700; }

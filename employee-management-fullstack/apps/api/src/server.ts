@@ -224,6 +224,7 @@ app.post('/api/employees', auth, async (req,res)=>{
   try {
     const employee = await withTx(async client=>{
       const d = parsed.data;
+      (d as any).payRules = (req.body as any)?.payRules ?? null;
       const dup=await client.query(`
         SELECT
           (employee_code = $1) AS clashes_code,
