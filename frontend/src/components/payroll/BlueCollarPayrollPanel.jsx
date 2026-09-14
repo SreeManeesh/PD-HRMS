@@ -91,6 +91,33 @@ export default function BlueCollarPayrollPanel({
         const lopDeduction = Number(r.lopDeduction != null ? r.lopDeduction : (r.leaveDeduction || (salaryType === "Monthly" ? lopDays * dailySalaryRate : 0)));
         const grossPayableSalary = Number(r.grossPayableSalary || (salaryType === "Monthly" ? Math.max(fixedMonthlySalary - lopDeduction, 0) : gross));
 
+        const overtime = Number(r.overtime || r.earnings?.overtime || 0);
+        const overtimeHours = Number(r.overtimeHours || r.rawRecord?.summary?.overtimeHours || (overtime > 0 ? Math.round(overtime / ((dailySalaryRate / 8) * 1.5)) : 0));
+        const attendanceBonus = Number(
+          r.attendanceBonus ||
+          r.earnings?.attendanceBonus ||
+          r.earnings?.attendance_bonus ||
+          r.earnings?.ATT_BONUS ||
+          r.earnings?.performanceBonus ||
+          0
+        );
+        const nightShiftCount = Number(r.nightShiftCount || r.rawRecord?.summary?.nightShiftCount || 0);
+        const nightShiftAllowance = Number(
+          r.nightShiftAllowance ||
+          r.earnings?.nightShiftAllowance ||
+          r.earnings?.NIGHT_ALLOW ||
+          r.earnings?.night_shift_allowance ||
+          0
+        );
+        const productionUnits = Number(r.productionUnits || r.rawRecord?.summary?.productionUnits || 0);
+        const productionIncentive = Number(
+          r.productionIncentive ||
+          r.earnings?.productionIncentive ||
+          r.earnings?.PROD_INC ||
+          r.earnings?.production_incentive ||
+          0
+        );
+
         return {
           srNo: index + 1,
           id: r.id || r.employeeId,
@@ -104,6 +131,13 @@ export default function BlueCollarPayrollPanel({
           lopDays,
           lopDeduction,
           grossPayableSalary,
+          overtime,
+          overtimeHours,
+          attendanceBonus,
+          nightShiftCount,
+          nightShiftAllowance,
+          productionUnits,
+          productionIncentive,
           gender: r.gender || "M",
           doj: r.doj || "2024-01-01",
           state: r.state || "All States (Default)",
@@ -948,21 +982,35 @@ export default function BlueCollarPayrollPanel({
                         {r.doj}
                       </td>
 
-                      {/* 7. DAYS (Attendance-derived payable days + LOP deduction indicator) */}
+                      {/* 7. DAYS (Attendance-derived payable days + LOP deduction indicator + Overtime indicator) */}
                       <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
-                        {r.lopDays > 0 ? (
-                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                            <span>{r.days}</span>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                          <span>{r.days}</span>
+                          {r.lopDays > 0 && (
                             <span
                               style={{ fontSize: "10px", color: "#dc2626", fontWeight: 700, whiteSpace: "nowrap" }}
                               title={`${r.lopDays} days LOP (Deduction: ₹${Math.round(r.lopDeduction).toLocaleString("en-IN")})`}
                             >
                               {r.lopDays} LOP (−₹{Math.round(r.lopDeduction).toLocaleString("en-IN")})
                             </span>
-                          </div>
-                        ) : (
-                          r.days
-                        )}
+                          )}
+                          {r.overtimeHours > 0 && (
+                            <span
+                              style={{ fontSize: "10px", color: "#ea580c", fontWeight: 700, whiteSpace: "nowrap" }}
+                              title={`${r.overtimeHours} hrs Overtime (+₹${Math.round(r.overtime).toLocaleString("en-IN")})`}
+                            >
+                              +{r.overtimeHours}h OT (+₹{Math.round(r.overtime).toLocaleString("en-IN")})
+                            </span>
+                          )}
+                          {r.nightShiftCount > 0 && (
+                            <span
+                              style={{ fontSize: "10px", color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap" }}
+                              title={`${r.nightShiftCount} Night Shifts (+₹${Math.round(r.nightShiftAllowance).toLocaleString("en-IN")})`}
+                            >
+                              +{r.nightShiftCount} Nights (+₹{Math.round(r.nightShiftAllowance).toLocaleString("en-IN")})
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* 8. BASIC */}
@@ -992,7 +1040,25 @@ export default function BlueCollarPayrollPanel({
 
                       {/* 13. SPECIAL */}
                       <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        {r.special.toLocaleString("en-IN")}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                          <span>{r.special.toLocaleString("en-IN")}</span>
+                          {r.attendanceBonus > 0 && (
+                            <span
+                              style={{ fontSize: "10px", color: "#059669", fontWeight: 700, whiteSpace: "nowrap" }}
+                              title={`Attendance Bonus (+₹${Math.round(r.attendanceBonus).toLocaleString("en-IN")})`}
+                            >
+                              +₹{Math.round(r.attendanceBonus).toLocaleString("en-IN")} Bonus
+                            </span>
+                          )}
+                          {r.productionUnits > 0 && (
+                            <span
+                              style={{ fontSize: "10px", color: "#2563eb", fontWeight: 700, whiteSpace: "nowrap" }}
+                              title={`Production Incentive: ${r.productionUnits} units (+₹${Math.round(r.productionIncentive).toLocaleString("en-IN")})`}
+                            >
+                              +{r.productionUnits} Units (+₹{Math.round(r.productionIncentive).toLocaleString("en-IN")})
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* 14. GROSS */}

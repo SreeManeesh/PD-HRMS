@@ -159,12 +159,21 @@ export function reconcile(
 
     let status: string;
 
-    // Check night shift flag from punch status or punch hours
-    const isNightShift =
-      punch !== undefined &&
-      (punch.status === "Night Shift" ||
-        (punch.punchIn !== null && (punch.punchIn.getUTCHours() >= 19 || punch.punchIn.getUTCHours() < 6)) ||
-        (punch.punchIn !== null && punch.punchOut !== null && punch.punchOut.getUTCHours() < punch.punchIn.getUTCHours()));
+    // Check night shift flag from punch status or punch hours (in IST 20:00 to 06:00)
+    let isNightShift = false;
+    if (punch !== undefined) {
+      if (punch.status === "Night Shift") {
+        isNightShift = true;
+      } else if (punch.punchIn !== null) {
+        const istMinutes = (punch.punchIn.getUTCHours() * 60 + punch.punchIn.getUTCMinutes() + 330) % 1440;
+        const istHour = istMinutes / 60;
+        if (istHour >= 20 || istHour < 6) {
+          isNightShift = true;
+        } else if (punch.punchOut !== null && punch.punchOut.getTime() < punch.punchIn.getTime()) {
+          isNightShift = true;
+        }
+      }
+    }
     if (isNightShift) {
       nightShiftCount += 1;
     }
@@ -219,15 +228,23 @@ export function reconcile(
           presentDays += 1;
           if (punch.status === "Late") lateDays += 1;
 
-          // Overtime minutes past scheduled shift end
+          // Overtime minutes past scheduled shift end or working duration beyond shift
           if (shift && punch.punchOut) {
-            const outMin = punch.punchOut.getUTCHours() * 60 + punch.punchOut.getUTCMinutes();
-            if (outMin > shift.endMinutes) {
-              const otMins = outMin - shift.endMinutes;
-              if (otMins >= minOtThresh) {
-                if (isNightShift) nightOtMinutes += otMins;
-                else normalOtMinutes += otMins;
+            let otMins = 0;
+            if (punch.punchIn && punch.punchOut) {
+              const workedMins = Math.max((punch.punchOut.getTime() - punch.punchIn.getTime()) / 60000, 0);
+              if (workedMins > shiftMinutes) {
+                otMins = workedMins - shiftMinutes;
               }
+            } else if (!punch.punchIn && punch.punchOut && !isNightShift) {
+              const outMin = punch.punchOut.getUTCHours() * 60 + punch.punchOut.getUTCMinutes();
+              if (outMin > shift.endMinutes) {
+                otMins = outMin - shift.endMinutes;
+              }
+            }
+            if (otMins >= minOtThresh) {
+              if (isNightShift) nightOtMinutes += otMins;
+              else normalOtMinutes += otMins;
             }
           }
         } else {

@@ -37,6 +37,11 @@ const STORED_SYNONYMS: Record<string, string[]> = {
   performanceBonus: ["performance_bonus", "attendance_allowance"],
   otherAllowances: ["other", "other_allowances", "special_allowance", "daily_allowance", "uniform_allowance"],
   overtime: ["overtime", "ot"],
+  attendanceBonus: ["attendance_bonus", "att_bonus"],
+  nightShiftAllowance: ["night_shift_allowance", "night_allow", "night_allowance"],
+  productionIncentive: ["production_incentive", "prod_inc"],
+  foodAllowance: ["food_allowance", "food_allow", "canteen_allowance"],
+  transportAllowance: ["transport_allowance", "transport_allow"],
   providentFund: ["provident_fund", "epf_employee", "pf"],
   professionalTax: ["professional_tax", "pt"],
   incomeTax: ["income_tax", "tds"],
@@ -865,11 +870,13 @@ function blueprintComponentAmounts(
     return visible.find((c) => cands.has(normalizeCompId(c.id)));
   };
 
+  const hasCustomStructure = !!structure.id && (toNumber(structure.basicSalary) > 0 || toNumber(structure.hra) > 0);
+
   for (const key of Object.keys(fullEarnings)) {
     const comp = componentForStoredKey(key);
     if (comp) {
       const v = computed.results?.[comp.id.toLowerCase()]?.final;
-      if (v !== undefined) fullEarnings[key] = v;
+      if (v !== undefined && !hasCustomStructure) fullEarnings[key] = v;
       componentMeta.set(key, { id: comp.id, label: comp.label, kind: comp.kind, isPercentage: comp.logic?.type === "percentage", nestId: comp.nestId });
     }
   }
@@ -878,7 +885,7 @@ function blueprintComponentAmounts(
     const comp = componentForStoredKey(key);
     if (comp) {
       const v = computed.results?.[comp.id.toLowerCase()]?.final;
-      if (v !== undefined) fullDeductions[key] = v;
+      if (v !== undefined && !hasCustomStructure) fullDeductions[key] = v;
       componentMeta.set(key, { id: comp.id, label: comp.label, kind: comp.kind, isPercentage: comp.logic?.type === "percentage", nestId: comp.nestId });
     }
   }
@@ -889,17 +896,19 @@ function blueprintComponentAmounts(
   handledIds.add("overtime");
   handledIds.add("ot");
 
-  for (const c of visible) {
-    const cid = c.id.toLowerCase();
-    if (handledIds.has(cid)) continue;
-    const finalVal = computed.results?.[cid]?.final ?? 0;
-    const isPct = c.logic?.type === "percentage";
-    if (c.kind === "earning" || c.kind === "reimbursement") {
-      fullEarnings[c.id] = finalVal;
-      componentMeta.set(c.id, { id: c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
-    } else if (c.kind === "deduction") {
-      fullDeductions[c.id] = finalVal;
-      componentMeta.set(c.id, { id: c.label ? c.id : c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
+  if (!hasCustomStructure) {
+    for (const c of visible) {
+      const cid = c.id.toLowerCase();
+      if (handledIds.has(cid)) continue;
+      const finalVal = computed.results?.[cid]?.final ?? 0;
+      const isPct = c.logic?.type === "percentage";
+      if (c.kind === "earning" || c.kind === "reimbursement") {
+        fullEarnings[c.id] = finalVal;
+        componentMeta.set(c.id, { id: c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
+      } else if (c.kind === "deduction") {
+        fullDeductions[c.id] = finalVal;
+        componentMeta.set(c.id, { id: c.label ? c.id : c.id, label: c.label, kind: c.kind, isPercentage: isPct, nestId: c.nestId });
+      }
     }
   }
 
@@ -1081,7 +1090,9 @@ async function computeEmployeePayslip(
   }
 
   // Scenario 5: Overtime with normal, weekly-off, holiday, and night multipliers
-  const baseHourlyRate = isDaily ? hourlyRate : round2((earnings.basicSalary / workingDays) / shiftDayHours);
+  const baseHourlyRate = (isDaily || toNumber(employee.dailyWageRate) > 0)
+    ? hourlyRate
+    : round2((earnings.basicSalary / workingDays) / shiftDayHours);
   const normalOtMult = toNumber(c.overtimeMultiplier) || 1.5;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const weeklyOffOtMult = toNumber((c as any).weeklyOffOtMultiplier) || 2.0;
@@ -1090,10 +1101,10 @@ async function computeEmployeePayslip(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nightOtMult = toNumber((c as any).nightOtMultiplier) || 2.0;
 
-  const normalOtPay = (summary.normalOtHours || 0) * baseHourlyRate * normalOtMult;
-  const weeklyOffOtPay = (summary.weeklyOffOtHours || 0) * baseHourlyRate * weeklyOffOtMult;
-  const holidayOtPay = (summary.holidayOtHours || 0) * baseHourlyRate * holidayOtMult;
-  const nightOtPay = (summary.nightOtHours || 0) * baseHourlyRate * nightOtMult;
+  const normalOtPay = (summary.normalOtHours || 0) * round2(baseHourlyRate * normalOtMult);
+  const weeklyOffOtPay = (summary.weeklyOffOtHours || 0) * round2(baseHourlyRate * weeklyOffOtMult);
+  const holidayOtPay = (summary.holidayOtHours || 0) * round2(baseHourlyRate * holidayOtMult);
+  const nightOtPay = (summary.nightOtHours || 0) * round2(baseHourlyRate * nightOtMult);
   const totalOtPay = round2(normalOtPay + weeklyOffOtPay + holidayOtPay + nightOtPay);
 
   const visible = (blueprint?.components ?? []).filter((c) => c.visible !== false);
@@ -1114,13 +1125,18 @@ async function computeEmployeePayslip(
   const withholding: Record<string, number> = {};
 
   for (const rule of customRules) {
+    const periodStart = new Date(Date.UTC(year, month - 1, 1));
+    const periodEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    if (rule.effectiveFrom && new Date(rule.effectiveFrom) > periodEnd) continue;
+    if (rule.effectiveTo && new Date(rule.effectiveTo) < periodStart) continue;
+
     const appCat = (rule.applicableCategory || "ALL").toUpperCase();
     const empSkill = (employee.skillType || "Skilled").toUpperCase();
     if (appCat !== "ALL" && appCat !== empSkill) continue;
 
     if (rule.locationId && rule.locationId !== employee.locationId) continue;
     if (rule.contractorId && rule.contractorId !== employee.contractorId) continue;
-    if (rule.minAttendanceDays && summary.payableDays < rule.minAttendanceDays) continue;
+    if (rule.minAttendanceDays && Math.max(summary.presentDays, summary.payableDays) < rule.minAttendanceDays) continue;
 
     let compAmount = 0;
     const calcType = rule.calcType;
@@ -1130,8 +1146,15 @@ async function computeEmployeePayslip(
     } else if (calcType === "percentage") {
       const src = rule.sourceField === "ctc" ? (toNumber(employee.annualSalary) / 12) : earnings.basicSalary;
       compAmount = round2(src * (toNumber(rule.pct) / 100));
-    } else if (calcType === "per_day") {
-      compAmount = round2(toNumber(rule.value) * summary.payableDays);
+    } else if (calcType === "per_day" || calcType === "per_shift") {
+      const isNight = (rule.metric || "").toLowerCase().includes("night") || rule.code === "NIGHT_ALLOW";
+      const count = isNight ? (summary.nightShiftCount || 0) : summary.payableDays;
+      const minThresh = toNumber(rule.minThreshold) || 0;
+      if (count < minThresh) {
+        compAmount = 0;
+      } else {
+        compAmount = round2(toNumber(rule.value) * count);
+      }
     } else if (calcType === "per_hour") {
       compAmount = round2(toNumber(rule.value) * summary.overtimeHours);
     } else if (calcType === "slab") {
@@ -1143,10 +1166,16 @@ async function computeEmployeePayslip(
       else if (metric.includes("present")) metricVal = summary.presentDays;
 
       let matched = 0;
-      const slabs = Array.isArray(rule.slabs) ? rule.slabs : [];
+      const slabs = Array.isArray(rule.slabs)
+        ? rule.slabs
+        : typeof rule.slabs === "string"
+        ? JSON.parse(rule.slabs)
+        : [];
       for (const s of slabs) {
-        if (metricVal >= s.min && metricVal <= s.max) {
-          matched = s.amount;
+        const sMin = toNumber(s.min);
+        const sMax = s.max !== undefined && s.max !== null ? toNumber(s.max) : Infinity;
+        if (metricVal >= sMin && metricVal <= sMax) {
+          matched = s.amount !== undefined ? toNumber(s.amount) : (s.value !== undefined ? toNumber(s.value) : 0);
           break;
         }
       }
@@ -1165,7 +1194,17 @@ async function computeEmployeePayslip(
       compAmount = toNumber(rule.maxCap);
     }
 
-    if (compAmount > 0) {
+    const isAttBonus = rule.code === "ATT_BONUS" || rule.name?.toLowerCase().includes("attendance bonus");
+    const isNightAllow = rule.code === "NIGHT_ALLOW" || rule.name?.toLowerCase().includes("night");
+    const isProdInc = rule.code === "PROD_INC" || rule.name?.toLowerCase().includes("production");
+
+    if (isAttBonus) {
+      earnings.attendanceBonus = round2(compAmount);
+    } else if (isNightAllow) {
+      earnings.nightShiftAllowance = round2(compAmount);
+    } else if (isProdInc) {
+      earnings.productionIncentive = round2(compAmount);
+    } else if (compAmount > 0) {
       const codeKey = rule.code || rule.name;
       if (rule.kind === "earning") {
         earnings[codeKey] = round2(compAmount);
@@ -1173,6 +1212,14 @@ async function computeEmployeePayslip(
         withholding[codeKey] = round2(compAmount);
       }
     }
+  }
+
+  // Scenario 7: Night Shift Allowance fallback if no custom slab component exists but night shifts worked
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (earnings.nightShiftAllowance === undefined && summary.nightShiftCount > 0 && (c as any).nightShiftAllowance) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const perShiftRate = toNumber((c as any).nightShiftAllowance) || 100;
+    earnings.nightShiftAllowance = round2(summary.nightShiftCount * perShiftRate);
   }
 
   // Scenario 14: Mid-Month Exit & Leave Encashment
@@ -1271,6 +1318,7 @@ async function computeEmployeePayslip(
       lopDeduction,
       grossPayableSalary: !isDaily ? grossPayableSalary : earnings.total,
       salaryType: isDaily ? "Daily" : "Monthly",
+      productionUnits: Number(extraContext?.productionUnits ?? 0),
     },
     ratio,
   };
@@ -1644,6 +1692,13 @@ function zeroSummaryPayload(
     med: 0,
     cca: 0,
     special: 0,
+    overtime: 0,
+    overtimeHours: 0,
+    attendanceBonus: 0,
+    nightShiftCount: 0,
+    nightShiftAllowance: 0,
+    productionUnits: 0,
+    productionIncentive: 0,
     gross: 0,
     annualSalary: 0,
     attendanceRatio: 0,
@@ -1663,6 +1718,7 @@ function zeroSummaryPayload(
       total: 0,
     },
     totalDeductions: 0,
+    earnings: {},
     earningGroups: [],
     deductionGroups: [],
     net: 0,
@@ -1707,6 +1763,17 @@ function buildSummaryPayload(
   const med = Math.round(comp.earnings.medicalAllowance || 0);
   const cca = Math.round(comp.earnings.cca || 0);
   const special = Math.round(comp.earnings.otherAllowances || comp.earnings.special || 0);
+  const overtime = Math.round(comp.earnings.overtime || 0);
+  const attendanceBonus = comp.earnings.attendanceBonus !== undefined
+    ? Math.round(comp.earnings.attendanceBonus)
+    : comp.earnings.ATT_BONUS !== undefined
+    ? Math.round(comp.earnings.ATT_BONUS)
+    : (comp.earnings.attendance_bonus !== undefined ? Math.round(comp.earnings.attendance_bonus) : 0);
+
+  const nightShiftCount = comp.summary.nightShiftCount || 0;
+  const nightShiftAllowance = Math.round(comp.earnings.nightShiftAllowance ?? comp.earnings.NIGHT_ALLOW ?? comp.earnings.night_shift_allowance ?? 0);
+  const productionUnits = Number((comp.summary as any).productionUnits || 0);
+  const productionIncentive = Math.round(comp.earnings.productionIncentive ?? comp.earnings.PROD_INC ?? comp.earnings.production_incentive ?? 0);
 
   const pf = Math.round(comp.deductions.providentFund || 0);
   const esic = Math.round(comp.deductions.healthInsurance || comp.deductions.esic || 0);
@@ -1750,6 +1817,13 @@ function buildSummaryPayload(
     med,
     cca,
     special,
+    overtime,
+    overtimeHours: comp.summary.overtimeHours || 0,
+    attendanceBonus,
+    nightShiftCount,
+    nightShiftAllowance,
+    productionUnits,
+    productionIncentive,
     gross,
     annualSalary: Math.round(annualSalary),
     leaveDeduction,
@@ -1758,6 +1832,7 @@ function buildSummaryPayload(
     pt,
     lwf,
     deductions: {
+      ...comp.deductions,
       providentFund: pf,
       professionalTax: pt,
       incomeTax: comp.deductions.incomeTax || 0,

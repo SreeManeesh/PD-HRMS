@@ -1015,7 +1015,7 @@ export default function Payroll() {
         {effectiveTab === "wagerates" && <WageRatesPanel locations={locations} />}
 
         {/* ═══ Pay Rules & Slabs ═══ */}
-        {effectiveTab === "components" && <PayRulesPanel />}
+        {effectiveTab === "components" && <PayRulesPanel locations={locations} />}
 
         {/* ═══ Salary Advances & Loan Recovery ═══ */}
         {effectiveTab === "advances" && <SalaryAdvancesPanel employees={employees} />}

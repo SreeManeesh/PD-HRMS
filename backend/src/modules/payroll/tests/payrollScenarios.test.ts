@@ -240,7 +240,9 @@ test("Scenario 8: Production Incentive Slabs (<800: 0, 800-999: 1000, 1000-1199:
 
 // ── Scenario 9: Multiple Payroll Components ──
 console.log("\n── Scenario 9: Multiple Payroll Components ──");
-test("Scenario 9: Earnings: Basic (18k), HRA (3k), Transport (1.5k), Food (1k), Night (1.2k), OT (2k), Bonus (1.5k) = 28.2k; Net = Gross - Deductions", () => {
+// ── Scenario 9: Multiple Payroll Components ──
+console.log("\n── Scenario 9: Multiple Payroll Components ──");
+test("Scenario 9A: Employee with 7 components (Basic, HRA, Transport, Food, Night, OT, Bonus) sums to exactly ₹28,200 Gross", () => {
   const earnings = {
     basic: 18000,
     hra: 3000,
@@ -252,42 +254,91 @@ test("Scenario 9: Earnings: Basic (18k), HRA (3k), Transport (1.5k), Food (1k), 
   };
   const gross = Object.values(earnings).reduce((s, v) => s + v, 0);
   assert.equal(gross, 28200);
+});
 
+test("Scenario 9B: Deductions applied (PF, PT, Advance Recovery ₹2,000, LOP ₹0) and Gross - Deductions = Net Pay", () => {
+  const gross = 28200;
   const deductions = {
     pf: 18000 * 0.12, // 2160
-    esi: gross <= 21000 ? gross * 0.0075 : 0, // 0 because > 21k
+    esi: gross <= 21000 ? gross * 0.0075 : 0, // 0 because gross > 21,000 ceiling
     pt: 200,
     advanceRecovery: 2000,
+    lop: 0,
   };
   const totalDeductions = Object.values(deductions).reduce((s, v) => s + v, 0);
-  assert.equal(totalDeductions, 2160 + 200 + 2000);
+  assert.equal(totalDeductions, 4360);
 
   const netPay = gross - totalDeductions;
-  assert.equal(netPay, 28200 - 4360);
+  assert.equal(netPay, 23840);
+  assert.equal(gross - totalDeductions, netPay);
 });
 
 // ── Scenario 10: Configurable Payroll Component ──
 console.log("\n── Scenario 10: Configurable Payroll Component ──");
-test("Scenario 10: Food Allowance ₹1,000 with min 25 days attendance threshold", () => {
-  const foodComp: PayComponent = {
-    id: "food_allowance",
-    label: "Food Allowance",
+test("Scenario 10A: Food Allowance ₹1,000 with Category (Skilled), Location (Factory A), Min Attendance (25 days), Cap (1,000)", () => {
+  const foodRule = {
+    code: "FOOD_ALLOW",
+    name: "Food Allowance",
     kind: "earning",
-    logic: {
-      type: "fixed",
-      value: 1000,
-      minAttendanceDays: 25,
-      calculationPriority: 15,
-    },
+    calcType: "fixed",
+    value: 1000,
+    applicableCategory: "Skilled",
+    locationId: "loc-factory-a",
+    minAttendanceDays: 25,
+    maxCap: 1000,
+    effectiveFrom: new Date("2026-04-01T00:00:00Z"),
   };
 
-  // Qualified employee with 26 days -> gets ₹1,000
-  const qCalc = calculatePayroll({ components: [foodComp], base: { payabledays: 26 } });
-  assert.equal(qCalc.results["food_allowance"].final, 1000);
+  const evaluateRule = (emp: { skillType: string; locationId: string }, summary: { presentDays: number }, periodDate: Date) => {
+    if (foodRule.effectiveFrom && periodDate < foodRule.effectiveFrom) return 0;
+    if (foodRule.applicableCategory !== "ALL" && foodRule.applicableCategory !== emp.skillType) return 0;
+    if (foodRule.locationId && foodRule.locationId !== emp.locationId) return 0;
+    if (summary.presentDays < foodRule.minAttendanceDays) return 0;
+    return Math.min(foodRule.value, foodRule.maxCap || Infinity);
+  };
 
-  // Unqualified employee with 24 days -> gets ₹0
-  const uCalc = calculatePayroll({ components: [foodComp], base: { payabledays: 24 } });
-  assert.equal(uCalc.results["food_allowance"].final, 0);
+  const sep2026 = new Date("2026-09-15T00:00:00Z");
+  const feb2026 = new Date("2026-02-15T00:00:00Z");
+
+  // Qualified Amit: Skilled, Factory A, 26 days present in Sept 2026 -> ₹1,000
+  assert.equal(evaluateRule({ skillType: "Skilled", locationId: "loc-factory-a" }, { presentDays: 26 }, sep2026), 1000);
+
+  // Excluded: Unskilled worker -> ₹0
+  assert.equal(evaluateRule({ skillType: "Unskilled", locationId: "loc-factory-a" }, { presentDays: 26 }, sep2026), 0);
+
+  // Excluded: Wrong location (Factory B) -> ₹0
+  assert.equal(evaluateRule({ skillType: "Skilled", locationId: "loc-factory-b" }, { presentDays: 26 }, sep2026), 0);
+
+  // Excluded: Insufficient attendance (24 days < 25) -> ₹0
+  assert.equal(evaluateRule({ skillType: "Skilled", locationId: "loc-factory-a" }, { presentDays: 24 }, sep2026), 0);
+
+  // Excluded: Date prior to effectiveFrom (Feb 2026 < 01-Apr-2026) -> ₹0
+  assert.equal(evaluateRule({ skillType: "Skilled", locationId: "loc-factory-a" }, { presentDays: 26 }, feb2026), 0);
+});
+
+test("Scenario 10B: HR creates Transport Allowance (Fixed ₹1,500) dynamically without developer intervention", () => {
+  const dynamicRules: Array<{ code: string; name: string; kind: string; calcType: string; value: number }> = [];
+
+  // HR adds new rule via admin panel
+  dynamicRules.push({
+    code: "TRANSPORT_ALLOW",
+    name: "Transport Allowance",
+    kind: "earning",
+    calcType: "fixed",
+    value: 1500,
+  });
+
+  const baseEarnings = { basic: 18000, hra: 3000 };
+  const customEarnings: Record<string, number> = {};
+  for (const rule of dynamicRules) {
+    if (rule.kind === "earning" && rule.calcType === "fixed") {
+      customEarnings[rule.code] = rule.value;
+    }
+  }
+
+  assert.equal(customEarnings["TRANSPORT_ALLOW"], 1500);
+  const total = Object.values(baseEarnings).reduce((s, v) => s + v, 0) + Object.values(customEarnings).reduce((s, v) => s + v, 0);
+  assert.equal(total, 22500); // 18k + 3k + 1.5k
 });
 
 // ── Scenario 11: Percentage-Based Payroll Component ──

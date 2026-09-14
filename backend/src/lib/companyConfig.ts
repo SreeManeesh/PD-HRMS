@@ -16,6 +16,14 @@ export interface CompanyConfigSnapshot {
   esiGrossCeiling: number;
   gratuityRate: number;
   overtimeMultiplier: number;
+  weeklyOffWorkedMultiplier: number;
+  holidayWorkedMultiplier: number;
+  nightShiftAllowance: number;
+  nightOtMultiplier: number;
+  weeklyOffOtMultiplier: number;
+  holidayOtMultiplier: number;
+  minOtMinutesThreshold: number;
+  maxOtHoursMonthly: number | null;
   basicSalaryFactor: number;
   hraFactor: number;
   conveyanceAllowance: number;
@@ -36,6 +44,14 @@ export const COMPANY_CONFIG_DEFAULTS: CompanyConfigSnapshot = {
   esiGrossCeiling: 21000,
   gratuityRate: 0.0481,
   overtimeMultiplier: 1.5,
+  weeklyOffWorkedMultiplier: 2.0,
+  holidayWorkedMultiplier: 2.0,
+  nightShiftAllowance: 100.0,
+  nightOtMultiplier: 2.0,
+  weeklyOffOtMultiplier: 2.0,
+  holidayOtMultiplier: 2.0,
+  minOtMinutesThreshold: 30,
+  maxOtHoursMonthly: 60,
   basicSalaryFactor: 0.5,
   hraFactor: 0.2,
   conveyanceAllowance: 400,
@@ -56,6 +72,14 @@ const rowToSnapshot = (row: {
   esiGrossCeiling: { toNumber(): number };
   gratuityRate: { toNumber(): number };
   overtimeMultiplier: { toNumber(): number };
+  weeklyOffWorkedMultiplier?: { toNumber(): number } | null;
+  holidayWorkedMultiplier?: { toNumber(): number } | null;
+  nightShiftAllowance?: { toNumber(): number } | null;
+  nightOtMultiplier?: { toNumber(): number } | null;
+  weeklyOffOtMultiplier?: { toNumber(): number } | null;
+  holidayOtMultiplier?: { toNumber(): number } | null;
+  minOtMinutesThreshold?: number | null;
+  maxOtHoursMonthly?: { toNumber(): number } | null;
   basicSalaryFactor: { toNumber(): number };
   hraFactor: { toNumber(): number };
   conveyanceAllowance: { toNumber(): number };
@@ -78,6 +102,14 @@ const rowToSnapshot = (row: {
     esiGrossCeiling: row.esiGrossCeiling.toNumber(),
     gratuityRate: row.gratuityRate.toNumber(),
     overtimeMultiplier: row.overtimeMultiplier.toNumber(),
+    weeklyOffWorkedMultiplier: row.weeklyOffWorkedMultiplier ? row.weeklyOffWorkedMultiplier.toNumber() : COMPANY_CONFIG_DEFAULTS.weeklyOffWorkedMultiplier,
+    holidayWorkedMultiplier: row.holidayWorkedMultiplier ? row.holidayWorkedMultiplier.toNumber() : COMPANY_CONFIG_DEFAULTS.holidayWorkedMultiplier,
+    nightShiftAllowance: row.nightShiftAllowance ? row.nightShiftAllowance.toNumber() : COMPANY_CONFIG_DEFAULTS.nightShiftAllowance,
+    nightOtMultiplier: row.nightOtMultiplier ? row.nightOtMultiplier.toNumber() : COMPANY_CONFIG_DEFAULTS.nightOtMultiplier,
+    weeklyOffOtMultiplier: row.weeklyOffOtMultiplier ? row.weeklyOffOtMultiplier.toNumber() : COMPANY_CONFIG_DEFAULTS.weeklyOffOtMultiplier,
+    holidayOtMultiplier: row.holidayOtMultiplier ? row.holidayOtMultiplier.toNumber() : COMPANY_CONFIG_DEFAULTS.holidayOtMultiplier,
+    minOtMinutesThreshold: row.minOtMinutesThreshold ?? COMPANY_CONFIG_DEFAULTS.minOtMinutesThreshold,
+    maxOtHoursMonthly: row.maxOtHoursMonthly ? row.maxOtHoursMonthly.toNumber() : null,
     basicSalaryFactor: row.basicSalaryFactor.toNumber(),
     hraFactor: row.hraFactor.toNumber(),
     conveyanceAllowance: row.conveyanceAllowance.toNumber(),
@@ -128,20 +160,28 @@ export async function upsertCompanyConfig(
       input.weeklyOffDays !== undefined
         ? (input.weeklyOffDays as number[]).filter((dow) => Number.isInteger(dow) && dow >= 0 && dow <= 6)
         : undefined,
-    epfEmployerRate: toDecimal(input.epfEmployerRate, d.epfEmployerRate),
-    esiEmployerRate: toDecimal(input.esiEmployerRate, d.esiEmployerRate),
-    esiGrossCeiling: toDecimal(input.esiGrossCeiling, d.esiGrossCeiling),
-    gratuityRate: toDecimal(input.gratuityRate, d.gratuityRate),
-    overtimeMultiplier: toDecimal(input.overtimeMultiplier, d.overtimeMultiplier),
-    basicSalaryFactor: toDecimal(input.basicSalaryFactor, d.basicSalaryFactor),
-    hraFactor: toDecimal(input.hraFactor, d.hraFactor),
-    conveyanceAllowance: toDecimal(input.conveyanceAllowance, d.conveyanceAllowance),
-    medicalAllowance: toDecimal(input.medicalAllowance, d.medicalAllowance),
-    providentFundRate: toDecimal(input.providentFundRate, d.providentFundRate),
-    professionalTax: toDecimal(input.professionalTax, d.professionalTax),
-    incomeTaxRate: toDecimal(input.incomeTaxRate, d.incomeTaxRate),
-    healthInsurance: toDecimal(input.healthInsurance, d.healthInsurance),
-    defaultTaxRegime: input.defaultTaxRegime?.trim().toUpperCase() === "OLD" ? "OLD" : "NEW",
+    epfEmployerRate: input.epfEmployerRate !== undefined ? toDecimal(input.epfEmployerRate, d.epfEmployerRate) : undefined,
+    esiEmployerRate: input.esiEmployerRate !== undefined ? toDecimal(input.esiEmployerRate, d.esiEmployerRate) : undefined,
+    esiGrossCeiling: input.esiGrossCeiling !== undefined ? toDecimal(input.esiGrossCeiling, d.esiGrossCeiling) : undefined,
+    gratuityRate: input.gratuityRate !== undefined ? toDecimal(input.gratuityRate, d.gratuityRate) : undefined,
+    overtimeMultiplier: input.overtimeMultiplier !== undefined ? toDecimal(input.overtimeMultiplier, d.overtimeMultiplier) : undefined,
+    weeklyOffWorkedMultiplier: input.weeklyOffWorkedMultiplier !== undefined ? toDecimal(input.weeklyOffWorkedMultiplier, d.weeklyOffWorkedMultiplier) : undefined,
+    holidayWorkedMultiplier: input.holidayWorkedMultiplier !== undefined ? toDecimal(input.holidayWorkedMultiplier, d.holidayWorkedMultiplier) : undefined,
+    nightShiftAllowance: input.nightShiftAllowance !== undefined ? toDecimal(input.nightShiftAllowance, d.nightShiftAllowance) : undefined,
+    nightOtMultiplier: input.nightOtMultiplier !== undefined ? toDecimal(input.nightOtMultiplier, d.nightOtMultiplier) : undefined,
+    weeklyOffOtMultiplier: input.weeklyOffOtMultiplier !== undefined ? toDecimal(input.weeklyOffOtMultiplier, d.weeklyOffOtMultiplier) : undefined,
+    holidayOtMultiplier: input.holidayOtMultiplier !== undefined ? toDecimal(input.holidayOtMultiplier, d.holidayOtMultiplier) : undefined,
+    minOtMinutesThreshold: input.minOtMinutesThreshold !== undefined ? Number(input.minOtMinutesThreshold) : undefined,
+    maxOtHoursMonthly: input.maxOtHoursMonthly !== undefined ? (input.maxOtHoursMonthly ? toDecimal(input.maxOtHoursMonthly, 60) : null) : undefined,
+    basicSalaryFactor: input.basicSalaryFactor !== undefined ? toDecimal(input.basicSalaryFactor, d.basicSalaryFactor) : undefined,
+    hraFactor: input.hraFactor !== undefined ? toDecimal(input.hraFactor, d.hraFactor) : undefined,
+    conveyanceAllowance: input.conveyanceAllowance !== undefined ? toDecimal(input.conveyanceAllowance, d.conveyanceAllowance) : undefined,
+    medicalAllowance: input.medicalAllowance !== undefined ? toDecimal(input.medicalAllowance, d.medicalAllowance) : undefined,
+    providentFundRate: input.providentFundRate !== undefined ? toDecimal(input.providentFundRate, d.providentFundRate) : undefined,
+    professionalTax: input.professionalTax !== undefined ? toDecimal(input.professionalTax, d.professionalTax) : undefined,
+    incomeTaxRate: input.incomeTaxRate !== undefined ? toDecimal(input.incomeTaxRate, d.incomeTaxRate) : undefined,
+    healthInsurance: input.healthInsurance !== undefined ? toDecimal(input.healthInsurance, d.healthInsurance) : undefined,
+    defaultTaxRegime: input.defaultTaxRegime?.trim().toUpperCase() === "OLD" ? "OLD" : input.defaultTaxRegime ? "NEW" : undefined,
   };
   const row = await prisma.companyConfig.upsert({
     where: { companyId: company.id },
@@ -161,6 +201,14 @@ export function serializeConfig(snapshot: CompanyConfigSnapshot) {
     esiGrossCeiling: snapshot.esiGrossCeiling,
     gratuityRate: snapshot.gratuityRate,
     overtimeMultiplier: snapshot.overtimeMultiplier,
+    weeklyOffWorkedMultiplier: snapshot.weeklyOffWorkedMultiplier,
+    holidayWorkedMultiplier: snapshot.holidayWorkedMultiplier,
+    nightShiftAllowance: snapshot.nightShiftAllowance,
+    nightOtMultiplier: snapshot.nightOtMultiplier,
+    weeklyOffOtMultiplier: snapshot.weeklyOffOtMultiplier,
+    holidayOtMultiplier: snapshot.holidayOtMultiplier,
+    minOtMinutesThreshold: snapshot.minOtMinutesThreshold,
+    maxOtHoursMonthly: snapshot.maxOtHoursMonthly,
     basicSalaryFactor: snapshot.basicSalaryFactor,
     hraFactor: snapshot.hraFactor,
     conveyanceAllowance: snapshot.conveyanceAllowance,
