@@ -486,8 +486,10 @@ export default function Payroll() {
         const summary = monthPayMap[emp.id];
         const rec = selectedDayRecords.find((r) => r.employeeId === emp.id) || null;
         const workingDays = summary?.workingDays ?? 1;
-        const dayGross = summary ? Math.round(summary.gross / workingDays) : null;
-        const dayDeductions = summary ? Math.round(summary.deductions.total / workingDays) : null;
+        // Keep full precision here — rounding happens once at render (fmt).
+        // Pre-rounding each day made the days sum to monthly±₹workingDays/2.
+        const dayGross = summary ? summary.gross / workingDays : null;
+        const dayDeductions = summary ? summary.deductions.total / workingDays : null;
         const dayNet = summary && dayGross != null && dayDeductions != null ? dayGross - dayDeductions : null;
         return {
           employeeId: emp.id,

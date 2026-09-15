@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Lock,
+  RefreshCw,
 } from "lucide-react";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
@@ -180,19 +181,34 @@ export default function EarningsPanel() {
 
       if (serverComps.length > 0) {
         // Map backend components to earnings UI format
-        // Backend now returns priority and percentageFrom fields
-        const mapped = serverComps.map((c, idx) => ({
-          id: c.id,
-          name: c.name,
-          code: c.code || c.name.toUpperCase().replace(/\s+/g, "_"),
-          skillType: c.applicableCategory || "ALL",
-          thresholdType: c.calcType === "percentage" ? "percentage" : "fixed",
-          thresholdValue:
-            c.maxCap || c.value || (c.calcType === "percentage" ? 40 : 1500),
-          percentageFrom: c.percentageFrom || "Basic Salary",
-          priority: c.priority ?? (idx + 1),
-          isActive: c.isActive ?? true,
-        }));
+        // Backend now returns priority and percentageFrom fields.
+        // NOTE: backend stores percentage in `pct` (not `value`), and fixed
+        // amounts in `value` (`maxCap` is only an upper cap, not the amount).
+        const mapped = serverComps.map((c, idx) => {
+          const calcType = c.calcType === "percentage" ? "percentage" : "fixed";
+          const numOr = (...args) => {
+            const fallback = args.pop();
+            for (const v of args) {
+              const n = Number(v);
+              if (v !== null && v !== undefined && v !== "" && !Number.isNaN(n)) return n;
+            }
+            return fallback;
+          };
+          return {
+            id: c.id,
+            name: c.name,
+            code: c.code || c.name.toUpperCase().replace(/\s+/g, "_"),
+            skillType: c.applicableCategory || "ALL",
+            thresholdType: calcType,
+            thresholdValue:
+              calcType === "percentage"
+                ? numOr(c.pct, c.value, 40)
+                : numOr(c.value, c.maxCap, 1500),
+            percentageFrom: c.percentageFrom || (c.sourceField === "ctc" ? "Gross Pay" : "Basic Salary"),
+            priority: c.priority ?? (idx + 1),
+            isActive: c.isActive ?? true,
+          };
+        });
         setEarnings(mapped);
       } else {
         setEarnings(DEFAULT_EARNINGS);
@@ -206,6 +222,22 @@ export default function EarningsPanel() {
 
   useEffect(() => {
     loadEarnings();
+  }, []);
+
+  // Re-fetch when the tab regains focus / becomes visible so salary edits
+  // made in EmployeeProfile (a different route) are reflected in gross
+  // earnings without requiring a hard reload.
+  useEffect(() => {
+    const refresh = () => loadEarnings();
+    window.addEventListener("focus", refresh);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadEarnings();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   const handleOpenAdd = () => {
@@ -254,8 +286,10 @@ export default function EarningsPanel() {
       kind: "earning",
       calcType: thresholdType === "percentage" ? "percentage" : "fixed",
       applicableCategory: skillType,
-      value: val,
+      value: thresholdType === "percentage" ? null : val,
+      pct: thresholdType === "percentage" ? val : null,
       maxCap: thresholdType === "fixed" ? val : null,
+      sourceField: thresholdType === "percentage" && percentageFrom === "Gross Pay" ? "ctc" : "basic",
       percentageFrom: thresholdType === "percentage" ? percentageFrom : null,
       priority: Number(priority) || 1,
       isActive: true,
@@ -434,10 +468,51 @@ export default function EarningsPanel() {
   }, [earnings]);
 
   // Dynamic calculation of an employee's entitlement for a specific component.
-  // Uses a RESIDUAL BASIC approach: Basic = monthlyGross − Σ(fixed allowances applicable
-  // to this employee). This guarantees that Σ(all components) = monthlyGross.
+  // Uses a RESIDUAL BASIC approach: Basic = monthlyGross − Σ(other applicable
+  // components). This guarantees that Σ(all components) = monthlyGross.
+  // Basic is detected flexibly (code/name containing "basic", e.g. BASIC,
+  // BASIC_WAGE, BASIC_SALARY) and always applies to every employee so gross
+  // never collapses to just allowances or overshoots the monthly package.
+  const isBasicComponent = (c) => {
+    const code = String(c?.code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const name = String(c?.name || "").toLowerCase();
+    return code.includes("basic") || name.includes("basic");
+  };
+  const isEligibleForEmployee = (emp, c, applicableEarningCodes, hasAllowanceFilter, { bypassSkillForBasic = true } = {}) => {
+    if (c?.isActive === false) return false;
+    if (bypassSkillForBasic && isBasicComponent(c)) {
+      // Basic is mandatory for the Σ = gross invariant: ignore skill-tier
+      // restriction so Semi-Skilled/Unskilled staff don't collapse to just
+      // allowances (e.g. ₹3,000 against a ₹24,000 base). An explicit
+      // per-employee allow-list that omits basic is treated as "basic still
+      // applies as fallback" for the same reason.
+      return true;
+    }
+    const empSkill = (emp.skillType || "Skilled").toLowerCase().replace(/[^a-z]/g, "");
+    const compSkill = (c.skillType || c.applicableCategory || "ALL").toLowerCase().replace(/[^a-z]/g, "");
+    const skillOk = compSkill === "all" || compSkill === empSkill;
+    if (!skillOk) return false;
+    if (!hasAllowanceFilter) return true;
+    return applicableEarningCodes.some(
+      (code) =>
+        code?.toUpperCase?.() === c.code?.toUpperCase?.() ||
+        code?.toUpperCase?.() === c.name?.toUpperCase?.().replace(/\s+/g, "_"),
+    );
+  };
+  const getApplicableCodes = (emp) => {
+    const codes =
+      emp.wizardData?.payRules?.earnings || emp.payRules?.earnings || [];
+    const hasFilter = Array.isArray(codes) && codes.length > 0;
+    return { codes, hasFilter };
+  };
+  const isPctFromGross = (c) => {
+    const src = String(c?.percentageFrom || c?.sourceField || "basic").toLowerCase();
+    return src.includes("gross") || src.includes("ctc") || src === "gross pay";
+  };
   const calculateEmployeeComponent = (emp, comp, allActiveComps) => {
-    const comps = allActiveComps || activeEarningComponents;
+    const comps = (allActiveComps || activeEarningComponents).filter(
+      (c) => c.isActive !== false,
+    );
 
     const isDaily =
       emp.salaryType === "Daily" ||
@@ -446,86 +521,70 @@ export default function EarningsPanel() {
       ? Number(emp.dailyWageRate || 750) * 26
       : Math.round((Number(emp.annualSalary) || 300000) / 12);
 
-    // Respect per-employee applicable allowance codes from EmployeeProfile payRules
-    const applicableEarningCodes = emp.wizardData?.payRules?.earnings ||
-      emp.payRules?.earnings || [];
-    const hasAllowanceFilter = Array.isArray(applicableEarningCodes) && applicableEarningCodes.length > 0;
+    const { codes: applicableEarningCodes, hasFilter: hasAllowanceFilter } =
+      getApplicableCodes(emp);
 
-    // Check if this component code is allowed for this employee
-    const isAllowedCode = !hasAllowanceFilter ||
-      applicableEarningCodes.some(c =>
-        c?.toUpperCase?.() === comp.code?.toUpperCase?.() ||
-        c?.toUpperCase?.() === comp.name?.toUpperCase?.().replace(/\s+/g, "_")
-      );
+    if (!isEligibleForEmployee(emp, comp, applicableEarningCodes, hasAllowanceFilter)) return 0;
 
-    // Skill-tier eligibility
-    const empSkill = (emp.skillType || "Skilled").toLowerCase().replace(/[^a-z]/g, "");
-    const compSkill = (comp.skillType || "ALL").toLowerCase().replace(/[^a-z]/g, "");
-    const skillOk = compSkill === "all" || compSkill === empSkill;
-
-    if (!skillOk || !isAllowedCode) return 0;
-
-    // --- RESIDUAL BASIC CALCULATION ---
-    // First compute all fixed-amount components (excluding BASIC) that apply to this employee
-    const fixedSum = comps
-      .filter(c => c.code !== "BASIC" && c.thresholdType === "fixed" && c.isActive !== false)
-      .reduce((sum, c) => {
-        const cEmpSkill = (emp.skillType || "Skilled").toLowerCase().replace(/[^a-z]/g, "");
-        const cCompSkill = (c.skillType || "ALL").toLowerCase().replace(/[^a-z]/g, "");
-        const cSkillOk = cCompSkill === "all" || cCompSkill === cEmpSkill;
-        const cAllowed = !hasAllowanceFilter ||
-          applicableEarningCodes.some(code =>
-            code?.toUpperCase?.() === c.code?.toUpperCase?.() ||
-            code?.toUpperCase?.() === c.name?.toUpperCase?.().replace(/\s+/g, "_")
-          );
-        if (!cSkillOk || !cAllowed) return sum;
-        return sum + Number(c.thresholdValue || 0);
-      }, 0);
-
-    // Residual basic = monthlyGross after all fixed allowances
-    const residualForPercentages = Math.max(0, monthlyGross - fixedSum);
-
-    // Compute how much the percentage components take from residual
-    const pctComponents = comps.filter(c =>
-      c.code !== "BASIC" && c.thresholdType === "percentage" && c.isActive !== false
+    const eligible = comps.filter((c) =>
+      isEligibleForEmployee(emp, c, applicableEarningCodes, hasAllowanceFilter),
     );
-    const totalPctRatio = pctComponents.reduce((sum, c) => {
-      const cEmpSkill = (emp.skillType || "Skilled").toLowerCase().replace(/[^a-z]/g, "");
-      const cCompSkill = (c.skillType || "ALL").toLowerCase().replace(/[^a-z]/g, "");
-      const cSkillOk = cCompSkill === "all" || cCompSkill === cEmpSkill;
-      const cAllowed = !hasAllowanceFilter ||
-        applicableEarningCodes.some(code =>
-          code?.toUpperCase?.() === c.code?.toUpperCase?.() ||
-          code?.toUpperCase?.() === c.name?.toUpperCase?.().replace(/\s+/g, "_")
-        );
-      if (!cSkillOk || !cAllowed) return sum;
-      return sum + Number(c.thresholdValue || 0) / 100;
-    }, 0);
+    const basicComp = eligible.find(isBasicComponent) || comps.find(isBasicComponent);
+    const hasBasic = Boolean(basicComp);
 
-    // Basic absorbs whatever is left after fixed allowances and percentage allowances
-    // percentage allowances are calculated from Basic
-    // Basic + Basic*pctRatio = residualForPercentages  =>  Basic = residualForPercentages / (1 + pctRatio)
-    const hasBasic = comps.some(c => c.code === "BASIC" && c.isActive !== false);
-    const computedBasic = hasBasic
-      ? Math.max(0, Math.round(residualForPercentages / (1 + totalPctRatio)))
+    // Fixed (non-basic, non-percentage) sum for this employee
+    const fixedSum = eligible
+      .filter((c) => !isBasicComponent(c) && c.thresholdType !== "percentage")
+      .reduce((sum, c) => sum + Number(c.thresholdValue || 0), 0);
+
+    // Percentage splits: from-basic vs from-gross
+    const pctFromBasicRatio = eligible
+      .filter((c) => !isBasicComponent(c) && c.thresholdType === "percentage" && !isPctFromGross(c))
+      .reduce((sum, c) => sum + Number(c.thresholdValue || 0) / 100, 0);
+    const pctFromGrossRatio = eligible
+      .filter((c) => !isBasicComponent(c) && c.thresholdType === "percentage" && isPctFromGross(c))
+      .reduce((sum, c) => sum + Number(c.thresholdValue || 0) / 100, 0);
+
+    const grossPctAmount = monthlyGross * pctFromGrossRatio;
+    // Basic absorbs whatever is left:
+    // Basic * (1 + pctFromBasic) = monthlyGross − fixedSum − grossPctAmount
+    // When fixed + gross-% already exceed the package, basic floors to 0 and
+    // the row total will exceed monthly gross (UI flags it as a warning so HR
+    // can fix the CTC or allowance config — we never silently shrink fixed
+    // entitlements).
+    const overflow = fixedSum + grossPctAmount > monthlyGross;
+    let computedBasic = hasBasic && !overflow
+      ? Math.round(
+          Math.max(0, monthlyGross - fixedSum - grossPctAmount) / (1 + pctFromBasicRatio),
+        )
       : 0;
 
-    if (comp.code === "BASIC") {
+    // Absorb rounding so Σ == monthlyGross in the normal (non-overflow) case.
+    if (hasBasic && !overflow) {
+      const basicPctRounded = eligible
+        .filter((c) => !isBasicComponent(c) && c.thresholdType === "percentage" && !isPctFromGross(c))
+        .reduce((s, c) => s + Math.round((computedBasic * Number(c.thresholdValue || 0)) / 100), 0);
+      const grossPctRounded = eligible
+        .filter((c) => !isBasicComponent(c) && c.thresholdType === "percentage" && isPctFromGross(c))
+        .reduce((s, c) => s + Math.round((monthlyGross * Number(c.thresholdValue || 0)) / 100), 0);
+      const total = computedBasic + fixedSum + basicPctRounded + grossPctRounded;
+      computedBasic += monthlyGross - total;
+      if (computedBasic < 0) computedBasic = 0;
+    }
+
+    if (isBasicComponent(comp)) {
       return computedBasic;
     }
 
     if (comp.thresholdType === "percentage") {
-      // Always use computedBasic as the base to maintain the residual budget.
-      // PCT-from-Basic: base = computedBasic (already correct)
-      // PCT-from-Gross: in an ideal split, the "gross" share for this employee
-      //   is computedBasic + pctComponents_sum, which equals residualForPercentages.
-      //   We use computedBasic to maintain Σ = monthlyGross invariant.
-      const base = computedBasic;
-      return Math.round((base * Number(comp.thresholdValue || 0)) / 100);
+      if (isPctFromGross(comp)) {
+        return Math.round((monthlyGross * Number(comp.thresholdValue || 0)) / 100);
+      }
+      return Math.round((computedBasic * Number(comp.thresholdValue || 0)) / 100);
     }
 
-    // Fixed amount (already confirmed skill-ok and allowed above)
-    return Number(comp.thresholdValue || 0);
+    // Fixed amount (already confirmed eligible above)
+    return Math.round(Number(comp.thresholdValue || 0));
   };
 
   // Associated employees dynamic filtering & sorting
@@ -1959,6 +2018,31 @@ export default function EarningsPanel() {
             >
               <Play size={13} fill="#fff" />
               {runningTier === "ALL" ? "Processing…" : "Run All Tiers Combined"}
+            </button>
+
+            {/* Manual refresh — re-pulls employees + components so salary
+                edits saved elsewhere are reflected in gross immediately */}
+            <button
+              onClick={() => loadEarnings()}
+              disabled={loading}
+              title="Refresh employees and recalculate gross earnings"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                padding: "7px 12px",
+                background: "var(--card)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12.5px",
+                fontWeight: 700,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              <RefreshCw size={13} />
+              {loading ? "Refreshing…" : "Refresh"}
             </button>
 
             {/* Run For Selected Tier Separately */}
