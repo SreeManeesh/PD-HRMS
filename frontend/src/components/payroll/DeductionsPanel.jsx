@@ -1,10 +1,8 @@
 import { useState, useMemo, useEffect } from "react";
 import {
-  Percent,
   Plus,
   Edit3,
   Trash2,
-  Check,
   X,
   ShieldAlert,
   Filter,
@@ -12,13 +10,21 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  DollarSign,
-  Layers,
   MapPin,
   Info,
+  Users,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useToast } from "../../context/ToastContext";
 import EmptyState from "../shared/EmptyState";
+import { getEmployees } from "../../services/employeeService";
+import {
+  getPayrollComponentConfigs,
+  createPayrollComponentConfig,
+  updatePayrollComponentConfig,
+  deletePayrollComponentConfig,
+} from "../../services/payrollService";
 
 export const INDIAN_STATES = [
   "Maharashtra",
@@ -175,12 +181,58 @@ export default function DeductionsPanel() {
   const toast = useToast();
   const [selectedState, setSelectedState] = useState("Maharashtra");
   const [deductions, setDeductions] = useState(DEFAULT_DEDUCTIONS);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [sortField, setSortField] = useState("priority");
   const [sortOrder, setSortOrder] = useState("asc");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 10;
+
+  // Employee association state
+  const [employeesList, setEmployeesList] = useState([]);
+  const [empSearch, setEmpSearch] = useState("");
+  const [empPage, setEmpPage] = useState(1);
+  const EMP_PAGE_SIZE = 10;
+  const [empSortKey, setEmpSortKey] = useState("name");
+  const [empSortDir, setEmpSortDir] = useState("asc");
+
+  const loadDeductions = async () => {
+    setLoading(true);
+    try {
+      const [res, empRes] = await Promise.all([
+        getPayrollComponentConfigs().catch(() => ({ data: [] })),
+        getEmployees().catch(() => ({ data: [] })),
+      ]);
+      const serverDeductions = (res.data || []).filter((c) => c.kind === "deduction");
+      setEmployeesList(empRes.data || []);
+      setDeductions(
+        serverDeductions.length
+          ? serverDeductions.map((c, idx) => ({
+              id: c.id,
+              name: c.name,
+              code: c.code || c.name.toUpperCase().replace(/\s+/g, "_"),
+              category: c.category || "Statutory",
+              thresholdType: c.calcType === "percentage" ? "percentage" : "fixed",
+              thresholdValue: c.calcType === "percentage" ? (c.pct ?? c.value ?? 0) : (c.value ?? c.maxCap ?? 0),
+              percentageFrom: c.percentageFrom || c.sourceField || "",
+              cap: c.maxCap ?? null,
+              priority: c.priority ?? idx + 1,
+              isActive: c.isActive ?? true,
+            }))
+          : DEFAULT_DEDUCTIONS
+      );
+    } catch {
+      setDeductions(DEFAULT_DEDUCTIONS);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch employees and persisted deduction components.
+  useEffect(() => {
+    loadDeductions();
+  }, []);
 
   useEffect(() => {
     const rules = STATE_STATUTORY_RULES[selectedState] || STATE_STATUTORY_RULES.Maharashtra;
@@ -245,7 +297,7 @@ export default function DeductionsPanel() {
     setShowModal(true);
   };
 
-  const handleSaveModal = (e) => {
+  const handleSaveModal = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
       toast("Please enter a deduction name", "error");
@@ -260,7 +312,7 @@ export default function DeductionsPanel() {
     const itemCode = (
       code.trim() || name.toUpperCase().replace(/\s+/g, "_")
     ).replace(/[^A-Z0-9_]/g, "");
-    const payload = {
+    const localPayload = {
       id: editingItem ? editingItem.id : `d-${Date.now()}`,
       name: name.trim(),
       code: itemCode,
@@ -272,24 +324,55 @@ export default function DeductionsPanel() {
       priority: Number(priority) || 1,
       isActive: true,
     };
+    const apiPayload = {
+      name: name.trim(),
+      code: itemCode,
+      kind: "deduction",
+      calcType: thresholdType === "percentage" ? "percentage" : "fixed",
+      value: val,
+      pct: thresholdType === "percentage" ? val : null,
+      sourceField: thresholdType === "percentage" ? percentageFrom : null,
+      percentageFrom: thresholdType === "percentage" ? percentageFrom : null,
+      maxCap: cap ? parseFloat(cap) : null,
+      applicableCategory: "ALL",
+      priority: Number(priority) || 1,
+    };
 
-    if (editingItem) {
-      setDeductions((prev) =>
-        prev.map((item) => (item.id === editingItem.id ? payload : item)),
-      );
-      toast(`Updated deduction "${name}"`);
-    } else {
-      setDeductions((prev) => [...prev, payload]);
-      toast(`Added deduction "${name}"`);
+    try {
+      let saved = null;
+      if (editingItem && !String(editingItem.id).startsWith("d-")) {
+        saved = (await updatePayrollComponentConfig(editingItem.id, apiPayload)).data;
+      } else {
+        saved = (await createPayrollComponentConfig(apiPayload)).data;
+      }
+      const nextPayload = { ...localPayload, id: saved?.id || localPayload.id };
+      if (editingItem) {
+        setDeductions((prev) =>
+          prev.map((item) => (item.id === editingItem.id ? nextPayload : item)),
+        );
+        toast(`Updated deduction "${name}"`);
+      } else {
+        setDeductions((prev) => [...prev, nextPayload]);
+        toast(`Added deduction "${name}"`);
+      }
+      setShowModal(false);
+    } catch (err) {
+      toast(err.response?.data?.message || err.message || "Failed to save deduction", "error");
     }
-    setShowModal(false);
   };
 
-  const handleDelete = (id, compName) => {
+  const handleDelete = async (id, compName) => {
     if (!window.confirm(`Are you sure you want to remove "${compName}"?`))
       return;
-    setDeductions((prev) => prev.filter((item) => item.id !== id));
-    toast(`Removed "${compName}"`);
+    try {
+      if (!String(id).startsWith("d-")) {
+        await deletePayrollComponentConfig(id);
+      }
+      setDeductions((prev) => prev.filter((item) => item.id !== id));
+      toast(`Removed "${compName}"`);
+    } catch (err) {
+      toast(err.response?.data?.message || err.message || "Failed to remove deduction", "error");
+    }
   };
 
   const handleSort = (field) => {
@@ -357,6 +440,97 @@ export default function DeductionsPanel() {
   const pagedDeductions = useMemo(() => {
     return processedDeductions.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   }, [processedDeductions, safePage]);
+
+  // Active deductions (sorted by priority)
+  const activeDeductions = useMemo(() => {
+    return [...deductions]
+      .filter((d) => d.isActive !== false)
+      .sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999));
+  }, [deductions]);
+
+  // Calculate deduction amount for a specific employee and deduction rule
+  const calculateEmpDeduction = (emp, ded, grossEarnings) => {
+    // Per-employee applicable deduction filter
+    const applicableDeductionCodes = emp.wizardData?.payRules?.deductions ||
+      emp.payRules?.deductions || [];
+    const hasFilter = Array.isArray(applicableDeductionCodes) && applicableDeductionCodes.length > 0;
+    const isAllowed = !hasFilter || applicableDeductionCodes.some(c =>
+      c?.toUpperCase?.() === ded.code?.toUpperCase?.() ||
+      c?.toUpperCase?.() === ded.name?.toUpperCase?.().replace(/\s+/g, "_")
+    );
+    if (!isAllowed) return 0;
+
+    const isDaily = emp.salaryType === "Daily" || (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
+    const monthlyGross = grossEarnings > 0 ? grossEarnings :
+      isDaily ? Number(emp.dailyWageRate || 750) * 26
+        : Math.round((Number(emp.annualSalary) || 300000) / 12);
+
+    // Compute basic (40% of gross — reasonable for deduction base computation)
+    const basic = Math.round(monthlyGross * 0.4);
+
+    let amount = 0;
+    if (ded.thresholdType === "percentage") {
+      const base = ded.percentageFrom?.toLowerCase().includes("basic") ? basic
+        : ded.percentageFrom?.toLowerCase().includes("gross") ? monthlyGross
+          : monthlyGross;
+      amount = Math.round((base * Number(ded.thresholdValue || 0)) / 100);
+    } else {
+      amount = Number(ded.thresholdValue || 0);
+    }
+
+    // Apply cap if set
+    if (ded.cap !== null && ded.cap !== undefined && ded.cap > 0) {
+      amount = Math.min(amount, Number(ded.cap));
+    }
+    return amount;
+  };
+
+  // Processed employees list for association table
+  const processedEmpList = useMemo(() => {
+    let list = [...employeesList];
+    if (empSearch.trim()) {
+      const q = empSearch.toLowerCase();
+      list = list.filter((e) => {
+        const name = `${e.firstName || ""} ${e.lastName || ""}`.toLowerCase();
+        const code = (e.employeeCode || e.id || "").toLowerCase();
+        const dept = (e.department?.name || e.department || "").toLowerCase();
+        return name.includes(q) || code.includes(q) || dept.includes(q);
+      });
+    }
+    list.sort((a, b) => {
+      let vA = "", vB = "";
+      if (empSortKey === "name") {
+        vA = `${a.firstName || ""} ${a.lastName || ""}`.toLowerCase();
+        vB = `${b.firstName || ""} ${b.lastName || ""}`.toLowerCase();
+      } else if (empSortKey === "salary") {
+        vA = Number(a.annualSalary || 0);
+        vB = Number(b.annualSalary || 0);
+      }
+      if (vA < vB) return empSortDir === "asc" ? -1 : 1;
+      if (vA > vB) return empSortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return list;
+  }, [employeesList, empSearch, empSortKey, empSortDir]);
+
+  const empPageCount = Math.max(1, Math.ceil(processedEmpList.length / EMP_PAGE_SIZE));
+  const safeEmpPage = Math.min(Math.max(1, empPage), empPageCount);
+  const pagedEmpList = useMemo(() =>
+    processedEmpList.slice((safeEmpPage - 1) * EMP_PAGE_SIZE, safeEmpPage * EMP_PAGE_SIZE),
+    [processedEmpList, safeEmpPage]
+  );
+
+  const handleEmpSort = (key) => {
+    if (empSortKey === key) setEmpSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setEmpSortKey(key); setEmpSortDir("asc"); }
+  };
+
+  const renderEmpSortIcon = (key) => {
+    if (empSortKey !== key) return <ArrowUpDown size={11} style={{ opacity: 0.35, marginLeft: "4px" }} />;
+    return empSortDir === "asc"
+      ? <ArrowUp size={11} style={{ color: "var(--primary)", marginLeft: "4px" }} />
+      : <ArrowDown size={11} style={{ color: "var(--primary)", marginLeft: "4px" }} />;
+  };
 
   return (
     <section
@@ -1453,6 +1627,148 @@ export default function DeductionsPanel() {
           </div>
         </div>
       )}
+
+      {/* ── Associated Employees – Deduction Impact Table ── */}
+      <div style={{ marginTop: "32px", paddingTop: "24px", borderTop: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "14px", marginBottom: "16px" }}>
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--text)", margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+              <Users size={18} style={{ color: "var(--red, #dc2626)" }} />
+              Associated Employees — Deduction Impact ({processedEmpList.length})
+            </h3>
+            <p style={{ fontSize: "12.5px", color: "var(--subtext)", margin: "3px 0 0" }}>
+              Shows gross earnings, each applicable deduction, total withholding, and net take-home salary per employee.
+            </p>
+          </div>
+
+          {/* Search bar */}
+          <div style={{ position: "relative", minWidth: "220px", maxWidth: "320px", flex: 1 }}>
+            <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "var(--subtext)", pointerEvents: "none" }} />
+            <input
+              type="text"
+              placeholder="Search employee name, code, dept…"
+              value={empSearch}
+              onChange={(e) => { setEmpSearch(e.target.value); setEmpPage(1); }}
+              style={{ width: "100%", height: "34px", padding: "0 10px 0 32px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", fontSize: "12.5px" }}
+            />
+            {empSearch && (
+              <button onClick={() => { setEmpSearch(""); setEmpPage(1); }} style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--subtext)", cursor: "pointer", padding: 0 }}>
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {processedEmpList.length === 0 ? (
+          <EmptyState title="No employees found" subtitle="No employees match your current search." />
+        ) : (
+          <>
+            <div style={{ overflowX: "auto", borderRadius: "var(--radius)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", background: "var(--card)" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                <thead>
+                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
+                    <th style={{ padding: "10px 12px", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", width: "40px" }}>#</th>
+                    <th onClick={() => handleEmpSort("name")} style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center" }}>Employee {renderEmpSortIcon("name")}</div>
+                    </th>
+                    <th style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Dept</th>
+                    <th onClick={() => handleEmpSort("salary")} style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center" }}>Gross/mo {renderEmpSortIcon("salary")}</div>
+                    </th>
+                    {/* Dynamic deduction columns */}
+                    {activeDeductions.map((ded) => (
+                      <th key={ded.id} style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "var(--red, #dc2626)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", background: "rgba(220,38,38,0.03)", borderLeft: "1px solid var(--border)" }}
+                        title={`${ded.thresholdType === "percentage" ? `${ded.thresholdValue}% of ${ded.percentageFrom}` : `Fixed ₹${ded.thresholdValue}`}${ded.cap ? ` (Cap ₹${ded.cap})` : ""}`}>
+                        <div style={{ display: "flex", flexDirection: "column" }}>
+                          <span>{ded.name.replace(/\(.*?\)/g, "").trim()}</span>
+                          <span style={{ fontSize: "9px", color: "var(--subtext)", fontWeight: 500, textTransform: "none" }}>
+                            {ded.thresholdType === "percentage" ? `${ded.thresholdValue}%` : `₹${Number(ded.thresholdValue).toLocaleString("en-IN")}`}
+                          </span>
+                        </div>
+                      </th>
+                    ))}
+                    <th style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "var(--red, #dc2626)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", borderLeft: "1px solid var(--border)" }}>
+                      Total Deductions
+                    </th>
+                    <th style={{ padding: "10px 14px", fontSize: "11px", fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap", borderLeft: "2px solid var(--border)" }}>
+                      Net Take-Home
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedEmpList.map((emp, idx) => {
+                    const isDaily = emp.salaryType === "Daily" || (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
+                    const grossMonthly = isDaily
+                      ? Number(emp.dailyWageRate || 750) * 26
+                      : Math.round((Number(emp.annualSalary) || 300000) / 12);
+
+                    let totalDed = 0;
+                    const dedValues = activeDeductions.map((ded) => {
+                      const val = calculateEmpDeduction(emp, ded, grossMonthly);
+                      totalDed += val;
+                      return { ded, val };
+                    });
+                    const netPay = Math.max(0, grossMonthly - totalDed);
+
+                    return (
+                      <tr key={emp.id}
+                        style={{ borderBottom: idx < pagedEmpList.length - 1 ? "1px solid var(--border)" : "none", transition: "background 0.15s ease" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover-bg, rgba(0,0,0,0.015))")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <td style={{ padding: "10px 12px", fontSize: "12px", color: "var(--subtext)", fontFamily: "monospace" }}>{(safeEmpPage - 1) * EMP_PAGE_SIZE + idx + 1}</td>
+                        <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                          <div style={{ fontWeight: 700, color: "var(--text)", fontSize: "13px" }}>{emp.firstName} {emp.lastName}</div>
+                          <div style={{ fontSize: "11px", color: "var(--subtext)", fontFamily: "monospace" }}>{emp.employeeCode || emp.id}</div>
+                        </td>
+                        <td style={{ padding: "10px 14px", fontSize: "12px", color: "var(--text)", whiteSpace: "nowrap" }}>
+                          {emp.department?.name || emp.department || "General"}
+                        </td>
+                        <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "12.5px", fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>
+                          ₹{grossMonthly.toLocaleString("en-IN")}/mo
+                        </td>
+                        {dedValues.map(({ ded, val }) => (
+                          <td key={ded.id} style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "12.5px", color: val > 0 ? "var(--red, #dc2626)" : "var(--subtext)", fontWeight: val > 0 ? 600 : 400, whiteSpace: "nowrap", borderLeft: "1px solid var(--border)", background: "rgba(220,38,38,0.015)" }}>
+                            {val > 0 ? `₹${val.toLocaleString("en-IN")}` : <span style={{ opacity: 0.35 }}>—</span>}
+                          </td>
+                        ))}
+                        <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "13px", fontWeight: 700, color: "var(--red, #dc2626)", whiteSpace: "nowrap", borderLeft: "1px solid var(--border)" }}>
+                          ₹{totalDed.toLocaleString("en-IN")}
+                        </td>
+                        <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: "13.5px", fontWeight: 800, color: "#059669", whiteSpace: "nowrap", borderLeft: "2px solid var(--border)", background: "rgba(5,150,105,0.04)" }}
+                          title={`Gross ₹${grossMonthly.toLocaleString("en-IN")} - Deductions ₹${totalDed.toLocaleString("en-IN")} = Net ₹${netPay.toLocaleString("en-IN")}`}>
+                          ₹{netPay.toLocaleString("en-IN")}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {processedEmpList.length > EMP_PAGE_SIZE && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginTop: "16px", padding: "12px 16px", background: "var(--background)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
+                  Showing <strong>{(safeEmpPage - 1) * EMP_PAGE_SIZE + 1}</strong>–<strong>{Math.min(safeEmpPage * EMP_PAGE_SIZE, processedEmpList.length)}</strong> of <strong>{processedEmpList.length}</strong> employees
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <button onClick={() => setEmpPage((p) => Math.max(1, p - 1))} disabled={safeEmpPage <= 1} style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "5px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--card)", color: safeEmpPage <= 1 ? "var(--subtext)" : "var(--text)", fontSize: "12.5px", fontWeight: 600, cursor: safeEmpPage <= 1 ? "not-allowed" : "pointer", opacity: safeEmpPage <= 1 ? 0.5 : 1 }}>
+                    <ChevronLeft size={14} /> Previous
+                  </button>
+                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text)", padding: "0 8px" }}>
+                    {safeEmpPage} / {empPageCount}
+                  </span>
+                  <button onClick={() => setEmpPage((p) => Math.min(empPageCount, p + 1))} disabled={safeEmpPage >= empPageCount} style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "5px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--card)", color: safeEmpPage >= empPageCount ? "var(--subtext)" : "var(--text)", fontSize: "12.5px", fontWeight: 600, cursor: safeEmpPage >= empPageCount ? "not-allowed" : "pointer", opacity: safeEmpPage >= empPageCount ? 0.5 : 1 }}>
+                    Next <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
     </section>
   );
 }

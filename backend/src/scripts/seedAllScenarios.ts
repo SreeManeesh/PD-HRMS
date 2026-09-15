@@ -5,11 +5,14 @@ async function seedScenarios() {
 
   // 1. Update Company and CompanyConfig with advanced Overtime & Shift parameters
   const company = await prisma.company.findFirst({ where: { isActive: true } });
-  if (company) {
-    await prisma.company.update({
-      where: { id: company.id },
-      data: { weeklyOffDays: [0] }, // Sunday only = 26 working days in Sept 2026
-    });
+  if (!company) {
+    throw new Error("No active company found. Run main seed first.");
+  }
+
+  await prisma.company.update({
+    where: { id: company.id },
+    data: { weeklyOffDays: [0] }, // Sunday only = 26 working days in Sept 2026
+  });
 
     await prisma.companyConfig.upsert({
       where: { companyId: company.id },
@@ -44,7 +47,6 @@ async function seedScenarios() {
       },
     });
     console.log("Updated Company & CompanyConfig (weeklyOffDays=[0], shift 8h, 1.5x Normal OT, 30 min min threshold, 60h max cap)");
-  }
 
   // Update AttendanceShift to standard 8h (03:30 to 11:30 UTC = 09:00 to 17:00 IST)
   await prisma.attendanceShift.updateMany({

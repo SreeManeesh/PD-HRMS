@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import { logger } from "../../lib/logger";
 
 export class OrganizationManagementService {
 
@@ -423,7 +424,7 @@ export class OrganizationManagementService {
                 },
             });
 
-            console.log("✅ Grades fetched:", grades.length);
+            logger.debug({ count: grades.length }, "Grades fetched");
 
             return grades.map((grade) => ({
                 id: grade.id,

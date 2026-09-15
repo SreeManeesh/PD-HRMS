@@ -786,10 +786,34 @@ function resolvePaySource(
   cfg?: CompanyConfigSnapshot,
 ): { salaryStructureId: string | null; structure: PaySourceStructure } | null {
   const structure = emp.salaryStructures?.[0];
-  if (structure) return { salaryStructureId: structure.id, structure };
+  // Prefer the LIVE yearly package so salary edits take effect immediately,
+  // even when the stored salary structure hasn't been re-synced yet. The
+  // stored structure id is kept for the payslip FK; only the amounts are
+  // rebuilt from the current annual salary.
   const annual = toNumber(emp.annualSalary);
+  if (annual > 0) {
+    const b = salaryStructureBreakdown(annual, cfg);
+    return {
+      salaryStructureId: structure?.id ?? null,
+      structure: {
+        id: structure?.id ?? "",
+        basicSalary: b.basicSalary,
+        hra: b.hra,
+        conveyanceAllowance: b.conveyanceAllowance,
+        medicalAllowance: b.medicalAllowance,
+        performanceBonus: b.performanceBonus,
+        otherAllowances: b.otherAllowances,
+        providentFund: b.providentFund,
+        professionalTax: b.professionalTax,
+        incomeTax: b.incomeTax,
+        healthInsurance: b.healthInsurance,
+        employee: { annualSalary: annual },
+      },
+    };
+  }
+  if (structure) return { salaryStructureId: structure.id, structure };
   const isDaily = isDailyWageWorker(emp);
-  const effectiveAnnual = annual > 0 ? annual : (isDaily ? 288000 : 360000);
+  const effectiveAnnual = isDaily ? 288000 : 360000;
   const b = salaryStructureBreakdown(effectiveAnnual, cfg);
   return {
     salaryStructureId: null,
@@ -1064,6 +1088,44 @@ async function computeEmployeePayslip(
   let lopDeduction = 0;
   let grossPayableSalary = 0;
 
+  // Dynamic component configuration: when active earning components
+  // (fixed/percentage) exist for this employee, the package is derived from
+  // THEM with a residual basic — Σ(package) === monthly package exactly —
+  // instead of stacking component amounts on top of the static structure
+  // breakdown (which double-counted, e.g. structure basic + BASIC_WAGE).
+  // Tracks which rule codes were consumed so the generic custom-component
+  // loop below doesn't apply them a second time.
+  const handledPackageCodes = new Set<string>();
+  const earningLabels: Record<string, string> = {};
+  const deductionLabels: Record<string, string> = {};
+  let dynamicBasicAmount: number | undefined;
+  let dynamicFullGross: number | undefined;
+
+  const isBasicLikeKey = (codeOrName: unknown) =>
+    String(codeOrName || "")
+      .toLowerCase()
+      .replace(/[^a-z]/g, "")
+      .includes("basic");
+  const isOvertimeLikeRule = (rule: any) =>
+    rule.code === "ot_2026" ||
+    (rule.code || "").toLowerCase().includes("ot") ||
+    (rule.name || "").toLowerCase().includes("overtime") ||
+    (rule.name || "").toLowerCase().includes("over time");
+  const isPackageEligible = (rule: any) => {
+    const periodStart = new Date(Date.UTC(year, month - 1, 1));
+    const periodEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    if (rule.effectiveFrom && new Date(rule.effectiveFrom) > periodEnd) return false;
+    if (rule.effectiveTo && new Date(rule.effectiveTo) < periodStart) return false;
+    const appCat = (rule.applicableCategory || "ALL").toUpperCase().replace(/[^A-Z]/g, "");
+    const empSkill = (employee.skillType || "Skilled").toUpperCase().replace(/[^A-Z]/g, "");
+    if (appCat !== "ALL" && appCat !== empSkill) return false;
+    if (rule.locationId && rule.locationId !== employee.locationId) return false;
+    if (rule.contractorId && rule.contractorId !== employee.contractorId) return false;
+    const effectiveAtt = Math.max(summary.presentDays, summary.payableDays);
+    if (rule.minAttendanceDays && effectiveAtt < toNumber(rule.minAttendanceDays)) return false;
+    return true;
+  };
+
   if (isDaily) {
     // Scenario 1 & 2: Daily rate * payable days
     // Scenario 1 Example: Ravi: 26 Present + 2 Paid Leave = 28 payable days. 900 * 28 = 25200.
@@ -1116,30 +1178,123 @@ async function computeEmployeePayslip(
     // Then applicable allowances and deductions are processed.
     const annual = toNumber(employee.annualSalary);
     const structureBasic = toNumber(structure.basicSalary);
+    // Rupee-exact monthly package: rounded ONCE so annual/12 never drifts
+    // (e.g. ₹5,00,000 → ₹41,667, not 41666.67). All downstream splits absorb
+    // remainders instead of re-rounding, so parts always sum to the whole.
     fixedMonthlySalary =
       annual > 0
-        ? round2(annual / 12)
+        ? Math.round(annual / 12)
         : structureBasic > 0
-        ? round2(structureBasic * 2)
+        ? Math.round(structureBasic * 2)
         : 24000;
 
     dailySalaryRate = round2(fixedMonthlySalary / calendarDaysInMonth);
     lopDays = summary.unpaidLeaveDays;
     lopDeduction = round2(dailySalaryRate * lopDays);
-    grossPayableSalary = Math.max(round2(fixedMonthlySalary - lopDeduction), 0);
+    grossPayableSalary = Math.max(Math.round(fixedMonthlySalary - lopDeduction), 0);
 
     const prorateRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : ratio;
 
-    // Prorate full structure earnings so total earnings matches grossPayableSalary
-    for (const [key, val] of Object.entries(fullEarnings)) {
-      if (key === "total" || key === "overtime") continue;
-      earnings[key] = round2(val * prorateRatio);
-    }
+    // Fully dynamic package: derive earnings from the active earning-component
+    // configs applicable to this employee (fixed + percentage), with basic as
+    // the residual so Σ === grossPayableSalary. Falls back to the static
+    // structure split when no package components apply.
+    const packageRules = (extraContext?.customComponents ?? [])
+      .filter(
+        (r: any) =>
+          r.kind === "earning" &&
+          (r.calcType === "fixed" || r.calcType === "percentage") &&
+          !isOvertimeLikeRule(r) &&
+          isPackageEligible(r),
+      )
+      .sort((a: any, b: any) => (a.priority ?? 99) - (b.priority ?? 99));
 
-    if (!earnings.basicSalary || earnings.basicSalary === 0) {
-      earnings.basicSalary = round2(grossPayableSalary * 0.5);
-      earnings.hra = round2(grossPayableSalary * 0.25);
-      earnings.otherAllowances = round2(grossPayableSalary - earnings.basicSalary - (earnings.hra || 0));
+    if (packageRules.length > 0) {
+      const target = grossPayableSalary;
+      const rto = fixedMonthlySalary > 0 ? target / fixedMonthlySalary : 1;
+      const keyOf = (r: any) => String(r.code || r.name);
+      const fixedParts: Array<{ key: string; amount: number }> = [];
+      let fixedSum = 0;
+      let grossPctSum = 0;
+      let basicPctRatio = 0;
+      for (const r of packageRules) {
+        const key = keyOf(r);
+        if (r.calcType === "fixed") {
+          let amt = Math.round(toNumber(r.value) * rto);
+          if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
+          fixedParts.push({ key, amount: Math.max(0, amt) });
+          fixedSum += Math.max(0, amt);
+        } else {
+          const pct = toNumber(r.pct);
+          const fromGross =
+            String(r.sourceField || "").toLowerCase() === "ctc" ||
+            String(r.percentageFrom || "").toLowerCase().includes("gross");
+          if (fromGross) {
+            let amt = Math.round(target * (pct / 100));
+            if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
+            fixedParts.push({ key, amount: Math.max(0, amt) });
+            grossPctSum += Math.max(0, amt);
+          } else {
+            basicPctRatio += pct / 100;
+          }
+        }
+        handledPackageCodes.add(String(r.code || ""));
+        earningLabels[key] = r.name || labelForStoredKey(key);
+      }
+      const basicRule = packageRules.find((r: any) => isBasicLikeKey(r.code) || isBasicLikeKey(r.name));
+      const basicKey = basicRule ? keyOf(basicRule) : "basicSalary";
+      if (!earningLabels[basicKey]) earningLabels[basicKey] = basicRule?.name || "Basic Salary";
+      const overflow = fixedSum + grossPctSum > target;
+      let basic = overflow ? 0 : Math.round(Math.max(0, target - fixedSum - grossPctSum) / (1 + basicPctRatio));
+      // Percentage-from-basic amounts (rounded), then absorb any rounding
+      // remainder into basic so Σ === target exactly.
+      const basicPctParts: Array<{ key: string; amount: number }> = [];
+      let basicPctSum = 0;
+      if (!overflow) {
+        for (const r of packageRules) {
+          if (r.calcType !== "percentage") continue;
+          const fromGross =
+            String(r.sourceField || "").toLowerCase() === "ctc" ||
+            String(r.percentageFrom || "").toLowerCase().includes("gross");
+          if (fromGross) continue;
+          const key = keyOf(r);
+          let amt = Math.round(basic * (toNumber(r.pct) / 100));
+          if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
+          basicPctParts.push({ key, amount: Math.max(0, amt) });
+          basicPctSum += Math.max(0, amt);
+        }
+        basic += target - (basic + fixedSum + grossPctSum + basicPctSum);
+        if (basic < 0) basic = 0;
+      }
+      earnings[basicKey] = basic;
+      for (const p of fixedParts) earnings[p.key] = (earnings[p.key] || 0) + p.amount;
+      for (const p of basicPctParts) earnings[p.key] = (earnings[p.key] || 0) + p.amount;
+      dynamicBasicAmount = basic;
+      dynamicFullGross = fixedMonthlySalary;
+    } else {
+      // Prorate full structure earnings so total earnings matches grossPayableSalary.
+      // Each leg is rounded to paise, then any ±paise drift is absorbed into
+      // otherAllowances so Σ(parts) === grossPayableSalary EXACTLY.
+      for (const [key, val] of Object.entries(fullEarnings)) {
+        if (key === "total" || key === "overtime") continue;
+        earnings[key] = round2(val * prorateRatio);
+      }
+      {
+        const partSum = Object.entries(earnings).reduce(
+          (s, [k, v]) => (k === "total" || k === "overtime" ? s : s + toNumber(v)),
+          0,
+        );
+        const drift = round2(grossPayableSalary - partSum);
+        if (Math.abs(drift) > 0.004) {
+          earnings.otherAllowances = round2(toNumber(earnings.otherAllowances || 0) + drift);
+        }
+      }
+
+      if (!earnings.basicSalary || earnings.basicSalary === 0) {
+        earnings.basicSalary = round2(grossPayableSalary * 0.5);
+        earnings.hra = round2(grossPayableSalary * 0.25);
+        earnings.otherAllowances = round2(grossPayableSalary - earnings.basicSalary - (earnings.hra || 0));
+      }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1155,9 +1310,12 @@ async function computeEmployeePayslip(
   }
 
   // Scenario 5: Overtime with normal, weekly-off, holiday, and night multipliers
+  // effectiveBasic prefers the dynamic residual basic (custom basic-code key)
+  // and falls back to the structure basic leg.
+  const effectiveBasic = dynamicBasicAmount ?? toNumber(earnings.basicSalary);
   const baseHourlyRate = (isDaily || toNumber(employee.dailyWageRate) > 0)
     ? hourlyRate
-    : round2((earnings.basicSalary / workingDays) / shiftDayHours);
+    : round2((effectiveBasic / workingDays) / shiftDayHours);
   const normalOtMult = toNumber(c.overtimeMultiplier) || 1.5;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const weeklyOffOtMult = toNumber((c as any).weeklyOffOtMultiplier) || 2.0;
@@ -1195,6 +1353,10 @@ async function computeEmployeePayslip(
 
     if (rule.locationId && rule.locationId !== employee.locationId) continue;
     if (rule.contractorId && rule.contractorId !== employee.contractorId) continue;
+
+    // Already consumed as a package component above (fixed/percentage inside
+    // the monthly envelope) — skipping here prevents double-counting.
+    if (rule.code && handledPackageCodes.has(rule.code)) continue;
 
     const isOtRule =
       rule.code === "ot_2026" ||
@@ -1277,19 +1439,28 @@ async function computeEmployeePayslip(
 
     if (isOtRule) {
       earnings.overtime = round2(compAmount);
-      if (rule.code) earnings[rule.code] = round2(compAmount);
+      if (rule.code) {
+        earnings[rule.code] = round2(compAmount);
+        earningLabels[rule.code] = rule.name || labelForStoredKey(rule.code);
+      }
+      earningLabels.overtime = "Overtime";
     } else if (isAttBonus) {
       earnings.attendanceBonus = round2(compAmount);
+      earningLabels.attendanceBonus = rule.name || "Attendance Bonus";
     } else if (isNightAllow) {
       earnings.nightShiftAllowance = round2(compAmount);
+      earningLabels.nightShiftAllowance = rule.name || "Night Shift Allowance";
     } else if (isProdInc) {
       earnings.productionIncentive = round2(compAmount);
+      earningLabels.productionIncentive = rule.name || "Production Incentive";
     } else if (compAmount > 0) {
       const codeKey = rule.code || rule.name;
       if (rule.kind === "earning") {
         earnings[codeKey] = round2(compAmount);
+        earningLabels[codeKey] = rule.name || labelForStoredKey(codeKey);
       } else if (rule.kind === "deduction") {
         withholding[codeKey] = round2(compAmount);
+        deductionLabels[codeKey] = rule.name || labelForStoredKey(codeKey);
       }
     }
   }
@@ -1304,8 +1475,9 @@ async function computeEmployeePayslip(
 
   // Scenario 14: Mid-Month Exit & Leave Encashment
   if (employee.dateOfExit) {
-    const encashDailyRate = isDaily ? dailyRate : round2((earnings.basicSalary || 24000) / calendarDaysInMonth);
+    const encashDailyRate = isDaily ? dailyRate : round2((effectiveBasic || 24000) / calendarDaysInMonth);
     earnings.leaveEncashment = round2(2 * encashDailyRate);
+    earningLabels.leaveEncashment = "Leave Encashment";
   }
 
   // Blueprint / Statutory Deductions
@@ -1334,7 +1506,7 @@ async function computeEmployeePayslip(
   // Statutory Indian defaults for workforce / daily-wage calculations:
   // PF: 12% of basic wage (capped at 1800 if basic >= 15000)
   if (!withholding.providentFund) {
-    const pfBase = Number(earnings.basicSalary || 0);
+    const pfBase = Number(effectiveBasic || 0);
     withholding.providentFund = round2(Math.min(pfBase * 0.12, 1800));
   }
 
@@ -1373,7 +1545,7 @@ async function computeEmployeePayslip(
 
   // Employer-side statutory costs (PF, ESI, gratuity)
   const monthlySalary = toNumber(structure.employee?.annualSalary) / 12 || earnings.total;
-  const proratedBasic = Number(earnings.basicSalary ?? 0);
+  const proratedBasic = Number(effectiveBasic ?? 0);
   const esiEligible = monthlySalary > 0 && monthlySalary <= c.esiGrossCeiling;
   const fallbackEmployer = {
     providentFund: round2(proratedBasic * c.epfEmployerRate),
@@ -1389,12 +1561,25 @@ async function computeEmployeePayslip(
 
   const unproratedGross = Object.values(fullEarnings).reduce((s, v) => s + v, 0);
 
+  // Fill label gaps: structure/statutory keys get canonical labels so the
+  // frontend can render fully dynamic columns without hardcoding names.
+  for (const k of Object.keys(earnings)) {
+    if (k === "total") continue;
+    if (!earningLabels[k]) earningLabels[k] = labelForStoredKey(k);
+  }
+  for (const k of Object.keys(withholding)) {
+    if (k === "total") continue;
+    if (!deductionLabels[k]) deductionLabels[k] = labelForStoredKey(k);
+  }
+
   return {
     earnings,
     deductions: withholding,
     employerContributions,
+    earningLabels,
+    deductionLabels,
     netPay: slipNet,
-    fullGross: Math.round(unproratedGross || amounts.earnings.total),
+    fullGross: Math.round(dynamicFullGross ?? unproratedGross ?? amounts.earnings.total),
     summary: {
       ...summary,
       dailyRate: isDaily ? dailyRate : dailySalaryRate,
@@ -1493,10 +1678,18 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     attendanceSummary: Record<string, unknown>;
   }> = [];
   for (const emp of eligible) {
-    const structure = structureByEmployee.get(emp.id);
-    const source = structure
-      ? { salaryStructureId: structure.id, structure: structure as unknown as PaySourceStructure }
-      : resolvePaySource(emp, cfg)!;
+    // Route every employee through resolvePaySource so the LIVE annualSalary
+    // drives the breakdown. resolvePaySource keeps the stored structure id
+    // for the FK but rebuilds amounts from the current package — a salary
+    // edit is therefore reflected in the very next run/summary instead of
+    // reusing a stale stored structure.
+    const withStructures = {
+      ...emp,
+      salaryStructures: structureByEmployee.has(emp.id)
+        ? [structureByEmployee.get(emp.id)! as unknown as PaySourceStructure]
+        : [],
+    };
+    const source = resolvePaySource(withStructures, cfg)!;
     const comp = await computeEmployeePayslip(
       emp,
       source.structure,
@@ -1844,29 +2037,111 @@ function buildSummaryPayload(
   const leaveDeduction = Math.round(lopDeduction);
   const { earningGroups, deductionGroups } = buildPayrollGroups(comp.earnings, comp.deductions, blueprint);
 
-  const basic = Math.round(comp.earnings.basicSalary || 0);
-  const hra = Math.round(comp.earnings.hra || 0);
-  const conv = Math.round(comp.earnings.conveyanceAllowance || 0);
-  const med = Math.round(comp.earnings.medicalAllowance || 0);
-  const cca = Math.round(comp.earnings.cca || 0);
-  const special = Math.round(comp.earnings.otherAllowances || comp.earnings.special || 0);
-  const overtime = Math.round(comp.earnings.overtime || 0);
-  const attendanceBonus = comp.earnings.attendanceBonus !== undefined
-    ? Math.round(comp.earnings.attendanceBonus)
-    : comp.earnings.ATT_BONUS !== undefined
-    ? Math.round(comp.earnings.ATT_BONUS)
-    : (comp.earnings.attendance_bonus !== undefined ? Math.round(comp.earnings.attendance_bonus) : 0);
+  // Fully dynamic breakdowns: every earning/deduction key with its display
+  // label and rupee amount, so clients render columns from real data instead
+  // of a hardcoded component list. Rounding drift is absorbed into the
+  // basic-like (earnings) or largest (deductions) leg so details always sum
+  // to the headline totals exactly.
+  const toDetails = (
+    obj: Record<string, number>,
+    labels: Record<string, string> | undefined,
+    exclude: string[],
+  ) =>
+    Object.entries(obj || {})
+      .filter(([k]) => !exclude.includes(k))
+      .map(([key, v]) => ({
+        key,
+        label: labels?.[key] || labelForStoredKey(key),
+        amount: Math.round(toNumber(v)),
+      }));
+  const earningDetails = toDetails(comp.earnings, (comp as any).earningLabels, ["total"]);
+  const deductionDetails = toDetails(comp.deductions, (comp as any).deductionLabels, [
+    "total",
+    "leaveDeduction",
+  ]);
+  const absorbDrift = (
+    details: Array<{ key: string; amount: number }>,
+    target: number,
+  ) => {
+    const sum = details.reduce((s, d) => s + d.amount, 0);
+    const diff = Math.round(target) - sum;
+    if (diff !== 0 && details.length > 0) {
+      const basicIdx = details.findIndex((d) =>
+        d.key.toLowerCase().replace(/[^a-z]/g, "").includes("basic"),
+      );
+      const idx =
+        basicIdx >= 0
+          ? basicIdx
+          : details.reduce((bi, d, i) => (d.amount > details[bi].amount ? i : bi), 0);
+      details[idx].amount += diff;
+    }
+  };
+  absorbDrift(earningDetails, gross);
+  absorbDrift(deductionDetails, Math.round(comp.deductions.total));
+
+  const normDetailKey = (k: string) => k.toLowerCase().replace(/[^a-z]/g, "");
+  const detailAmt = (
+    details: Array<{ key: string; amount: number }>,
+    ...matchers: string[]
+  ) => {
+    const hit = details.find((d) =>
+      matchers.some((m) => normDetailKey(d.key).includes(m)),
+    );
+    return hit ? hit.amount : 0;
+  };
+
+  // Legacy flat columns are derived from the SAME dynamic details (not from
+  // hardcoded structure legs), so every consumer sees identical numbers:
+  // no static SPECIAL/CCA-style buckets anywhere in the chain.
+  const basic = detailAmt(earningDetails, "basic");
+  const hra = detailAmt(earningDetails, "hra");
+  const conv = detailAmt(earningDetails, "conveyance", "transport", "conv");
+  const med = detailAmt(earningDetails, "medical");
+  const cca = detailAmt(earningDetails, "cca", "compensatory");
+  const overtime = detailAmt(earningDetails, "overtime");
+  const attendanceBonus = detailAmt(
+    earningDetails,
+    "attendancebonus",
+    "attbonus",
+  );
+  const nightShiftAllowance = detailAmt(
+    earningDetails,
+    "nightshiftallowance",
+    "nightallow",
+    "night",
+  );
+  const productionIncentive = detailAmt(
+    earningDetails,
+    "productionincentive",
+    "prodinc",
+    "production",
+  );
 
   const nightShiftCount = comp.summary.nightShiftCount || 0;
-  const nightShiftAllowance = Math.round(comp.earnings.nightShiftAllowance ?? comp.earnings.NIGHT_ALLOW ?? comp.earnings.night_shift_allowance ?? 0);
   const productionUnits = Number((comp.summary as any).productionUnits || 0);
-  const productionIncentive = Math.round(comp.earnings.productionIncentive ?? comp.earnings.PROD_INC ?? comp.earnings.production_incentive ?? 0);
+
+  // Special is the balancing figure so the displayed columns ALWAYS sum to
+  // gross exactly: it folds in otherAllowances + performanceBonus +
+  // weekly-off/holiday/leave-encashment extras + any dynamic custom earning
+  // components (food, transport, …) that have no dedicated column.
+  // (Previously special was just otherAllowances, so every hidden extra made
+  // the visible parts sum to less than gross — the "round off" mismatch.)
+  const special = Math.max(
+    0,
+    gross - (basic + hra + conv + med + cca + overtime + attendanceBonus + nightShiftAllowance + productionIncentive),
+  );
 
   const pf = Math.round(comp.deductions.providentFund || 0);
   const esic = Math.round(comp.deductions.healthInsurance || comp.deductions.esic || 0);
   const pt = Math.round(comp.deductions.professionalTax || 0);
   const lwf = comp.deductions.lwf !== undefined ? round2(comp.deductions.lwf) : 20;
-  const totalDeductions = Math.round(comp.deductions.total + (isDaily ? 0 : 0));
+  const incomeTax = Math.round(
+    comp.deductions.incomeTax ?? comp.deductions.tds ?? 0,
+  );
+  const advanceRecovery = Math.round(
+    comp.deductions.salaryAdvanceRecovery ?? comp.deductions.advanceRecovery ?? 0,
+  );
+  const totalDeductions = Math.round(comp.deductions.total);
 
   const netPay = Math.round(comp.netPay);
 
@@ -1918,17 +2193,22 @@ function buildSummaryPayload(
     esic,
     pt,
     lwf,
+    incomeTax,
+    advanceRecovery,
     deductions: {
       ...comp.deductions,
       providentFund: pf,
       professionalTax: pt,
-      incomeTax: comp.deductions.incomeTax || 0,
+      incomeTax,
+      salaryAdvanceRecovery: advanceRecovery,
       healthInsurance: esic,
       lwf,
       leaveDeduction,
       total: totalDeductions,
     },
     totalDeductions,
+    earningDetails,
+    deductionDetails,
     net: netPay,
     netPay,
     earnings: comp.earnings,

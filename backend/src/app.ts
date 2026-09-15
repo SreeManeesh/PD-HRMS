@@ -18,7 +18,10 @@ const app = express();
 app.set("trust proxy", 1);
 
 // Security headers
-// app.use(helmet());
+const assetOrigins: string[] = [env.APP_URL, env.ASSET_HOST].filter(
+  (origin): origin is string => Boolean(origin)
+);
+
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -33,13 +36,13 @@ app.use(
           "'self'",
           "data:",
           "blob:",
-          "http://localhost:4000",
+          ...assetOrigins,
         ],
 
         "media-src": [
           "'self'",
           "blob:",
-          "http://localhost:4000",
+          ...assetOrigins,
         ],
       },
     },

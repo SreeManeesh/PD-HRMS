@@ -752,6 +752,8 @@ model PayrollComponentConfig {
   metric             String?   @db.VarChar(40) // "payableDays" | "presentDays" | "overtimeHours" | "nightShifts" | "productionUnits" | "basic" | "gross"
   slabs              Json?     @default("[]")
   applicableCategory String?   @default("ALL") @map("applicable_category") @db.VarChar(50) // "ALL" | "Skilled" | "Semi-Skilled" | "Unskilled"
+  percentageFrom     String?   @map("percentage_from") @db.VarChar(100) // e.g. "Basic Salary" | "Gross Pay"
+  priority           Int?      @default(99) // Lower numbers execute first
   locationId         String?   @map("location_id") @db.Uuid
   contractorId       String?   @map("contractor_id") @db.Uuid
   minAttendanceDays  Int?      @map("min_attendance_days")
@@ -770,6 +772,7 @@ model PayrollComponentConfig {
   @@index([applicableCategory])
   @@index([locationId])
   @@index([contractorId])
+  @@index([priority])
   @@map("payroll_component_configs")
 }
 

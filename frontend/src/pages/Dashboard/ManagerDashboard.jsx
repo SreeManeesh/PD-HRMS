@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Manager Dashboard — 
  * "Manager sees Employee Dashboard (for themselves) + Manager-specific widgets"
  * — so this renders the same personal widgets as EmployeeDashboard.jsx, plus
@@ -17,6 +17,7 @@ import SelfAssessmentWidget from "../../components/dashboard/SelfAssessmentWidge
 import ComplianceCoursesWidget from "../../components/dashboard/ComplianceCoursesWidget.jsx";
 import DashboardQuickActions from "../../components/dashboard/DashboardQuickActions.jsx";
 import CollapsibleDashboardSection from "../../components/dashboard/CollapsibleDashboardSection.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
 
 
 export default function ManagerDashboard({ user }) {
@@ -31,6 +32,8 @@ export default function ManagerDashboard({ user }) {
         </div>
 
         <DashboardQuickActions />
+
+        <DemoBanner module="Manager Dashboard — Team Widgets" />
 
         <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "10px" }}>Your Team</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px", marginBottom: "24px" }}>

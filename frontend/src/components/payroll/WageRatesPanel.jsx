@@ -12,7 +12,6 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Calculator,
 } from "lucide-react";
 import {
   getWageRates,

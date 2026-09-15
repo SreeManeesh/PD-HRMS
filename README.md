@@ -94,3 +94,17 @@ npm run dev                 # http://localhost:5173
 | [docs/API.md](docs/API.md) | API endpoints and service layer |
 | [docs/DATABASE.md](docs/DATABASE.md) | Database schema and ER diagram |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth flow and security |
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Current completion status |
+| [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | Security posture and hardening plan |
+
+## Docker Compose Files
+
+There are three compose files in this repository, each serving a different purpose:
+
+| File | Purpose | When to use |
+|------|---------|-------------|
+| `docker-compose.yml` | **Canonical** — PostgreSQL + PgAdmin only | Local development (start DB, run backend manually) |
+| `docker-compose.full.yml` | All services — DB + backend + frontend | Full containerized local demo |
+| `docker-compose.microservices.yml` | Includes `employee-management-fullstack` wizard | When testing the full onboarding microservice flow |
+
+`start-all.cmd` uses `docker-compose.yml` (DB only) and runs backend/frontend natively via Node.js for faster development iteration.

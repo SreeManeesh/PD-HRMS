@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Users2, Receipt, Download, Building2, Phone, Mail, Percent, DollarSign, FileText, Printer, X, CheckCircle2, ShieldCheck } from "lucide-react";
+import { Plus, Users2, Receipt, Download, Building2, FileText, Printer, X, CheckCircle2 } from "lucide-react";
 import { getContractors, createContractor, getContractorPayrollReport } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";

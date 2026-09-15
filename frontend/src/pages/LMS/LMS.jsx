@@ -1,4 +1,4 @@
-﻿/**
+/**
  * LMS Page � Module 11
  * Tabs: Course Catalog � My Learning � Compliance Dashboard
  */
@@ -1440,6 +1440,7 @@ function CatalogTab({ courses, onCourseAdded, onCourseUpdated, isLmsManager }) {
                 {/* COURSE THUMBNAIL */}
                 {c.thumbnailUrl ? (
                   <img
+                    loading="lazy"
                     src={getFileUrl(c.thumbnailUrl)}
                     alt={c.title}
                     style={{
@@ -1666,7 +1667,7 @@ function CatalogTab({ courses, onCourseAdded, onCourseUpdated, isLmsManager }) {
         onClose={() => setContentTarget(null)}
         course={contentTarget}
         onSaved={(content) => {
-          console.log("Course content added:", content);
+
         }}
       />
     </div>

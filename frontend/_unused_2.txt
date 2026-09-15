@@ -1,0 +1,80 @@
+### src/components/payslip/ClassicTablePayslip.jsx
+  L8:8 no-unused-vars :: 'React' is defined but never used.
+      | import React from "react";
+
+### src/components/shared/EmployeeSearchBox.jsx
+  L1:8 no-unused-vars :: 'React' is defined but never used.
+      | import React, { useState, useRef, useEffect } from "react";
+
+### src/mock/ess.js
+  L43:13 no-unused-vars :: 'latestPayslip' is assigned a value but never used.
+      | const { latestPayslip, ...rest } = overview;
+
+### src/mock/tasks.js
+  L33:7 no-unused-vars :: 'ME_ID' is assigned a value but never used.
+      | const ME_ID = "EMP001";
+
+### src/pages/Attendance/Attendance.jsx
+  L11:36 no-unused-vars :: 'Home' is defined but never used.
+      | Clock, UserCheck, UserX, Coffee, Home, Upload, RotateCcw,
+  L12:11 no-unused-vars :: 'Filter' is defined but never used.
+      | Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Factory, Briefcase,
+  L12:61 no-unused-vars :: 'Briefcase' is defined but never used.
+      | Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Factory, Briefcase,
+  L13:3 no-unused-vars :: 'Building2' is defined but never used.
+      | Building2
+  L82:9 no-unused-vars :: 'navigate' is assigned a value but never used.
+      | const navigate = useNavigate();
+
+### src/pages/Dashboard/HRDashboard.jsx
+  L9:8 no-unused-vars :: 'HiringChart' is defined but never used.
+      | import HiringChart from "../../components/dashboard/HiringChart.jsx";
+
+### src/pages/Employees/BulkImportPreviewModal.jsx
+  L2:89 no-unused-vars :: 'X' is defined but never used.
+      | import { CheckCircle2, AlertTriangle, AlertCircle, Search, FileSpreadsheet, ArrowRight, X } from "lucide-react";
+
+### src/pages/Employees/EmployeeProfile.jsx
+  L15:24 no-unused-vars :: 'Calendar' is defined but never used.
+      | Mail, Phone, MapPin, Calendar, Building2, Briefcase,
+  L17:43 no-unused-vars :: 'Factory' is defined but never used.
+      | UserRound, ClipboardCheck, CircleCheck, Factory,
+  L49:7 no-unused-vars :: 'STATUSES' is assigned a value but never used.
+      | const STATUSES = ["ACTIVE", "ON_NOTICE", "RESIGNED", "TERMINATED", "RETIRED", "INACTIVE", "ON_LONG_LEAVE"];
+  L96:10 no-unused-vars :: 'getAt' is defined but never used.
+      | function getAt(obj, path) {
+  L311:10 no-unused-vars :: 'fmt' is defined but never used.
+      | function fmt(v) {
+
+### src/pages/ESS/ESS.jsx
+  L44:49 no-unused-vars :: 'EXPORT_EXPIRY_HOURS' is defined but never used.
+      | import { proofStatusMeta, EXPORT_THROTTLE_DAYS, EXPORT_EXPIRY_HOURS } from "../../mock/ess.js";
+
+### src/pages/LMS/LMS.jsx
+  L1452:31 no-unused-vars :: 'e' is defined but never used.
+      | onError={(e) => {
+  L1669:19 no-unused-vars :: 'content' is defined but never used.
+      | onSaved={(content) => {
+
+### src/pages/Payroll/Payroll.jsx
+  L4:10 no-unused-vars :: 'CheckCircle2' is defined but never used.
+      | import { CheckCircle2, Eye, Upload } from "lucide-react";
+  L8:10 no-unused-vars :: 'PayslipDesignerPanel' is defined but never used.
+      | import { PayslipDesignerPanel } from "../PayslipDesigner/PayslipDesigner.jsx";
+  L16:121 no-unused-vars :: 'getEmployeePayrollSummary' is defined but never used.
+      | import { getPayrollRuns, getPayrollYears, getPayslips, getRunPayslips, createPayrollRun, runPayroll, approvePayrollRun, getEmployeePayrollSummary, getEmployeePayrollSummaries } from "../../services/payrollService.js";
+  L39:3 no-unused-vars :: 'inr' is defined but never used.
+      | inr,
+  L41:3 no-unused-vars :: 'getSkillMeta' is defined but never used.
+      | getSkillMeta,
+  L177:10 no-unused-vars :: 'yearLoading' is assigned a value but never used.
+      | const [yearLoading, setYearLoading] = useState(false);
+  L178:10 no-unused-vars :: 'yearError' is assigned a value but never used.
+      | const [yearError, setYearError] = useState("");
+  L405:9 no-unused-vars :: 'expandedPeriod' is assigned a value but never used.
+      | const expandedPeriod = expandedRun ? `${MONTHS_FULL[expandedRun.month - 1]} ${expandedRun.year}` : "";
+  L516:9 no-unused-vars :: 'annualEmpVisible' is assigned a value but never used.
+      | const annualEmpVisible = yearRows.filter((row) =>
+
+### src/pages/PayslipBranding/PayslipBranding.jsx
+  L10:3 no-unused-vars :: 'Download' is defined but never used.

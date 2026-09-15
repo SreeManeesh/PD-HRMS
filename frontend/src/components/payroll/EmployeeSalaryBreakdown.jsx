@@ -431,13 +431,13 @@ export default function EmployeeSalaryBreakdown({
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Payable Days</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {summary.days} days
+                        {summary?.days ?? 0} days
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Qualified Slab</div>
-                      <div style={{ fontSize: "14px", fontWeight: 800, color: summary.days >= 26 ? "#059669" : summary.days >= 24 ? "#0284c7" : "var(--subtext)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {summary.days >= 26 ? "Tier 1 (26+ Days)" : summary.days >= 24 ? "Tier 2 (24–25 Days)" : "Below Threshold (<24)"}
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: (summary?.days ?? 0) >= 26 ? "#059669" : (summary?.days ?? 0) >= 24 ? "#0284c7" : "var(--subtext)", fontFamily: "monospace", marginTop: "2px" }}>
+                        {(summary?.days ?? 0) >= 26 ? "Tier 1 (26+ Days)" : (summary?.days ?? 0) >= 24 ? "Tier 2 (24–25 Days)" : "Below Threshold (<24)"}
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>

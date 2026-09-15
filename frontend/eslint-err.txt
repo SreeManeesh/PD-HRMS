@@ -1,0 +1,13 @@
+npm verbose cli C:\Program Files\nodejs\node.exe C:\Users\himan\AppData\Roaming\npm\node_modules\npm\bin\npm-cli.js
+npm info using npm@10.8.3
+npm info using node@v22.23.1
+npm verbose title npm exec eslint src --format json
+npm verbose argv "exec" "--" "eslint" "src" "--format" "json"
+npm verbose logfile logs-max:10 dir:C:\Users\himan\AppData\Local\npm-cache\_logs\2026-09-14T19_32_40_485Z-
+npm verbose logfile C:\Users\himan\AppData\Local\npm-cache\_logs\2026-09-14T19_32_40_485Z-debug-0.log
+npm verbose cwd c:\Users\himan\OneDrive\Documents\projects\PD-hrms\PD-HRMS\frontend
+npm verbose os Windows_NT 10.0.26200
+npm verbose node v22.23.1
+npm verbose npm  v10.8.3
+npm verbose exit 1
+npm verbose code 1

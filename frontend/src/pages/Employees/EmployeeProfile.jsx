@@ -22,7 +22,7 @@ import Spinner from "../../components/shared/Spinner.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { getEmployee, updateEmployee } from "../../services/employeeService.js";
 import { createConsentPolicy } from "../../services/consentService.js";
-import { createProductionRecord } from "../../services/payrollService.js";
+import { createProductionRecord, getPayrollComponentConfigs } from "../../services/payrollService.js";
 import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 
 const EMPLOYEE_STATUS_META = {
@@ -61,7 +61,7 @@ const LOC_TYPES = ["OFFICE", "REMOTE", "HYBRID", "CLIENT_SITE"];
 const REGIMES = ["OLD", "NEW"];
 const WAGE_RATES = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "ANNUAL"];
 const CONTRACTORS = ["M/s Sharma Constructions", "Green Leaf Facility Services", "Bright Logistics", "KK Electrical Works", "Sai Textiles India"];
-const EARNINGS = ["BASIC", "HRA", "SPECIAL_ALLOWANCE", "TRANSPORT_ALLOWANCE", "MEDICAL_ALLOWANCE", "LEAVE_TRAVEL_ALLOWANCE", "PERFORMANCE_BONUS", "INCENTIVE", "OVERTIME", "OTHER"];
+// EARNINGS and DEDUCTIONS are now fetched dynamically from the API — see state below
 
 const WZ_DEFAULTS = {
   employeeCode: "", firstName: "", middleName: "", lastName: "", dateOfBirth: "",
@@ -87,7 +87,7 @@ const WZ_DEFAULTS = {
     bankName: "", accountNumber: "", ifscCode: "", bankBranch: "",
     accountHolderName: "", accountType: "", salaryPaymentMode: "", upiId: "",
   },
-  payRules: { wageRate: "", salaryAdvance: false, productionTarget: "", contractor: "", earnings: [] },
+  payRules: { wageRate: "", salaryAdvance: false, productionTarget: "", contractor: "", earnings: [], deductions: [] },
   annualSalary: "", monthlyGross: "",
   family: [], education: [], skills: [], certifications: [], languages: [], experience: [],
   consents: [], role: "EMPLOYEE",
@@ -328,7 +328,24 @@ export default function EmployeeProfile() {
   const [saved, setSaved] = useState("");
   const [errMsg, setErrMsg] = useState("");
   const [addConsentOpen, setAddConsentOpen] = useState(false);
-  const [addConsent, setAddConsent] = useState({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT" });
+  const [consentDraft, setConsentDraft] = useState({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT", isStatutory: false });
+  const [creatingConsent, setCreatingConsent] = useState(false);
+  // Dynamic payroll component options fetched from the database
+  const [dynamicEarnings, setDynamicEarnings] = useState([]);
+  const [dynamicDeductions, setDynamicDeductions] = useState([]);
+
+  // Fetch dynamic payroll components once on mount
+  useEffect(() => {
+    getPayrollComponentConfigs().catch(() => ({ data: [] })).then((res) => {
+      const all = res.data || [];
+      setDynamicEarnings(all.filter((c) => c.kind !== "deduction").map((c) => c.code || c.name));
+      setDynamicDeductions(all.filter((c) => c.kind === "deduction").map((c) => c.code || c.name));
+    });
+  }, []);
+
+  // Derived: earning/deduction option arrays (fall back to static if API returns nothing)
+  const earningsOptions = dynamicEarnings.length > 0 ? dynamicEarnings : ["BASIC", "HRA", "SPECIAL_ALLOWANCE", "TRANSPORT_ALLOWANCE"];
+  const deductionsOptions = dynamicDeductions.length > 0 ? dynamicDeductions : ["EPF", "ESIC", "PT", "TDS", "LWF"];
 
   useEffect(() => {
     getEmployee(id)
@@ -385,6 +402,44 @@ export default function EmployeeProfile() {
       setErrMsg(e.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const submitConsentDraft = async () => {
+    if (!consentDraft.code.trim() || !consentDraft.title.trim()) return;
+    setCreatingConsent(true);
+    setErrMsg("");
+    try {
+      const payload = {
+        code: consentDraft.code.trim().toUpperCase(),
+        title: consentDraft.title.trim(),
+        purposeText: consentDraft.purposeText?.trim() || "",
+        legalBasis: consentDraft.legalBasis || "CONTRACT",
+        isStatutory: !!consentDraft.isStatutory,
+        blocking: !!consentDraft.isStatutory,
+        withdrawable: !consentDraft.isStatutory,
+        requiredOnOnboarding: false,
+        useCase: "EMPLOYEE_PROFILE",
+        dataFields: [],
+        validityPeriodDays: null,
+      };
+      await createConsentPolicy(payload);
+      // Reflect the newly registered consent type in the register immediately.
+      setLocal((p) => ({
+        ...p,
+        consents: [
+          ...(p?.consents || []),
+          { code: payload.code, method: "HR_ADMIN", status: "GRANTED" },
+        ],
+      }));
+      setConsentDraft({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT", isStatutory: false });
+      setAddConsentOpen(false);
+      setSaved("Consent type added");
+      setTimeout(() => setSaved(""), 2500);
+    } catch (e) {
+      setErrMsg(e?.response?.data?.message || e?.message || "Could not add consent type");
+    } finally {
+      setCreatingConsent(false);
     }
   };
 
@@ -604,7 +659,8 @@ export default function EmployeeProfile() {
                   <SelectInput label="Assigned contractor / vendor" value={local.payRules.contractor} onChange={(v) => setL("payRules.contractor", v)} options={["Direct Company Worker", ...CONTRACTORS]} />
                   <SelectInput label="Wage rate mode" value={local.payRules.wageRate} onChange={(v) => setL("payRules.wageRate", v)} options={WAGE_RATES} />
                   <Toggle label="Salary advance eligible" value={local.payRules.salaryAdvance} onChange={(v) => setL("payRules.salaryAdvance", v)} />
-                  <MultiSelect label="Applicable earning allowances" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={EARNINGS} />
+                  <MultiSelect label="Applicable earning allowances" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={earningsOptions} />
+                  <MultiSelect label="Applicable deductions" value={local.payRules.deductions} onChange={(v) => setL("payRules.deductions", v)} options={deductionsOptions} />
                 </Grid>
               </Section>
             </>

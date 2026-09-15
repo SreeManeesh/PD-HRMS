@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, Factory, CheckCircle2, TrendingUp, Award, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Factory, Award, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { getProductionRecords, createProductionRecord, getPayrollComponentConfigs } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";

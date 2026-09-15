@@ -1,0 +1,44 @@
+﻿ M backend/prisma/schema.prisma
+ M backend/src/modules/payroll/payrollComponent.controller.ts
+ M frontend/src/components/dashboard/TeamApprovalsWidget.jsx
+ M frontend/src/components/payroll/BlueCollarPayrollPanel.jsx
+ M frontend/src/components/payroll/DeductionsPanel.jsx
+ M frontend/src/components/payroll/EarningsPanel.jsx
+ M frontend/src/components/payroll/EmployeeSalaryBreakdown.jsx
+ M frontend/src/pages/Attendance/Attendance.jsx
+ M frontend/src/pages/ESS/ESS.jsx
+ M frontend/src/pages/Employees/EmployeeProfile.jsx
+ M frontend/src/pages/Expenses/Expenses.jsx
+ M frontend/src/pages/Leave/Leave.css
+ M frontend/src/pages/Leave/Leave.jsx
+ M frontend/src/pages/Payroll/Payroll.jsx
+ M frontend/src/pages/PayslipBranding/PayslipBranding.jsx
+ M frontend/src/pages/PayslipDesigner/PayslipDesigner.jsx
+ M frontend/src/pages/Performance/Performance.jsx
+ M frontend/src/pages/Tasks/Tasks.jsx
+?? frontend/_breakdown.cjs
+?? frontend/_constbin.txt
+?? frontend/_ctx.cjs
+?? frontend/_empty.txt
+?? frontend/_eslint_fresh.json
+?? frontend/_extract_leave.cjs
+?? frontend/_head_leave.jsx.txt
+?? frontend/_hooks.txt
+?? frontend/_leave_lint.json
+?? frontend/_lintfile.cjs
+?? frontend/_list.cjs
+?? frontend/_lx.json
+?? frontend/_parse_check.mjs
+?? frontend/_refresh.txt
+?? frontend/_report_leave.jsx.txt
+?? frontend/_show_lint.cjs
+?? frontend/_unused.txt
+?? frontend/_useless.txt
+?? frontend/eslint-err.txt
+?? frontend/eslint-report.json
+?? frontend/eslint-summary.cjs
+?? frontend/eslint-summary.txt
+?? frontend/eslint-undef.txt
+?? frontend/lint-check.cjs
+?? frontend/lint-check.txt
+?? status.txt

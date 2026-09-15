@@ -10,7 +10,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Clock, UserCheck, UserX, Coffee, Home, Upload, RotateCcw,
   Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Factory, Briefcase,
-  Coins, Building2
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -330,8 +329,8 @@ export default function Attendance() {
   const countStatus = (s) => rawDisplayRecords.filter((r) => (STATUS_META_ALIAS[r.status] || r.status) === s).length;
   const periodLabel = month === 0 ? "All months" : `${MONTHS[month - 1]}${day === 0 ? "" : ` ${day}`}`;
 
-  // Pagination — 100 rows per page
-  const PAGE_SIZE = 100;
+  // Pagination — strictly 10 rows per page
+  const PAGE_SIZE = 10;
   const pageCount = Math.max(1, Math.ceil(processedRecords.length / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), pageCount);
   const pagedRecords = processedRecords.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -342,22 +341,6 @@ export default function Attendance() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "24px" }}>
           <PageHeader title="Attendance & Factory Output" subtitle={`${periodLabel} ${year} — Workforce attendance, production mapping & shift logs`} />
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button
-              id="reconcile-payroll-btn"
-              onClick={() => navigate(`/payroll?month=${month || 9}&year=${year}`)}
-              style={{
-                display: "flex", alignItems: "center", gap: "7px",
-                padding: "10px 20px",
-                background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
-                color: "#fff", border: "none",
-                borderRadius: "var(--radius-sm)", fontWeight: 700, fontSize: "13.5px",
-                cursor: "pointer",
-                boxShadow: "0 2px 6px rgba(5,150,105,0.25)",
-              }}
-            >
-              <Coins size={16} />
-              Reconcile & View in Payroll
-            </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xlsm,.xltx,.xltm,.xlam,.xlsb,.xls,.xlt,.xla,.xlw,.csv,.tsv,.txt,.prn,.dif,.slk,.xml" style={{ display: "none" }} onChange={handleUpload} />
             <button
               id="upload-btn"
@@ -608,10 +591,6 @@ export default function Attendance() {
                     <th style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
                       Source
                     </th>
-                    {/* Direct link to Payroll Reconciliation */}
-                    <th style={{ padding: "12px 18px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
-                      Payroll Link
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -690,23 +669,6 @@ export default function Attendance() {
                           >
                             {contractorName}
                           </span>
-                        </td>
-
-                        {/* Reconcile in Payroll Action Link */}
-                        <td style={{ padding: "13px 18px", whiteSpace: "nowrap" }}>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/payroll?employeeId=${r.employeeId}&month=${month || ymOf(r.date).m || 9}&year=${year}`)}
-                            style={{
-                              display: "inline-flex", alignItems: "center", gap: "5px",
-                              padding: "5px 11px", background: "rgba(5, 150, 105, 0.08)",
-                              border: "1px solid rgba(5, 150, 105, 0.3)", borderRadius: "4px",
-                              fontSize: "12px", fontWeight: 700, color: "#059669", cursor: "pointer",
-                            }}
-                            title={`Reconcile ${r.employeeName || r.employeeId} in Payroll`}
-                          >
-                            <Coins size={13} /> View in Payroll
-                          </button>
                         </td>
                       </tr>
                     );

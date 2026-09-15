@@ -8,11 +8,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Loader2, RefreshCcw } from "lucide-react";
+import { X, Loader2, RefreshCcw, UserPlus } from "lucide-react";
 import { getWizardSession } from "../../services/employeeService.js";
 import { useToast } from "../../context/ToastContext.jsx";
 
-export default function RegistrationWizardModal({ isOpen, onClose, onRegistered }) {
+export default function RegistrationWizardModal({ isOpen, onClose, onRegistered, onSwitchToStandard }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -138,20 +138,37 @@ export default function RegistrationWizardModal({ isOpen, onClose, onRegistered 
 
       {status === "error" && (
         <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
-          <div style={{ maxWidth: "420px", textAlign: "center", display: "flex", flexDirection: "column", gap: "14px" }}>
+          <div style={{ maxWidth: "440px", textAlign: "center", display: "flex", flexDirection: "column", gap: "14px", padding: "20px" }}>
             <p style={{ fontSize: "14px", color: "var(--text)", fontWeight: 600 }}>Could not open the registration wizard</p>
             <p style={{ fontSize: "13px", color: "var(--subtext)", whiteSpace: "pre-wrap" }}>{error}</p>
-            <div>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap", marginTop: "6px" }}>
               <button
+                type="button"
                 onClick={open}
                 style={{
                   display: "inline-flex", alignItems: "center", gap: "6px",
-                  padding: "9px 18px", background: "var(--primary)", color: "#fff",
-                  border: "none", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer",
+                  padding: "9px 18px", background: "none", color: "var(--text)",
+                  border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer",
                 }}
               >
                 <RefreshCcw size={15} /> Retry
               </button>
+              {onSwitchToStandard && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onSwitchToStandard();
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "9px 18px", background: "var(--primary)", color: "#fff",
+                    border: "none", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer",
+                  }}
+                >
+                  <UserPlus size={15} /> Open Standard Add Employee Form
+                </button>
+              )}
             </div>
           </div>
         </div>

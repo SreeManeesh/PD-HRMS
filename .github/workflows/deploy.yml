@@ -6,7 +6,36 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  verify:
+    name: Pre-Deploy Test & Build Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify Backend
+        working-directory: backend
+        run: |
+          npm ci
+          npx prisma generate
+          npm run typecheck
+          npm test
+
+      - name: Verify Frontend Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
   deploy:
+    name: Deploy to VPS
+    needs: [verify]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,6 +46,7 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_PASSWORD: ${{ secrets.VPS_SSH_PASSWORD }}
+          DEPLOY_CMD: "cd /home/deploy/PD_HRMS && git pull origin main && chmod +x deploy.sh && ./deploy.sh"
         run: |
           set -e
           # Install sshpass (password-based SSH) on the runner
@@ -25,7 +55,7 @@ jobs:
 
           export SSHPASS="$VPS_SSH_PASSWORD"
           sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VPS_USER@$VPS_HOST" \
-            "cd /home/deploy/PD_HRMS && git pull origin main && chmod +x deploy.sh && ./deploy.sh"
+            "$DEPLOY_CMD"
 
       - name: Health check
         env:

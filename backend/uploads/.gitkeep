@@ -1,0 +1,6 @@
+# This file keeps the backend/uploads/ directory structure in version control
+# without committing the actual uploaded files (logos, signatures, etc.).
+#
+# The uploads directory is gitignored — files here are generated at runtime
+# when users upload company logos and signatures through the HRMS settings.
+# Never commit real uploaded files to the repository.

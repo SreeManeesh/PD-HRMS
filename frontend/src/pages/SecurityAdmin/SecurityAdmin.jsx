@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Security & Administration Page � Module 25
  * Tabs: Users & Roles � Authentication & Access � Encryption & Backup � Audit Log
  */
@@ -25,6 +25,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
 import {
   getRoles,
   grantPermission,
@@ -41,7 +42,6 @@ import {
   getSessions,
   getSecurityConfig,
   updatePasswordPolicy,
-  updateSsoConfig,
   updateIpRestriction,
   getKmsConfig,
   rotateKmsKey,
@@ -811,6 +811,7 @@ export default function Security() {
   return (
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
+        <DemoBanner module="Security & Administration" />
         <PageHeader title="Security & Administration" subtitle="Users, roles, authentication policy, and system-wide security configuration" />
 
         {breakGlassAlert && (

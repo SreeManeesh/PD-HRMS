@@ -249,6 +249,25 @@ export async function logout(userId: string, refreshToken?: string) {
   writeAuditLog({ action: "LOGOUT", entityType: "User", entityId: userId, newValue: { at: new Date().toISOString() } });
 }
 
+/**
+ * Invalidate all active refresh tokens for a user across all devices/browsers.
+ * Called immediately upon password change, role reassignment, or explicit sign-out-all.
+ */
+export async function revokeAllUserSessions(userId: string, reason: string = "SECURITY_EVENT"): Promise<number> {
+  const result = await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  await writeAuditLog({
+    actorUserId: userId,
+    action: "UPDATE",
+    entityType: "UserSessions",
+    entityId: userId,
+    newValue: { sessionsRevoked: result.count, reason },
+  });
+  return result.count;
+}
+
 export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw AppError.notFound("User not found");
@@ -261,8 +280,41 @@ export async function changePassword(userId: string, currentPassword: string, ne
   const hash = await hashPassword(newPassword);
   await prisma.user.update({ where: { id: userId }, data: { passwordHash: hash } });
   // Invalidate all existing refresh tokens after password change (spec §23).
-  await prisma.refreshToken.updateMany({ where: { userId }, data: { revokedAt: new Date() } });
+  await revokeAllUserSessions(userId, "PASSWORD_CHANGED");
   writeAuditLog({ action: "UPDATE", entityType: "User", entityId: userId, newValue: { passwordChanged: true } });
+}
+
+export async function adminResetPassword(targetUserId: string, newPassword: string, adminUserId: string) {
+  const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!user) throw AppError.notFound("User not found");
+  if (newPassword.length < 8) {
+    throw AppError.badRequest("New password must be at least 8 characters");
+  }
+  const hash = await hashPassword(newPassword);
+  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash: hash } });
+  await revokeAllUserSessions(targetUserId, "ADMIN_PASSWORD_RESET");
+  await writeAuditLog({
+    actorUserId: adminUserId,
+    action: "UPDATE",
+    entityType: "User",
+    entityId: targetUserId,
+    newValue: { passwordResetByAdmin: true },
+  });
+}
+
+export async function adminChangeUserRole(targetUserId: string, newRoleId: string, adminUserId: string) {
+  const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!user) throw AppError.notFound("User not found");
+  await prisma.user.update({ where: { id: targetUserId }, data: { roleId: newRoleId } });
+  // Invalidate previous sessions so new role takes effect immediately
+  await revokeAllUserSessions(targetUserId, "ROLE_CHANGED");
+  await writeAuditLog({
+    actorUserId: adminUserId,
+    action: "UPDATE",
+    entityType: "UserRole",
+    entityId: targetUserId,
+    newValue: { oldRoleId: user.roleId, newRoleId },
+  });
 }
 
 export function getFailedLoginState() {

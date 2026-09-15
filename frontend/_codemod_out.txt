@@ -1,0 +1,24 @@
+﻿NO CHANGE: src/components/payroll/BlueCollarPayrollPanel.jsx
+NO CHANGE: src/components/payroll/ContractorBillingPanel.jsx
+NO CHANGE: src/components/payroll/DeductionsPanel.jsx
+NO CHANGE: src/components/payroll/EarningsPanel.jsx
+NO CHANGE: src/components/payroll/PayRulesPanel.jsx
+NO CHANGE: src/components/payroll/ProductionRecordsPanel.jsx
+NO CHANGE: src/components/payroll/WageRatesPanel.jsx
+UPDATED: src/pages/Attendance/Attendance.jsx
+NO CHANGE: src/pages/Employees/BulkImportPreviewModal.jsx
+UPDATED: src/pages/Employees/EmployeeProfile.jsx
+NO CHANGE: src/pages/ESS/ESS.jsx
+NO CHANGE: src/pages/Payroll/Payroll.jsx
+NO CHANGE: src/pages/PayslipBranding/PayslipBranding.jsx
+UPDATED: src/pages/PayslipDesigner/PayslipDesigner.jsx
+NO CHANGE: src/pages/Policies/Policies.jsx
+NO CHANGE: src/pages/Recruitment/Recruitment.jsx
+NO CHANGE: src/pages/SecurityAdmin/SecurityAdmin.jsx
+NO CHANGE: src/pages/Tasks/Tasks.jsx
+NO CHANGE: src/pages/Travel/Travel.jsx
+NO CHANGE: src/components/payslip/ClassicTablePayslip.jsx
+NO CHANGE: src/components/shared/EmployeeSearchBox.jsx
+NO CHANGE: src/tests/App.smoke.test.jsx
+NO CHANGE: src/pages/Dashboard/HRDashboard.jsx
+files changed: 3

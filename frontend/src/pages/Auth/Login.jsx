@@ -85,20 +85,29 @@ export default function Login() {
           alignItems: "center",
           justifyContent: "center",
         }}>
-          <img
-            src="/robot.png"
-            alt="HRMS Assistant"
-            style={{
-              width: "110px",
-              filter: "drop-shadow(0 10px 20px rgba(0,0,0,0.35))",
-            }}
-          />
+          <picture>
+            <source srcSet="/robot.webp" type="image/webp" />
+            <img
+              src="/robot.png"
+              alt="HRMS Assistant"
+              width="110"
+              height="110"
+              loading="eager"
+              style={{
+                width: "110px",
+                height: "auto",
+                filter: "drop-shadow(0 10px 20px rgba(0,0,0,0.35))",
+              }}
+            />
+          </picture>
         </div>
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "52px" }}>
           <img
             src="/logo.png"
             alt="Proteccio HRMS"
+            width="48"
+            height="48"
             style={{ width: "48px", height: "48px", borderRadius: "12px", objectFit: "contain", filter: "drop-shadow(0 4px 12px rgba(15,118,110,0.5))" }}
           />
           <div>
