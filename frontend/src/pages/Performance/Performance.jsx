@@ -17,6 +17,7 @@ import {
   Circle,
   UserCheck,
   Users2,
+  Sparkles,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";

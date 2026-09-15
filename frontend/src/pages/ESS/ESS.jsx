@@ -41,7 +41,7 @@ import {
   getLastExportRequest,
   requestDataExport,
 } from "../../services/essService.js";
-import { proofStatusMeta, EXPORT_THROTTLE_DAYS, EXPORT_EXPIRY_HOURS } from "../../mock/ess.js";
+import { proofStatusMeta, EXPORT_THROTTLE_DAYS } from "../../mock/ess.js";
 
 // Identity is always this session's user — derived from the real JWT session,
 // never from a route param, query string, or form field (ESS scoping rule 16.6).
@@ -373,6 +373,9 @@ function HierarchyView() {
 }
 
 function DataExportTab({ lastRequest, onRequested }) {
+  const { user } = useAuth();
+  // Derive employee ID from the real session — never a hardcoded constant.
+  const meId = user?.employeeCode || user?.id || "";
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
 

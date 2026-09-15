@@ -1,167 +1,752 @@
-.leave-overview {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.8fr);
-  gap: 16px;
-  margin-bottom: 14px;
+/* ==========================================================================
+   Proteccio Enterprise HRMS — Leave Management (CRM Professional Style)
+   ========================================================================== */
+
+/* ─── CRM Navigation Tabs ─────────────────────────────────────────────────── */
+.leave-crm-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
 }
 
-.leave-donut-panel,
-.leave-detail-panel {
+.leave-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  color: var(--subtext);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.18s ease;
+  position: relative;
+}
+
+.leave-tab-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.leave-tab-btn.active {
+  color: var(--primary);
+  background: var(--primary-light);
+  font-weight: 700;
+}
+
+.leave-tab-btn.active::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 2px;
+}
+
+.leave-tab-badge {
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--amber-light);
+  color: var(--amber);
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
+.leave-tab-badge.neutral {
+  background: var(--background);
+  color: var(--subtext);
+  border: 1px solid var(--border);
+}
+
+/* ─── CRM Metric Cards (KPI Ribbon) ───────────────────────────────────────── */
+.leave-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.leave-kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-xs);
+  text-align: left;
+}
+
+.leave-kpi-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.leave-kpi-card.active {
+  border-color: var(--kpi-color, var(--primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kpi-color, var(--primary)) 20%, transparent);
+  background: color-mix(in srgb, var(--kpi-color, var(--primary)) 4%, var(--card));
+}
+
+.leave-kpi-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--kpi-color, var(--primary)) 12%, transparent);
+  color: var(--kpi-color, var(--primary));
+}
+
+.leave-kpi-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.leave-kpi-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--subtext);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.leave-kpi-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.15;
+}
+
+/* ─── CRM Toolbar (Search & Filter Bar) ───────────────────────────────────── */
+.leave-crm-toolbar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.leave-toolbar-primary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.leave-search-wrap {
+  flex: 1;
+  min-width: 240px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.leave-search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--subtext);
+  pointer-events: none;
+}
+
+.leave-search-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 34px 0 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--text);
+  font-size: 13.5px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.leave-search-input:focus {
+  border-color: var(--primary);
+  background: var(--card);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.leave-search-clear {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--subtext);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 50%;
+}
+
+.leave-search-clear:hover {
+  color: var(--text);
+}
+
+.leave-filter-select {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  min-width: 140px;
+  transition: border-color 0.15s ease;
+}
+
+.leave-filter-select:focus {
+  border-color: var(--primary);
+}
+
+.leave-date-pill-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.leave-date-pill-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--subtext);
+}
+
+.leave-date-input {
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.leave-toolbar-secondary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--subtext);
+}
+
+.leave-reset-filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.leave-reset-filters-btn:hover {
+  background: var(--red-light);
+}
+
+/* ─── Enterprise Data Table ──────────────────────────────────────────────── */
+.leave-table-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-.leave-donut-panel {
-  padding: 22px;
+.leave-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.leave-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.leave-table th {
+  padding: 12px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--subtext);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.leave-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.leave-table th.sortable:hover {
+  background: color-mix(in srgb, var(--primary) 8%, var(--background));
+  color: var(--primary);
+}
+
+.leave-table td {
+  padding: 14px 16px;
+  font-size: 13.5px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.leave-table tr:last-child td {
+  border-bottom: none;
+}
+
+.leave-table tr:hover td {
+  background: var(--card-hover);
+}
+
+.leave-emp-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.leave-emp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.leave-emp-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.leave-emp-id {
+  font-size: 11.5px;
+  color: var(--subtext);
+  font-family: monospace;
+}
+
+.leave-date-badge {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.leave-date-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.leave-session-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-light);
+  padding: 1px 6px;
+  border-radius: 4px;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+.leave-days-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 12.5px;
+  background: var(--background);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.leave-category-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--primary-light);
+  color: var(--primary);
+  margin-bottom: 3px;
+}
+
+.leave-doc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.leave-doc-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.leave-action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.leave-btn-approve {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--green);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.leave-btn-approve:hover {
+  filter: brightness(1.1);
+}
+
+.leave-btn-reject {
+  padding: 6px 12px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  background: var(--red-light);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.leave-btn-reject:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+.leave-btn-details {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--subtext);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.leave-btn-details:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ─── CRM Table Pagination ────────────────────────────────────────────────── */
+.leave-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: var(--background);
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--subtext);
+}
+
+.leave-pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leave-page-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.leave-page-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.leave-page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Balances & Entitlements Tab ─────────────────────────────────────────── */
+.leave-balance-cards-grid {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.leave-entitlement-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.leave-entitlement-card:hover,
+.leave-entitlement-card.selected {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+.leave-entitlement-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.leave-entitlement-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.leave-entitlement-days {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.leave-entitlement-days span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--subtext);
+  margin-left: 4px;
+}
+
+.leave-entitlement-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--subtext);
+  font-weight: 500;
+}
+
+.leave-entitlement-progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.leave-entitlement-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+/* ─── Donut & Distribution Panel ─────────────────────────────────────────── */
+.leave-distribution-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-xs);
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 32px;
   align-items: center;
 }
 
-.leave-donut-wrap { display: grid; place-items: center; }
-.leave-donut {
-  width: 164px;
-  height: 164px;
+.leave-donut-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.leave-donut-interactive {
+  width: 180px;
+  height: 180px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   transition: transform 180ms ease;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
   cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
 }
-.leave-donut:hover { transform: scale(1.025); }
-.leave-donut-center {
-  width: 108px;
-  height: 108px;
+
+.leave-donut-interactive:hover {
+  transform: scale(1.03);
+}
+
+.leave-donut-inner-hole {
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
   background: var(--card);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-sm);
 }
-.leave-donut-center strong { font-size: 28px; line-height: 1; color: var(--text); }
-.leave-donut-center span { margin-top: 5px; font-size: 10.5px; color: var(--subtext); }
-.leave-eyebrow { font-size: 10.5px; font-weight: 800; color: var(--primary); text-transform: uppercase; letter-spacing: 0.08em; }
-.leave-donut-legend h2 { margin-top: 4px; font-size: 18px; color: var(--text); }
-.leave-helper { margin-top: 4px; font-size: 12px; color: var(--subtext); }
-.leave-clear-btn {
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--subtext);
-  border-radius: 99px;
-  padding: 4px 12px;
-  font-size: 11.5px;
+
+.leave-donut-inner-hole strong {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+}
+
+.leave-donut-inner-hole span {
+  font-size: 11px;
   font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.leave-clear-btn:hover { border-color: var(--red); color: var(--red); background: var(--red-light); }
-.leave-legend-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 15px; }
-.leave-legend {
-  border: 1px solid transparent;
-  background: var(--background);
-  border-radius: 9px;
-  padding: 8px 9px;
-  display: grid;
-  grid-template-columns: 9px minmax(0, 1fr) auto;
-  gap: 7px;
-  align-items: center;
-  color: var(--label);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  font-size: 11.5px;
-}
-.leave-legend:hover, .leave-legend.active { border-color: var(--primary); background: var(--primary-light); }
-.leave-legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-.leave-legend strong { color: var(--text); }
-.leave-detail-panel { padding: 22px; display: flex; flex-direction: column; justify-content: space-between; }
-.leave-detail-panel h3 { font-size: 19px; margin-top: 4px; color: var(--text); }
-.leave-detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 18px 0; }
-.leave-detail-grid div { padding: 10px; border-radius: 9px; background: var(--background); }
-.leave-detail-grid strong { display: block; font-size: 18px; color: var(--text); }
-.leave-detail-grid span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--subtext); }
-.leave-progress { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; }
-.leave-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 250ms ease; }
-
-.leave-request-header { display: flex; justify-content: space-between; align-items: end; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-.leave-digest-header { margin-top: 28px; }
-.leave-request-header h2 { font-size: 15px; color: var(--text); }
-.leave-request-header p { margin-top: 3px; font-size: 11.5px; color: var(--subtext); }
-.leave-status-cards { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }
-.leave-status-card {
-  border: 1px solid var(--border);
-  background: var(--card);
-  border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--status-color);
-  cursor: pointer;
-  font: inherit;
-}
-.leave-status-card span { color: var(--label); font-size: 12px; }
-.leave-status-card strong { margin-left: auto; color: var(--text); }
-.leave-status-card:hover, .leave-status-card.active { border-color: var(--status-color); background: color-mix(in srgb, var(--status-color) 7%, white); }
-
-.leave-pagination {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
   color: var(--subtext);
   margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
-.leave-pagination button {
-  padding: 4px 12px;
+
+.leave-distribution-details {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.leave-dist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.leave-dist-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.leave-dist-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.leave-legend-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--card);
-  color: var(--text);
   font-size: 12px;
-  font-weight: 600;
+  color: var(--text);
   cursor: pointer;
+  transition: all 0.15s ease;
 }
-.leave-pagination button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
-.leave-pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.leave-decision-cell { min-width: 220px; padding: 13px 16px; font-size: 12px; color: var(--subtext); }
-.leave-decision-cell div { display: grid; gap: 3px; }
-.leave-decision-cell strong { color: var(--text); font-size: 12px; }
-.leave-decision-cell p { margin-top: 3px; white-space: normal; line-height: 1.4; color: var(--label); }
-.leave-decision-cell .leave-rejection-reason { color: #b91c1c; background: #fef2f2; border-left: 3px solid #dc2626; border-radius: 5px; padding: 6px 8px; }
-.leave-awaiting, .leave-self-note { color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
-.leave-row-actions { display: flex; gap: 7px; }
-.leave-row-actions button, .leave-decision-actions button { border: 0; border-radius: 7px; padding: 8px 11px; font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-.leave-approve-button, .leave-approve-confirm { color: #fff; background: #059669; }
-.leave-reject-button, .leave-reject-confirm { color: #fff; background: #dc2626; }
-.leave-row-actions button:hover, .leave-decision-actions button:hover { filter: brightness(0.94); }
-.leave-decision-form { display: grid; gap: 10px; }
-.leave-decision-summary { display: grid; gap: 4px; padding: 12px; border-radius: 9px; background: var(--background); }
-.leave-decision-summary strong { color: var(--text); }
-.leave-decision-summary span, .leave-decision-summary small { color: var(--subtext); }
-.leave-decision-summary small { margin-top: 4px; line-height: 1.4; }
-.leave-decision-form label { margin-top: 4px; color: var(--label); font-size: 12px; font-weight: 700; }
-.leave-decision-form textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); background: var(--card); font: inherit; font-size: 13px; resize: vertical; outline: none; }
-.leave-decision-form textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent); }
-.leave-character-count { justify-self: end; color: var(--subtext); font-size: 10.5px; }
-.leave-decision-error { color: #b91c1c; background: #fef2f2; border-radius: 7px; padding: 9px 10px; font-size: 12px; }
-.leave-decision-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 5px; }
-.leave-decision-actions .leave-secondary-button { color: var(--label); background: var(--background); border: 1px solid var(--border); }
-.leave-decision-actions button:disabled { cursor: not-allowed; opacity: 0.65; }
-
-@media (max-width: 900px) {
-  .leave-overview { grid-template-columns: 1fr; }
-  .leave-detail-panel { min-height: 220px; }
+.leave-legend-pill:hover,
+.leave-legend-pill.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  font-weight: 600;
 }
+
+.leave-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ─── Responsive Queries ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .leave-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .leave-distribution-card {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .leave-dist-legend-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 @media (max-width: 640px) {
-  .leave-donut-panel { grid-template-columns: 1fr; }
-  .leave-legend-list { grid-template-columns: 1fr; }
-  .leave-status-cards { grid-template-columns: repeat(2, 1fr); }
+  .leave-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  .leave-crm-tabs {
+    overflow-x: auto;
+  }
+  .leave-dist-legend-grid {
+    grid-template-columns: 1fr;
+  }
 }

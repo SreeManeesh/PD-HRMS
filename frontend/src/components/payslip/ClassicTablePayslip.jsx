@@ -5,7 +5,6 @@
  * attendance & salary breakdown tables, and custom color accents.
  */
 
-import React from "react";
 import { assetUrl } from "../../utils/assetUrl.js";
 import { inr } from "../../utils/currency.js";
 import { rupeesInWords } from "../../utils/numberToWords.js";

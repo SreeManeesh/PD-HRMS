@@ -11,7 +11,6 @@ import {
   FileSignature,
   Plus,
   Star,
-  X,
   ShieldCheck,
   UserPlus,
   AlertTriangle,

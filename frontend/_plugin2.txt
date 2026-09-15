@@ -1,0 +1,2 @@
+16 rules
+recommended-latest: ["react-hooks/rules-of-hooks","react-hooks/exhaustive-deps","react-hooks/static-components","react-hooks/use-memo","react-hooks/void-use-memo","react-hooks/preserve-manual-memoization","react-hooks/incompatible-library","react-hooks/immutability","react-hooks/globals","react-hooks/refs","react-hooks/set-state-in-effect","react-hooks/error-boundaries","react-hooks/purity","react-hooks/set-state-in-render","react-hooks/unsupported-syntax","react-hooks/config","react-hooks/gating"]

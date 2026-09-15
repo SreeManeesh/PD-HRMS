@@ -22,7 +22,7 @@ import { EXPENSE_CATEGORIES, EXPENSE_POLICY, expenseStatusMeta, LOCKED_STATUSES 
 
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 const fmtAmount = (n) => `₹${n.toLocaleString("en-IN")}`;
-function SubmitClaimModal({ isOpen, onClose, onSubmitted }) {
+function SubmitClaimModal({ isOpen, onClose, onSubmitted, currentEmployeeId, currentEmployeeName }) {
   const [form, setForm] = useState({ category: "", amount: "", expenseDate: "", businessPurpose: "", receiptFileName: "" });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -47,8 +47,8 @@ function SubmitClaimModal({ isOpen, onClose, onSubmitted }) {
     if (!validate()) return;
     setSaving(true);
     await submitExpenseClaim({
-      employeeId: CURRENT_EMPLOYEE.id,
-      employeeName: CURRENT_EMPLOYEE.name,
+      employeeId: currentEmployeeId,
+      employeeName: currentEmployeeName,
       category: form.category,
       amount: amountNum,
       expenseDate: form.expenseDate,
@@ -324,7 +324,13 @@ export default function Expenses() {
         </div>
       </div>
 
-      <SubmitClaimModal isOpen={showSubmit} onClose={() => setShowSubmit(false)} onSubmitted={loadAll} />
+      <SubmitClaimModal
+        isOpen={showSubmit}
+        onClose={() => setShowSubmit(false)}
+        onSubmitted={loadAll}
+        currentEmployeeId={currentEmployeeId}
+        currentEmployeeName={currentEmployeeName}
+      />
       <RejectModal claim={rejectTarget} onClose={() => setRejectTarget(null)} onRejected={loadAll} />
     </MainLayout>
   );

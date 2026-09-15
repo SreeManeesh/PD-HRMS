@@ -8,7 +8,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import React from 'react';
 import DemoBanner from '../components/shared/DemoBanner.jsx';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext.jsx';

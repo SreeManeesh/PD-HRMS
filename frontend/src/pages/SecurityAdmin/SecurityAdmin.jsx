@@ -42,7 +42,6 @@ import {
   getSessions,
   getSecurityConfig,
   updatePasswordPolicy,
-  updateSsoConfig,
   updateIpRestriction,
   getKmsConfig,
   rotateKmsKey,

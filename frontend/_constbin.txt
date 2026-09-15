@@ -1,0 +1,6 @@
+﻿
+### src/pages/Performance/Performance.jsx
+  L2280:8 no-constant-binary-expression :: Unexpected constant truthiness on the left-hand side of a `&&` expression.
+      | {false && <div style={{ ...cardStyle, overflow: "hidden" }}>
+
+COUNT 1

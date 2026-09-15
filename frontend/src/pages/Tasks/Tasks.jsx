@@ -20,6 +20,7 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getProjects,
   addProject,
@@ -33,7 +34,6 @@ import {
   getTimeEntries,
   logTimeEntry,
   getTaskMeta,
-  getTaskTotalHours
 } from "../../services/taskService.js";
 
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -250,6 +250,13 @@ function TaskDetailModal({
   const [hours, setHours] = useState("");
   const [note, setNote] = useState("");
   const [logging, setLogging] = useState(false);
+
+  const { user } = useAuth();
+  // Derive the acting employee from the real session — never a hardcoded constant.
+  const ME = {
+    id: user?.employeeCode || user?.id || "",
+    name: user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : "",
+  };
 
   useEffect(() => {
     if (task) {

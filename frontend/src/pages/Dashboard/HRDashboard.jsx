@@ -6,7 +6,6 @@ import QuickActions from "../../components/dashboard/QuickActions.jsx";
 import PeopleCard from "../../components/dashboard/PeopleCard.jsx";
 import PayrollCard from "../../components/dashboard/PayrollCard.jsx";
 import ResourcesCard from "../../components/dashboard/ResourcesCard.jsx";
-import HiringChart from "../../components/dashboard/HiringChart.jsx";
 import DemoBanner from "../../components/shared/DemoBanner.jsx";
 
 export default function HRDashboard({ topSlot = null }) {

@@ -1,5 +1,6 @@
 /**
  * Leave Management Page — Module 6
+ * Enterprise CRM Professional Redesign
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -9,13 +10,16 @@ import {
   CheckCircle2,
   Clock3,
   XCircle,
-  RotateCcw,
   Paperclip,
   FileText,
   Download,
   Eye,
   Trash2,
   UploadCloud,
+  Search,
+  X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -23,139 +27,29 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 import {
-  getMyLeaveBalance,
   getLeaveRequests,
   getLeaveTypes,
-  getAttendanceDigest,
   applyLeave,
   approveLeave,
   rejectLeave,
   decideAbsentLeave,
 } from "../../services/leaveService.js";
-import { clearUploadedAttendance } from "../../services/attendanceService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { leaveStatusMeta } from "../../mock/leave.js";
 import { parseLeaveDetails, formatFileSize, renderSortableHeader } from "../../utils/leaveUtils.jsx";
 import "./Leave.css";
 
-const LEAVE_COLORS = ["#0f766e", "#7c3aed", "#0284c7", "#d97706", "#dc2626", "#16a34a", "#db2777", "#ea580c", "#0ea5e9"];
 
-function LeaveBalanceOverview({ distributionTypes = [], selectedId, onSelect, onClear }) {
-  const PAGE = 6;
-  const [legendPage, setLegendPage] = useState(0);
 
-  const availableTotal = distributionTypes.reduce((sum, item) => sum + Number(item.available || 0), 0);
-  const distributionTotal = availableTotal || distributionTypes.length || 1;
-  const segments = distributionTypes.map((item, index) => {
-    const value = availableTotal ? Number(item.available || 0) : 1;
-    const precedingValue = distributionTypes
-      .slice(0, index)
-      .reduce((sum, it) => sum + (availableTotal ? Number(it.available || 0) : 1), 0);
-    const start = (precedingValue / distributionTotal) * 100;
-    const end = start + (value / distributionTotal) * 100;
-    return { item, start, end, color: LEAVE_COLORS[index % LEAVE_COLORS.length] };
-  });
-  // Donut only uses balances that actually have availability > 0 (keeps chart meaningful).
-  const donutSegments = segments.filter((s) => availableTotal ? Number(s.item.available) > 0 : true);
-  const gradientStops = donutSegments.length
-    ? donutSegments.map((s) => `${s.color} ${s.start}% ${s.end}%`)
-    : ["#e2e8f0 0 100%"];
-  const selected = selectedId ? distributionTypes.find((item) => item.leaveTypeId === selectedId) || null : null;
 
-  const legendPages = Math.max(1, Math.ceil(distributionTypes.length / PAGE));
-  const legendPageSafe = Math.min(legendPage, legendPages - 1);
-  const legendPageItems = distributionTypes.slice(legendPageSafe * PAGE, legendPageSafe * PAGE + PAGE);
 
-  const handleDonutClick = (event) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - (bounds.left + bounds.width / 2);
-    const y = event.clientY - (bounds.top + bounds.height / 2);
-    const angle = (Math.atan2(y, x) * (180 / Math.PI) + 450) % 360;
-    const percentage = (angle / 360) * 100;
-    const segment = donutSegments.find((entry) => percentage >= entry.start && percentage < entry.end);
-    if (segment) onSelect(segment.item.leaveTypeId);
-  };
 
-  return (
-    <section className="leave-overview" aria-label="Leave balance overview">
-      <div className="leave-donut-panel">
-        <div className="leave-donut-wrap">
-          <div
-            className="leave-donut"
-            style={{ background: `conic-gradient(${gradientStops.join(", ")})` }}
-            onClick={handleDonutClick}
-            role="img"
-            aria-label={`${availableTotal} total leave days available. Select a coloured section for details.`}
-          >
-            <div className="leave-donut-center">
-              <strong>{availableTotal}</strong>
-              <span>days available</span>
-            </div>
-          </div>
-        </div>
 
-        <div className="leave-donut-legend">
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-            <div>
-              <p className="leave-eyebrow">Leave distribution</p>
-              <h2>My leave balance</h2>
-            </div>
-            {selected && (
-              <button type="button" className="leave-clear-btn" onClick={() => onClear?.()} title="Clear leave selection">
-                ✕ Clear selection
-              </button>
-            )}
-          </div>
-          <p className="leave-helper">Select a colour or card to view its complete balance.</p>
-          <div className="leave-legend-list">
-            {legendPageItems.map((item, index) => {
-              const globalIndex = legendPageSafe * PAGE + index;
-              return (
-                <button
-                  type="button"
-                  key={item.leaveTypeId}
-                  className={selected?.leaveTypeId === item.leaveTypeId ? "leave-legend active" : "leave-legend"}
-                  onClick={() => onSelect(item.leaveTypeId)}
-                >
-                  <span className="leave-legend-dot" style={{ background: LEAVE_COLORS[globalIndex % LEAVE_COLORS.length] }} />
-                  <span>{item.leaveTypeName}</span>
-                  <strong>{item.available}</strong>
-                </button>
-              );
-            })}
-          </div>
-          {distributionTypes.length > PAGE && (
-            <div className="leave-pagination">
-              <button type="button" onClick={() => setLegendPage((p) => Math.max(0, p - 1))} disabled={legendPageSafe === 0}>‹ Prev</button>
-              <span>Page {legendPageSafe + 1} of {legendPages}</span>
-              <button type="button" onClick={() => setLegendPage((p) => Math.min(legendPages - 1, p + 1))} disabled={legendPageSafe >= legendPages - 1}>Next ›</button>
-            </div>
-)}
-        </div>
-      </div>
-
-      {selected && (
-        <div className="leave-detail-panel" aria-live="polite">
-          <div>
-            <p className="leave-eyebrow">Selected leave</p>
-            <h3>{selected.leaveTypeName}</h3>
-          </div>
-          <div className="leave-detail-grid">
-            <div><strong>{selected.total}</strong><span>Total</span></div>
-            <div><strong>{selected.used}</strong><span>Used</span></div>
-            <div><strong>{selected.available}</strong><span>Remaining</span></div>
-            <div><strong>{selected.pending || 0}</strong><span>Pending</span></div>
-          </div>
-          <div className="leave-progress" aria-label={`${selected.used} of ${selected.total} days used`}>
-            <span style={{ width: `${Math.min(100, (Number(selected.used || 0) / Math.max(1, Number(selected.total || 0))) * 100)}%` }} />
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
+/**
+ * Apply Leave Modal Form
+ */
 function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
   const [form, setForm] = useState({
     leaveTypeId: "",
@@ -178,7 +72,7 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
     if (!form.startDate) e.startDate = "Required";
     if (!form.isHalfDay && !form.endDate) e.endDate = "Required";
     if (!form.isHalfDay && form.startDate && form.endDate && form.endDate < form.startDate)
-      e.endDate = "End date must be after start date";
+      e.endDate = "End date cannot be before start date";
     if (!form.reason.trim()) e.reason = "Please provide a reason";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -253,30 +147,46 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
   };
 
   const inputStyle = (key) => ({
-    width: "100%", height: "38px", padding: "0 12px",
+    width: "100%",
+    height: "38px",
+    padding: "0 12px",
     border: `1px solid ${errors[key] ? "var(--red)" : "var(--border)"}`,
-    borderRadius: "var(--radius-sm)", fontSize: "13.5px",
-    color: "var(--text)", outline: "none", background: "var(--card)",
+    borderRadius: "var(--radius-sm)",
+    fontSize: "13.5px",
+    color: "var(--text)",
+    outline: "none",
+    background: "var(--card)",
+    transition: "border-color 0.15s ease",
   });
 
   return (
     <Modal isOpen={isOpen} title="Apply for Leave" onClose={onClose}>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px", maxHeight: "80vh", overflowY: "auto", paddingRight: "4px" }}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px", maxHeight: "80vh", overflowY: "auto", paddingRight: "4px" }}>
         
         {/* Row 1: Leave Type & Reason Category */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave Type *</label>
-            <select value={form.leaveTypeId} onChange={(e) => setForm((p) => ({ ...p, leaveTypeId: e.target.value }))} style={inputStyle("leaveTypeId")}>
-              <option value="">Select type</option>
-              {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name} (max {t.maxDays} days)</option>)}
+            <select
+              value={form.leaveTypeId}
+              onChange={(e) => setForm((p) => ({ ...p, leaveTypeId: e.target.value }))}
+              style={inputStyle("leaveTypeId")}
+            >
+              <option value="">Select leave type</option>
+              {leaveTypes.map((t) => (
+                <option key={t.id} value={t.id}>{t.name} (max {t.maxDays} days)</option>
+              ))}
             </select>
             {errors.leaveTypeId && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.leaveTypeId}</span>}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Reason Category</label>
-            <select value={form.reasonCategory} onChange={(e) => setForm((p) => ({ ...p, reasonCategory: e.target.value }))} style={inputStyle("reasonCategory")}>
+            <select
+              value={form.reasonCategory}
+              onChange={(e) => setForm((p) => ({ ...p, reasonCategory: e.target.value }))}
+              style={inputStyle("reasonCategory")}
+            >
               <option value="General / Personal">General / Personal</option>
               <option value="Medical / Health">Medical / Health</option>
               <option value="Family Emergency">Family Emergency</option>
@@ -289,7 +199,17 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
         </div>
 
         {/* Half Day Option */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--background)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "var(--background)",
+            padding: "10px 14px",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border)",
+          }}
+        >
           <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, color: "var(--text)", cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -303,7 +223,15 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
             <select
               value={form.halfDaySession}
               onChange={(e) => setForm((p) => ({ ...p, halfDaySession: e.target.value }))}
-              style={{ height: "30px", fontSize: "12px", padding: "0 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)" }}
+              style={{
+                height: "30px",
+                fontSize: "12px",
+                padding: "0 8px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--text)",
+              }}
             >
               <option value="First Half (Morning)">First Half (Morning)</option>
               <option value="Second Half (Afternoon)">Second Half (Afternoon)</option>
@@ -312,9 +240,11 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
         </div>
 
         {/* Dates */}
-        <div style={{ display: "grid", gridTemplateColumns: form.isHalfDay ? "1fr" : "1fr 1fr", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: form.isHalfDay ? "1fr" : "1fr 1fr", gap: "14px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>{form.isHalfDay ? "Leave Date *" : "Start Date *"}</label>
+            <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>
+              {form.isHalfDay ? "Leave Date *" : "Start Date *"}
+            </label>
             <input
               type="date"
               value={form.startDate}
@@ -327,21 +257,41 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
           {!form.isHalfDay && (
             <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
               <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>End Date *</label>
-              <input type="date" value={form.endDate} onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))} style={inputStyle("endDate")} />
+              <input
+                type="date"
+                value={form.endDate}
+                onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))}
+                style={inputStyle("endDate")}
+              />
               {errors.endDate && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.endDate}</span>}
             </div>
           )}
         </div>
 
         {daysBetween() > 0 && (
-          <div style={{ background: "var(--primary-light)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: "13px", color: "var(--primary)", fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
-            <span>Duration: {daysBetween()} day{daysBetween() > 1 ? "s" : ""}</span>
+          <div
+            style={{
+              background: "var(--primary-light)",
+              borderRadius: "var(--radius-sm)",
+              padding: "10px 14px",
+              fontSize: "13px",
+              color: "var(--primary)",
+              fontWeight: 600,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              border: "1px solid rgba(15, 118, 110, 0.2)",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <CalendarDays size={16} /> Total Duration: <strong>{daysBetween()} day{daysBetween() > 1 ? "s" : ""}</strong>
+            </span>
             {form.isHalfDay && <span style={{ fontSize: "12px", opacity: 0.9 }}>Session: {form.halfDaySession}</span>}
           </div>
         )}
 
         {/* Handover and Emergency Contact */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Handover / Reliever Colleague</label>
             <input
@@ -373,12 +323,23 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
             onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))}
             rows={3}
             placeholder="Provide context for your leave request…"
-            style={{ width: "100%", padding: "10px 12px", border: `1px solid ${errors.reason ? "var(--red)" : "var(--border)"}`, borderRadius: "var(--radius-sm)", fontSize: "13.5px", color: "var(--text)", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              border: `1px solid ${errors.reason ? "var(--red)" : "var(--border)"}`,
+              borderRadius: "var(--radius-sm)",
+              fontSize: "13.5px",
+              color: "var(--text)",
+              outline: "none",
+              resize: "vertical",
+              fontFamily: "inherit",
+              background: "var(--card)",
+            }}
           />
           {errors.reason && <span style={{ fontSize: "11px", color: "var(--red)" }}>{errors.reason}</span>}
         </div>
 
-        {/* Document / File Upload */}
+        {/* Supporting Document / File Upload */}
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)", display: "flex", alignItems: "center", gap: "6px" }}>
             <Paperclip size={13} /> Supporting Document or Medical Certificate (Optional)
@@ -407,11 +368,20 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
               </button>
             </div>
           ) : (
-            <label style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-              padding: "16px", border: "1px dashed var(--border)", borderRadius: "var(--radius-sm)",
-              background: "var(--card)", cursor: "pointer", transition: "border-color 0.2s",
-            }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                padding: "16px",
+                border: "1px dashed var(--border)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--card)",
+                cursor: "pointer",
+                transition: "border-color 0.2s",
+              }}
+            >
               <UploadCloud size={18} style={{ color: "var(--subtext)" }} />
               <span style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
                 Click to attach file <b style={{ color: "var(--primary)" }}>PDF, PNG, JPG or DOC</b> (max 5 MB)
@@ -427,11 +397,38 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
         </div>
 
         {/* Buttons */}
-        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "6px" }}>
-          <button type="button" onClick={onClose} style={{ padding: "9px 20px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "none", color: "var(--label)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: "9px 20px",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              background: "none",
+              color: "var(--label)",
+              fontWeight: 600,
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
             Cancel
           </button>
-          <button type="submit" disabled={saving} style={{ padding: "9px 22px", border: "none", borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}>
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              padding: "9px 22px",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--primary)",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: "13px",
+              cursor: saving ? "not-allowed" : "pointer",
+              opacity: saving ? 0.7 : 1,
+            }}
+          >
             {saving ? "Submitting…" : "Submit Leave Application"}
           </button>
         </div>
@@ -440,6 +437,9 @@ function ApplyLeaveModal({ isOpen, onClose, leaveTypes, employeeId, onSaved }) {
   );
 }
 
+/**
+ * Leave Details Inspection Modal
+ */
 function LeaveDetailsModal({ request, onClose }) {
   if (!request) return null;
   const details = parseLeaveDetails(request.reason);
@@ -461,13 +461,16 @@ function LeaveDetailsModal({ request, onClose }) {
         
         {/* Header Summary */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "14px 18px", background: "var(--background)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-          <div>
-            <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 4px 0", color: "var(--text)" }}>
-              {request.employeeName}
-            </h3>
-            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
-              Employee ID: {request.employeeId} · Applied on {request.appliedOn ? new Date(request.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-            </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <InitialsAvatar firstName={request.employeeName?.split(" ")[0]} lastName={request.employeeName?.split(" ")[1]} size={42} />
+            <div>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 4px 0", color: "var(--text)" }}>
+                {request.employeeName}
+              </h3>
+              <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
+                Employee ID: {request.employeeId} · Applied on {request.appliedOn ? new Date(request.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+              </span>
+            </div>
           </div>
           <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} />
         </div>
@@ -479,7 +482,7 @@ function LeaveDetailsModal({ request, onClose }) {
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
               <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>{request.leaveTypeName || "—"}</span>
               {details.category && (
-                <span style={{ fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "99px", background: "var(--primary-light)", color: "var(--primary)" }}>
+                <span className="leave-category-pill">
                   {details.category}
                 </span>
               )}
@@ -544,10 +547,17 @@ function LeaveDetailsModal({ request, onClose }) {
                 type="button"
                 onClick={handleDownload}
                 style={{
-                  display: "inline-flex", alignItems: "center", gap: "6px",
-                  padding: "7px 14px", background: "var(--primary)", color: "#fff",
-                  border: "none", borderRadius: "var(--radius-sm)", fontSize: "12.5px",
-                  fontWeight: 600, cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 14px",
+                  background: "var(--primary)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "12.5px",
+                  fontWeight: 600,
+                  cursor: "pointer",
                 }}
               >
                 <Download size={14} /> Download File
@@ -587,6 +597,9 @@ function LeaveDetailsModal({ request, onClose }) {
   );
 }
 
+/**
+ * Leave Decision Modal (Approve / Reject)
+ */
 function LeaveDecisionModal({ request, action, onClose, onCompleted }) {
   const [comments, setComments] = useState("");
   const [saving, setSaving] = useState(false);
@@ -627,29 +640,70 @@ function LeaveDecisionModal({ request, action, onClose, onCompleted }) {
       title={rejecting ? (isAbsent ? "Reject Absent Day" : "Reject Leave Request") : (isAbsent ? "Approve Absent Day" : "Approve Leave Request")}
       onClose={saving ? undefined : onClose}
     >
-      <form onSubmit={submit} className="leave-decision-form">
-        <div className="leave-decision-summary">
-          <strong>{request?.employeeName}</strong>
-          <span>{isAbsent ? "Absent day" : `${request?.leaveTypeName} · ${request?.days} day${request?.days === 1 ? "" : "s"}`}</span>
-          <small>{request?.startDate ? `No check-in/out on ${request.startDate}` : request?.reason || "No application reason provided"}</small>
+      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+        <div style={{ padding: "12px 14px", background: "var(--background)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          <strong style={{ color: "var(--text)", fontSize: "14px" }}>{request?.employeeName}</strong>
+          <span style={{ fontSize: "12px", color: "var(--subtext)" }}>
+            {isAbsent ? "Absent day" : `${request?.leaveTypeName} · ${request?.days} day${request?.days === 1 ? "" : "s"}`}
+          </span>
+          <small style={{ color: "var(--label)", fontSize: "11.5px", marginTop: "2px" }}>
+            {request?.startDate ? `Duration: ${request.startDate} ${request.endDate && request.endDate !== request.startDate ? `to ${request.endDate}` : ""}` : request?.reason || "No application reason provided"}
+          </small>
         </div>
-        <label htmlFor="leave-decision-comments">
-          {rejecting ? "Rejection reason *" : "Approval comment (optional)"}
-        </label>
-        <textarea
-          id="leave-decision-comments"
-          value={comments}
-          onChange={(event) => { setComments(event.target.value); setError(""); }}
-          maxLength={1000}
-          rows={4}
-          placeholder={rejecting ? "Explain clearly why this request is being rejected…" : "Add a note for the employee…"}
-          autoFocus
-        />
-        <div className="leave-character-count">{comments.length}/1000</div>
-        {error && <div className="leave-decision-error" role="alert">{error}</div>}
-        <div className="leave-decision-actions">
-          <button type="button" className="leave-secondary-button" onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={rejecting ? "leave-reject-confirm" : "leave-approve-confirm"} disabled={saving}>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+          <label htmlFor="leave-decision-comments" style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>
+            {rejecting ? "Rejection reason *" : "Approval comment (optional)"}
+          </label>
+          <textarea
+            id="leave-decision-comments"
+            value={comments}
+            onChange={(event) => { setComments(event.target.value); setError(""); }}
+            maxLength={1000}
+            rows={4}
+            placeholder={rejecting ? "Explain clearly why this request is being rejected…" : "Add a note for the employee…"}
+            autoFocus
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              border: `1px solid ${error ? "var(--red)" : "var(--border)"}`,
+              borderRadius: "var(--radius-sm)",
+              fontSize: "13.5px",
+              color: "var(--text)",
+              outline: "none",
+              resize: "vertical",
+              fontFamily: "inherit",
+              background: "var(--card)",
+            }}
+          />
+          <div style={{ alignSelf: "flex-end", color: "var(--subtext)", fontSize: "11px" }}>{comments.length}/1000</div>
+        </div>
+
+        {error && <div style={{ color: "var(--red)", background: "var(--red-light)", padding: "8px 12px", borderRadius: "var(--radius-sm)", fontSize: "12px" }}>{error}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "4px" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            style={{ padding: "8px 18px", background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--label)", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              padding: "8px 20px",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              background: rejecting ? "var(--red)" : "var(--green)",
+              color: "#fff",
+              fontSize: "13px",
+              fontWeight: 700,
+              cursor: saving ? "not-allowed" : "pointer",
+            }}
+          >
             {saving ? "Saving…" : rejecting ? "Reject with reason" : "Approve request"}
           </button>
         </div>
@@ -658,25 +712,25 @@ function LeaveDecisionModal({ request, action, onClose, onCompleted }) {
   );
 }
 
+/**
+ * Main Leave Module Component
+ */
 export default function Leave() {
   const { user, permissions } = useAuth();
-  const [balances, setBalances] = useState([]);
   const [requests, setRequests] = useState([]);
   const [leaveTypes, setLeaveTypes] = useState([]);
-  const [digest, setDigest] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadingDigest, setLoadingDigest] = useState(true);
   const [showApply, setShowApply] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
-  const [selectedBalanceId, setSelectedBalanceId] = useState(null);
   const [decision, setDecision] = useState({ request: null, action: "" });
-  const [clearing, setClearing] = useState(false);
   const [clearMsg, setClearMsg] = useState(null);
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
+
   const canApprove = permissions.includes("leave:approve");
   const canApply = permissions.includes("leave:write");
-  // Deleting uploaded attendance + synced leave requests is an ADMIN/HR action
-  // (matches the backend clear-upload route guard).
-  const canClear = user.role === "ADMIN" || user.role === "HR";
 
   const [selectedDetail, setSelectedDetail] = useState(null);
   
@@ -687,21 +741,6 @@ export default function Leave() {
   const [dateRangeFilter, setDateRangeFilter] = useState({ startDate: "", endDate: "" });
   const [categoryFilter, setCategoryFilter] = useState("");
 
-  const handleClear = async () => {
-    if (!window.confirm("Clear uploaded attendance data and all pending leave requests? This permanently removes attendance records imported from files, upload-synced leave requests and any stale pending approvals. Approved leave balances are restored.")) return;
-    setClearing(true);
-    setClearMsg(null);
-    try {
-      const result = await clearUploadedAttendance();
-      await loadData();
-      setClearMsg({ ok: true, text: `Cleared — ${result?.punches ?? 0} attendance record(s) and ${result?.leaveRequests ?? 0} leave request(s) removed.` });
-    } catch (err) {
-      setClearMsg({ ok: false, text: err?.response?.data?.message || err?.message || "Clear failed" });
-    } finally {
-      setClearing(false);
-    }
-  };
-
   const loadData = useCallback(async () => {
     const [reqRes, ltRes] = await Promise.all([
       getLeaveRequests(canApprove ? {} : { employeeId: user.id }),
@@ -709,22 +748,6 @@ export default function Leave() {
     ]);
     setRequests(reqRes.data);
     setLeaveTypes(ltRes.data);
-    try {
-      const balRes = await getMyLeaveBalance(user.id);
-      setBalances(balRes.data);
-      setSelectedBalanceId((current) => current || balRes.data?.[0]?.leaveTypeId || null);
-    } catch {
-      setBalances([]);
-      setSelectedBalanceId(null);
-    }
-    try {
-      const digRes = await getAttendanceDigest();
-      setDigest(digRes.data || []);
-    } catch {
-      setDigest([]);
-    } finally {
-      setLoadingDigest(false);
-    }
   }, [canApprove, user.id]);
 
   useEffect(() => {
@@ -764,7 +787,6 @@ export default function Leave() {
     })
     .sort((a, b) => {
       let aVal, bVal;
-      
       switch (sortConfig.field) {
         case "employeeName":
           aVal = a.employeeName || "";
@@ -791,7 +813,6 @@ export default function Leave() {
           aVal = new Date(a.appliedOn);
           bVal = new Date(b.appliedOn);
       }
-      
       if (typeof aVal === "string") {
         aVal = aVal.toLowerCase();
         bVal = bVal.toLowerCase();
@@ -800,12 +821,17 @@ export default function Leave() {
       return sortConfig.order === "asc" ? aVal - bVal : bVal - aVal;
     });
 
+  // Calculate paginated slice
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedRequests = filtered.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE);
+
   const statusCounts = requests.reduce((counts, request) => {
     counts[request.status] = (counts[request.status] || 0) + 1;
     return counts;
   }, {});
   
-  // Get unique categories for category filter
+  // Unique categories for filter
   const categories = useMemo(() => {
     const cats = new Set();
     requests.forEach((r) => {
@@ -815,30 +841,6 @@ export default function Leave() {
     return Array.from(cats).sort();
   }, [requests]);
 
-  // The leave distribution follows the uploaded attendance data exactly: the
-  // balance endpoint only returns leave types present in the file, so the donut
-  // shows precisely those types (including ones the catalog never had — they
-  // are created on demand during import). Before any upload the catalog renders
-  // so the overview stays meaningful.
-  const distributionTypes = useMemo(() => {
-    const balByType = new Map(balances.map((b) => [b.leaveTypeId, b]));
-    const source = balances.length > 0 ? balances : leaveTypes;
-    return source.map((t) => {
-      const key = t.leaveTypeId || t.id;
-      const bal = balByType.get(key);
-      return {
-        leaveTypeId: key,
-        leaveTypeName: t.leaveTypeName || t.name,
-        total: bal ? Number(bal.total) : 0,
-        used: bal ? Number(bal.used) : 0,
-        pending: bal ? Number(bal.pending || 0) : 0,
-        available: bal ? Number(bal.available) : 0,
-      };
-    });
-  }, [balances, leaveTypes]);
-
-  if (loading) return <MainLayout><Spinner /></MainLayout>;
-
   const handleSort = (field) => {
     setSortConfig((prev) => ({
       field,
@@ -846,18 +848,64 @@ export default function Leave() {
     }));
   };
 
+  const hasActiveFilters = Boolean(
+    searchQuery ||
+    statusFilter ||
+    leaveTypeFilter ||
+    categoryFilter ||
+    dateRangeFilter.startDate ||
+    dateRangeFilter.endDate
+  );
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("");
+    setLeaveTypeFilter("");
+    setCategoryFilter("");
+    setDateRangeFilter({ startDate: "", endDate: "" });
+    setCurrentPage(1);
+  };
+
+  if (loading) {
+    return (
+      <MainLayout>
+        <Spinner />
+      </MainLayout>
+    );
+  }
+
   return (
     <MainLayout>
-      <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
-        <PageHeader title="Leave Management" subtitle="Balances, requests and approvals">
-          {canApply && <button id="apply-leave-btn" onClick={() => setShowApply(true)}
-            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-            <Plus size={16} /> Apply Leave
-          </button>}
-          {canClear && (
-            <button id="clear-uploaded-btn" onClick={handleClear} disabled={clearing}
-              style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "var(--card)", color: "var(--red)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: clearing ? "not-allowed" : "pointer", opacity: clearing ? 0.7 : 1 }}>
-              <RotateCcw size={16} /> {clearing ? "Clearing…" : "Clear"}
+      <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
+        
+        {/* Page Header */}
+        <PageHeader
+          title="Leave Management"
+          subtitle="Enterprise workforce absence tracking and approval decisions"
+        >
+          {canApply && (
+            <button
+              id="apply-leave-btn"
+              type="button"
+              onClick={() => setShowApply(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "9px 18px",
+                background: "var(--primary)",
+                color: "#fff",
+                border: "none",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "background 0.15s ease",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--primary-hover)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "var(--primary)")}
+            >
+              <Plus size={16} /> Apply Leave
             </button>
           )}
         </PageHeader>
@@ -865,404 +913,380 @@ export default function Leave() {
         {clearMsg && (
           <div
             style={{
-              marginBottom: "16px", padding: "10px 14px", borderRadius: "var(--radius-sm)",
-              fontSize: "12.5px", fontWeight: 600,
-              background: clearMsg.ok ? "var(--green-light, #f0fdf4)" : "var(--red-light)",
-              color: clearMsg.ok ? "#16a34a" : "var(--red)",
-              border: `1px solid ${clearMsg.ok ? "#bbf7d0" : "var(--red)"}`,
+              padding: "12px 16px",
+              borderRadius: "var(--radius-sm)",
+              marginBottom: "16px",
+              background: clearMsg.ok ? "var(--green-light)" : "var(--red-light)",
+              color: clearMsg.ok ? "var(--green)" : "var(--red)",
+              border: `1px solid ${clearMsg.ok ? "rgba(4, 120, 87, 0.2)" : "rgba(185, 28, 28, 0.2)"}`,
+              fontSize: "13px",
+              fontWeight: 600,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
             }}
           >
-            {clearMsg.text}
+            <span>{clearMsg.text}</span>
+            <button
+              onClick={() => setClearMsg(null)}
+              style={{ background: "none", border: "none", color: "inherit", cursor: "pointer" }}
+            >
+              <X size={16} />
+            </button>
           </div>
         )}
 
-        <LeaveBalanceOverview distributionTypes={distributionTypes} selectedId={selectedBalanceId} onSelect={setSelectedBalanceId} onClear={() => setSelectedBalanceId(null)} />
+        {/* Leave Requests & Approvals Tab Content */}
+        <div>
+            {/* KPI Ribbon */}
+            <div className="leave-kpi-grid">
+              {[
+                { key: "", label: "All Requests", count: requests.length, icon: CalendarDays, color: "var(--primary)" },
+                { key: "Pending", label: "Pending Approvals", count: statusCounts["Pending"] || 0, icon: Clock3, color: "var(--amber)" },
+                { key: "Approved", label: "Approved Requests", count: statusCounts["Approved"] || 0, icon: CheckCircle2, color: "var(--green)" },
+                { key: "Rejected", label: "Rejected / Absent", count: (statusCounts["Rejected"] || 0) + (statusCounts["Absent"] || 0), icon: XCircle, color: "var(--red)" },
+              ].map((kpi) => {
+                const Icon = kpi.icon;
+                const isSelected = statusFilter === kpi.key;
+                return (
+                  <button
+                    type="button"
+                    key={kpi.label}
+                    className={`leave-kpi-card ${isSelected ? "active" : ""}`}
+                    style={{ "--kpi-color": kpi.color }}
+                    onClick={() => {
+                      setStatusFilter(isSelected ? "" : kpi.key);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <div className="leave-kpi-icon-wrap">
+                      <Icon size={22} />
+                    </div>
+                    <div className="leave-kpi-info">
+                      <span className="leave-kpi-label">{kpi.label}</span>
+                      <span className="leave-kpi-value">{kpi.count}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Attendance summary from uploaded files */}
-        <div className="leave-request-header leave-digest-header">
-          <div>
-            <h2>Attendance Summary</h2>
-            <p>Pulled from uploaded files — days present, absent and on leave per employee, with approval decisions.</p>
-          </div>
-        </div>
-        <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
-          {loadingDigest ? (
-            <div style={{ padding: "28px", textAlign: "center" }}><Spinner /></div>
-          ) : digest.length === 0 ? (
-            <EmptyState
-              icon={CalendarDays}
-              title="No attendance data yet"
-              subtitle="Upload an attendance file to see per-employee summaries here."
-            />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {["Employee", "Days", "Present", "Late / WFH", "Absent", "Leave", "Approved", "Pending"].map((h) => (
-                      <th key={h} style={{ padding: "11px 16px", textAlign: h === "Employee" ? "left" : "center", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {digest.map((row, i) => (
-                    <tr key={`${row.employeeCode}-${i}`} style={{ borderBottom: i < digest.length - 1 ? "1px solid var(--border)" : "none" }}>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>
-                        {row.employeeName}
-                        <span style={{ display: "block", fontSize: "11.5px", color: "var(--subtext)", fontWeight: 400 }}>{row.employeeCode}</span>
-                      </td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)", textAlign: "center" }}>{row.days}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#059669", fontWeight: 600, textAlign: "center" }}>{row.present}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)", textAlign: "center" }}>{row.lateWfh}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#dc2626", fontWeight: 600, textAlign: "center" }}>{row.absent}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#0284c7", fontWeight: 600, textAlign: "center" }}>{row.leave}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#059669", fontWeight: 600, textAlign: "center" }}>{row.approved}</td>
-                      <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "#d97706", fontWeight: 600, textAlign: "center" }}>{row.pending}</td>
-                    </tr>
+            {/* CRM Search & Filter Toolbar */}
+            <div className="leave-crm-toolbar">
+              <div className="leave-toolbar-primary-row">
+                <div className="leave-search-wrap">
+                  <Search size={16} className="leave-search-icon" />
+                  <input
+                    type="text"
+                    className="leave-search-input"
+                    placeholder="Search requests by employee name, ID, leave type, or reason…"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="leave-search-clear"
+                      onClick={() => setSearchQuery("")}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  className="leave-filter-select"
+                  value={leaveTypeFilter}
+                  onChange={(e) => {
+                    setLeaveTypeFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                >
+                  <option value="">All Leave Types</option>
+                  {leaveTypes.map((lt) => (
+                    <option key={lt.id} value={lt.id}>{lt.name}</option>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                </select>
 
-        {/* Requests table */}
-        <div className="leave-request-header">
-          <div>
-            <h2>{canApprove ? "Leave Requests & Approvals" : "My Leave Requests"}</h2>
-            <p>{canApprove ? "Review team requests, attached documents, and record clear decisions." : "Track every request, document attachments, and decision reasons."}</p>
-          </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ height: "34px", padding: "0 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "13px", background: "var(--card)", outline: "none", cursor: "pointer" }}>
-            <option value="">All Statuses</option>
-            {["Pending", "Approved", "Rejected", "Cancelled", "Absent"].map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+                <select
+                  className="leave-filter-select"
+                  value={categoryFilter}
+                  onChange={(e) => {
+                    setCategoryFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                >
+                  <option value="">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
 
-        {/* Search & Filter Controls */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "16px", padding: "14px", background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)" }}>
-          {/* Search Row */}
-          <div style={{ display: "flex", gap: "12px", alignItems: "flex-end" }}>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Search</label>
-              <input
-                type="text"
-                placeholder="Search by employee name, ID, leave type, or reason…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  height: "34px",
-                  padding: "0 12px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                }}
-              />
-            </div>
-            {(searchQuery || statusFilter || leaveTypeFilter || dateRangeFilter.startDate || dateRangeFilter.endDate || categoryFilter) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setStatusFilter("");
-                  setLeaveTypeFilter("");
-                  setDateRangeFilter({ startDate: "", endDate: "" });
-                  setCategoryFilter("");
-                  setSortConfig({ field: "appliedOn", order: "desc" });
-                }}
-                style={{
-                  padding: "7px 14px",
-                  background: "var(--red)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                Clear All Filters
-              </button>
-            )}
-          </div>
+                <select
+                  className="leave-filter-select"
+                  value={statusFilter}
+                  onChange={(e) => {
+                    setStatusFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                >
+                  <option value="">All Statuses</option>
+                  {["Pending", "Approved", "Rejected", "Cancelled", "Absent"].map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
 
-          {/* Filter Row 1: Leave Type, Category, Status */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave Type</label>
-              <select
-                value={leaveTypeFilter}
-                onChange={(e) => setLeaveTypeFilter(e.target.value)}
-                style={{
-                  height: "34px",
-                  padding: "0 10px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">All Leave Types</option>
-                {leaveTypes.map((lt) => (
-                  <option key={lt.id} value={lt.id}>
-                    {lt.name}
-                  </option>
-                ))}
-              </select>
+                <div className="leave-date-pill-group">
+                  <label>From</label>
+                  <input
+                    type="date"
+                    className="leave-date-input"
+                    value={dateRangeFilter.startDate}
+                    onChange={(e) => {
+                      setDateRangeFilter((p) => ({ ...p, startDate: e.target.value }));
+                      setCurrentPage(1);
+                    }}
+                  />
+                  <label>To</label>
+                  <input
+                    type="date"
+                    className="leave-date-input"
+                    value={dateRangeFilter.endDate}
+                    onChange={(e) => {
+                      setDateRangeFilter((p) => ({ ...p, endDate: e.target.value }));
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="leave-toolbar-secondary-row">
+                <span>
+                  Showing <strong>{filtered.length}</strong> of <strong>{requests.length}</strong> leave request{requests.length !== 1 ? "s" : ""}
+                </span>
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    className="leave-reset-filters-btn"
+                    onClick={resetFilters}
+                  >
+                    <X size={14} /> Reset All Filters
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Category</label>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                style={{
-                  height: "34px",
-                  padding: "0 10px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">All Categories</option>
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Status</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                style={{
-                  height: "34px",
-                  padding: "0 10px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">All Statuses</option>
-                {["Pending", "Approved", "Rejected", "Cancelled", "Absent"].map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Filter Row 2: Date Range */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave From Date</label>
-              <input
-                type="date"
-                value={dateRangeFilter.startDate}
-                onChange={(e) => setDateRangeFilter((prev) => ({ ...prev, startDate: e.target.value }))}
-                style={{
-                  height: "34px",
-                  padding: "0 12px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                }}
-              />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--label)" }}>Leave To Date</label>
-              <input
-                type="date"
-                value={dateRangeFilter.endDate}
-                onChange={(e) => setDateRangeFilter((prev) => ({ ...prev, endDate: e.target.value }))}
-                style={{
-                  height: "34px",
-                  padding: "0 12px",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: "13px",
-                  background: "var(--background)",
-                  color: "var(--text)",
-                  outline: "none",
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Results Summary */}
-          <div style={{ fontSize: "12px", color: "var(--subtext)", fontWeight: 500 }}>
-            Showing <strong>{filtered.length}</strong> of <strong>{requests.length}</strong> leave request{requests.length !== 1 ? "s" : ""}
-          </div>
-        </div>
-
-        <div className="leave-status-cards">
-          {[
-            { key: "", label: "All requests", icon: CalendarDays, color: "#475569" },
-            { key: "Pending", label: "Pending", icon: Clock3, color: "#d97706" },
-            { key: "Approved", label: "Approved", icon: CheckCircle2, color: "#059669" },
-            { key: "Rejected", label: "Rejected", icon: XCircle, color: "#dc2626" },
-          ].map((status) => {
-            const Icon = status.icon;
-            const count = status.key ? statusCounts[status.key] || 0 : requests.length;
-            return (
-              <button
-                type="button"
-                key={status.label}
-                className={statusFilter === status.key ? "leave-status-card active" : "leave-status-card"}
-                onClick={() => setStatusFilter(status.key)}
-                style={{ "--status-color": status.color }}
-              >
-                <Icon size={17} />
-                <span>{status.label}</span>
-                <strong>{count}</strong>
-              </button>
-            );
-          })}
-        </div>
-
-        <div style={{ background: "var(--card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={CalendarDays}
-              title="No leave requests"
-              subtitle={canApply ? "Apply for leave using the button above." : "There are no requests requiring your attention."}
-            />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)" }}>
-                    {renderSortableHeader("Employee", "employeeName", sortConfig, handleSort)}
-                    {renderSortableHeader("Leave Type", "leaveTypeName", sortConfig, handleSort)}
-                    {renderSortableHeader("Dates", "startDate", sortConfig, handleSort)}
-                    {renderSortableHeader("Days", "days", sortConfig, handleSort)}
-                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Category & Reason</th>
-                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Document</th>
-                    {renderSortableHeader("Status", "status", sortConfig, handleSort)}
-                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Decision Details</th>
-                    {renderSortableHeader("Applied On", "appliedOn", sortConfig, handleSort)}
-                    <th style={{ padding: "11px 16px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((req, i) => {
-                    const meta = leaveStatusMeta[req.status] || leaveStatusMeta.Pending;
-                    const details = parseLeaveDetails(req.reason);
-                    return (
-                      <tr key={`${req.id}-${req.employeeId}-${req.startDate}-${req.status}`} style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none" }}>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", fontWeight: 500 }}>
-                          {req.employeeName}
-                          <span style={{ display: "block", fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace" }}>{req.employeeId}</span>
-                        </td>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--label)" }}>{req.leaveTypeName || "—"}</td>
-                        <td style={{ padding: "13px 16px", fontSize: "12.5px", color: "var(--text)", whiteSpace: "nowrap" }}>
-                          {new Date(req.startDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
-                          {req.startDate !== req.endDate && ` – ${new Date(req.endDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
-                          {details.isHalfDay && <span style={{ display: "block", fontSize: "10.5px", color: "var(--primary)", fontWeight: 600 }}>Half Day</span>}
-                        </td>
-                        <td style={{ padding: "13px 16px", fontSize: "13.5px", color: "var(--text)", textAlign: "center", fontWeight: 600 }}>{req.days}</td>
-                        <td style={{ padding: "13px 16px", maxWidth: "220px" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                            {details.category && (
-                              <span style={{ display: "inline-block", alignSelf: "flex-start", fontSize: "10.5px", fontWeight: 700, padding: "1px 6px", borderRadius: "4px", background: "var(--primary-light)", color: "var(--primary)" }}>
-                                {details.category}
-                              </span>
-                            )}
-                            <span style={{ fontSize: "12.5px", color: "var(--subtext)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {details.summary || req.reason || "—"}
-                            </span>
-                          </div>
-                        </td>
-                        <td style={{ padding: "13px 16px", whiteSpace: "nowrap" }}>
-                          {details.attachment ? (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDetail(req)}
-                              style={{
-                                display: "inline-flex", alignItems: "center", gap: "5px",
-                                padding: "4px 9px", background: "rgba(99, 102, 241, 0.1)",
-                                border: "1px solid rgba(99, 102, 241, 0.3)", borderRadius: "4px",
-                                fontSize: "11.5px", color: "var(--primary)", fontWeight: 600, cursor: "pointer",
-                              }}
-                              title={details.attachment.name}
-                            >
-                              <Paperclip size={12} /> {details.attachment.name.length > 12 ? details.attachment.name.slice(0, 10) + "…" : details.attachment.name}
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: "12px", color: "var(--subtext)" }}>—</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "13px 16px" }}><StatusBadge label={meta.label} color={meta.color} bg={meta.bg} /></td>
-                        <td className="leave-decision-cell">
-                          {req.status === "Absent" ? (
-                            <span className="leave-rejection-reason">Marked absent — no check-in/out recorded</span>
-                          ) : req.status === "Pending" ? (
-                            <span className="leave-awaiting">Awaiting decision</span>
-                          ) : (
-                            <div>
-                              <strong>{req.approverName || "Approver"}</strong>
-                              <span>{req.approvedOn ? new Date(req.approvedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : ""}</span>
-                              {req.comments && <p className={req.status === "Rejected" ? "leave-rejection-reason" : ""}>{req.comments}</p>}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: "13px 16px", fontSize: "12px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
-                          {new Date(req.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                        </td>
-                        <td style={{ padding: "13px 16px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDetail(req)}
-                              title="View Full Details"
-                              style={{
-                                padding: "6px", background: "var(--background)", border: "1px solid var(--border)",
-                                borderRadius: "4px", color: "var(--subtext)", cursor: "pointer", display: "flex", alignItems: "center",
-                              }}
-                            >
-                              <Eye size={14} />
-                            </button>
-
-                            {canApprove && (req.status === "Pending" || req.status === "Absent") && req.employeeId !== user.id && (
-                              <div className="leave-row-actions">
-                                <button type="button" className="leave-approve-button" onClick={() => setDecision({ request: req, action: "approve" })}>Approve</button>
-                                <button type="button" className="leave-reject-button" onClick={() => setDecision({ request: req, action: "reject" })}>Reject</button>
-                              </div>
-                            )}
-                          </div>
-                        </td>
+            {/* Requests Data Table */}
+            <div className="leave-table-card">
+              {filtered.length === 0 ? (
+                <EmptyState
+                  icon={CalendarDays}
+                  title="No matching leave requests"
+                  subtitle={hasActiveFilters ? "Try clearing search queries or filters to view all records." : "There are currently no leave requests filed."}
+                />
+              ) : (
+                <div className="leave-table-wrap">
+                  <table className="leave-table">
+                    <thead>
+                      <tr>
+                        {renderSortableHeader("Employee", "employeeName", sortConfig, handleSort)}
+                        {renderSortableHeader("Leave Type", "leaveTypeName", sortConfig, handleSort)}
+                        {renderSortableHeader("Dates", "startDate", sortConfig, handleSort)}
+                        {renderSortableHeader("Days", "days", sortConfig, handleSort)}
+                        <th>Category & Reason</th>
+                        <th>Document</th>
+                        {renderSortableHeader("Status", "status", sortConfig, handleSort)}
+                        <th>Decision Details</th>
+                        {renderSortableHeader("Applied On", "appliedOn", sortConfig, handleSort)}
+                        <th style={{ textAlign: "right" }}>Actions</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {paginatedRequests.map((req) => {
+                        const meta = leaveStatusMeta[req.status] || leaveStatusMeta.Pending;
+                        const details = parseLeaveDetails(req.reason);
+                        const names = (req.employeeName || "").split(" ");
+                        return (
+                          <tr key={`${req.id}-${req.employeeId}-${req.startDate}-${req.status}`}>
+                            <td>
+                              <div className="leave-emp-cell">
+                                <InitialsAvatar firstName={names[0]} lastName={names[1]} size={32} />
+                                <div className="leave-emp-info">
+                                  <span className="leave-emp-name">{req.employeeName}</span>
+                                  <span className="leave-emp-id">{req.employeeId}</span>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td style={{ fontWeight: 600, color: "var(--text)" }}>
+                              {req.leaveTypeName || "—"}
+                            </td>
+
+                            <td>
+                              <div className="leave-date-badge">
+                                <span className="leave-date-text">
+                                  {new Date(req.startDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                                  {req.startDate !== req.endDate && ` – ${new Date(req.endDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`}
+                                </span>
+                                {details.isHalfDay && (
+                                  <span className="leave-session-tag">
+                                    Half Day · {details.halfDaySession?.includes("First") ? "AM" : "PM"}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td>
+                              <span className="leave-days-pill">
+                                {req.days}d
+                              </span>
+                            </td>
+
+                            <td style={{ maxWidth: "240px" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                {details.category && (
+                                  <span className="leave-category-pill">
+                                    {details.category}
+                                  </span>
+                                )}
+                                <span
+                                  style={{
+                                    fontSize: "12.5px",
+                                    color: "var(--subtext)",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title={details.summary || req.reason}
+                                >
+                                  {details.summary || req.reason || "—"}
+                                </span>
+                              </div>
+                            </td>
+
+                            <td>
+                              {details.attachment ? (
+                                <button
+                                  type="button"
+                                  className="leave-doc-btn"
+                                  onClick={() => setSelectedDetail(req)}
+                                  title={details.attachment.name}
+                                >
+                                  <Paperclip size={13} style={{ color: "var(--primary)" }} />
+                                  {details.attachment.name.length > 12 ? details.attachment.name.slice(0, 10) + "…" : details.attachment.name}
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: "12px", color: "var(--subtext)" }}>—</span>
+                              )}
+                            </td>
+
+                            <td>
+                              <StatusBadge label={meta.label} color={meta.color} bg={meta.bg} />
+                            </td>
+
+                            <td style={{ minWidth: "180px" }}>
+                              {req.status === "Absent" ? (
+                                <span style={{ fontSize: "12px", color: "var(--red)", fontWeight: 600 }}>
+                                  Marked absent (Biometrics)
+                                </span>
+                              ) : req.status === "Pending" ? (
+                                <span style={{ fontSize: "12px", color: "var(--amber)", fontWeight: 600 }}>
+                                  Pending approval
+                                </span>
+                              ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text)" }}>
+                                    {req.approverName || "Approver"}
+                                  </span>
+                                  {req.approvedOn && (
+                                    <span style={{ fontSize: "11px", color: "var(--subtext)" }}>
+                                      {new Date(req.approvedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            <td style={{ fontSize: "12px", color: "var(--subtext)", whiteSpace: "nowrap" }}>
+                              {new Date(req.appliedOn + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                            </td>
+
+                            <td style={{ textAlign: "right" }}>
+                              <div className="leave-action-group" style={{ justifyContent: "flex-end" }}>
+                                {canApprove && (req.status === "Pending" || req.status === "Absent") && req.employeeId !== user.id && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="leave-btn-approve"
+                                      onClick={() => setDecision({ request: req, action: "approve" })}
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="leave-btn-reject"
+                                      onClick={() => setDecision({ request: req, action: "reject" })}
+                                    >
+                                      Reject
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  className="leave-btn-details"
+                                  onClick={() => setSelectedDetail(req)}
+                                  title="Inspect full details"
+                                >
+                                  <Eye size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Table Footer / Pagination */}
+              {filtered.length > 0 && (
+                <div className="leave-table-footer">
+                  <span>
+                    Showing {(safePage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(safePage * ITEMS_PER_PAGE, filtered.length)} of {filtered.length} entries
+                  </span>
+                  <div className="leave-pagination-nav">
+                    <button
+                      type="button"
+                      className="leave-page-btn"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                    >
+                      <ChevronLeft size={14} style={{ verticalAlign: "middle" }} /> Prev
+                    </button>
+                    <span style={{ fontSize: "12px", fontWeight: 600 }}>
+                      Page {safePage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="leave-page-btn"
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={safePage >= totalPages}
+                    >
+                      Next <ChevronRight size={14} style={{ verticalAlign: "middle" }} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
         </div>
       </div>
 
+      {/* Modals */}
       <ApplyLeaveModal
         isOpen={showApply}
         onClose={() => setShowApply(false)}
