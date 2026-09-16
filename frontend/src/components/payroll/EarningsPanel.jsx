@@ -12,118 +12,28 @@ import {
   ArrowUp,
   ArrowDown,
   Percent,
-  DollarSign,
-  Layers,
-  Hash,
+  HelpCircle,
   Users,
   Play,
-  Briefcase,
   ChevronLeft,
   ChevronRight,
+  Lock,
+  RefreshCw,
 } from "lucide-react";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
 import EmptyState from "../shared/EmptyState";
-import StatusBadge from "../shared/StatusBadge";
 import {
   getPayrollComponentConfigs,
   createPayrollComponentConfig,
   updatePayrollComponentConfig,
   deletePayrollComponentConfig,
   runPayrollForSkillGroup,
+  getWageRates,
+  getEmployeeWages,
 } from "../../services/payrollService";
 import { getEmployees } from "../../services/employeeService";
-
-const DEFAULT_EARNINGS = [
-  {
-    id: "e-basic",
-    name: "Basic Salary",
-    code: "BASIC",
-    skillType: "ALL",
-    thresholdType: "fixed",
-    thresholdValue: 20000,
-    percentageFrom: "",
-    priority: 1,
-    isActive: true,
-  },
-  {
-    id: "e-hra",
-    name: "House Rent Allowance (HRA)",
-    code: "HRA",
-    skillType: "ALL",
-    thresholdType: "percentage",
-    thresholdValue: 50,
-    percentageFrom: "Basic Salary",
-    priority: 2,
-    isActive: true,
-  },
-  {
-    id: "e-transport",
-    name: "Transport Allowance",
-    code: "TRANSPORT_ALLOW",
-    skillType: "ALL",
-    thresholdType: "fixed",
-    thresholdValue: 1500,
-    percentageFrom: "",
-    priority: 3,
-    isActive: true,
-  },
-  {
-    id: "e-food",
-    name: "Food Allowance",
-    code: "FOOD_ALLOW",
-    skillType: "Skilled",
-    thresholdType: "fixed",
-    thresholdValue: 1000,
-    percentageFrom: "",
-    priority: 4,
-    isActive: true,
-  },
-  {
-    id: "e-night",
-    name: "Night Shift Allowance",
-    code: "NIGHT_ALLOW",
-    skillType: "ALL",
-    thresholdType: "fixed",
-    thresholdValue: 1500,
-    percentageFrom: "",
-    priority: 5,
-    isActive: true,
-  },
-  {
-    id: "e-bonus",
-    name: "Attendance Bonus",
-    code: "ATT_BONUS",
-    skillType: "ALL",
-    thresholdType: "fixed",
-    thresholdValue: 1500,
-    percentageFrom: "",
-    priority: 6,
-    isActive: true,
-  },
-  {
-    id: "e-prod",
-    name: "Production Incentive",
-    code: "PROD_INC",
-    skillType: "Skilled",
-    thresholdType: "fixed",
-    thresholdValue: 3000,
-    percentageFrom: "",
-    priority: 7,
-    isActive: true,
-  },
-  {
-    id: "e-special",
-    name: "Special Allowance",
-    code: "SPECIAL_ALLOW",
-    skillType: "ALL",
-    thresholdType: "percentage",
-    thresholdValue: 20,
-    percentageFrom: "Basic Salary",
-    priority: 8,
-    isActive: true,
-  },
-];
+import { basicMonthlyFor, monthlyGrossFor, isBasicKey, splitMonthlyPackage, employeeMonthlyGross, MONTHLY_GROSS_LABEL, isMonthlyGrossBase } from "../../utils/wageRates";
 
 export default function EarningsPanel() {
   const toast = useToast();
@@ -141,10 +51,30 @@ export default function EarningsPanel() {
   // Associated Employees Table State (Search, Dept Filter, Sort, Pagination 10 per page)
   const [empSearch, setEmpSearch] = useState("");
   const [empDeptFilter, setEmpDeptFilter] = useState("ALL");
+  // Statewise filter — auto-synced with the Wage Rates & Overrides state
+  // selector (via hrms:wage-state-selected + localStorage) so switching to
+  // e.g. Maharashtra there filters associated employees here dynamically.
+  // "ALL" (== "All States (Default)") shows every state.
+  const [empStateFilter, setEmpStateFilter] = useState(() => {
+    try {
+      const s = localStorage.getItem("hrms:selectedWageState") || "ALL";
+      return s === "All States (Default)" ? "ALL" : s;
+    } catch {
+      return "ALL";
+    }
+  });
   const [empSortKey, setEmpSortKey] = useState("name");
   const [empSortDir, setEmpSortDir] = useState("asc");
   const [empPage, setEmpPage] = useState(1);
   const EMP_PAGE_SIZE = 10;
+
+  // Envelope/auto-fit help: the Help button (right of Refresh) explains the
+  // green/red/blue status dots and the envelope auto-fit behaviour inline —
+  // no separate disclaimer popup is shown for over-drawn configs.
+  const [showHelp, setShowHelp] = useState(false);
+  // Monthly Cap (₹, optional): upper limit applied to a component's value
+  // BEFORE the envelope fit (mirrors backend maxCap handling).
+  const [maxCapValue, setMaxCapValue] = useState("");
 
   // Inline editing for Priority numeric field
   const [priorityEditingId, setPriorityEditingId] = useState(null);
@@ -155,8 +85,10 @@ export default function EarningsPanel() {
   const [editingItem, setEditingItem] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Associated Employees & Run Payroll by Tier
+  // Associated Employees — fully dynamic from wage rates & overrides
   const [employeesList, setEmployeesList] = useState([]);
+  const [wageRates, setWageRates] = useState([]);
+  const [wageMap, setWageMap] = useState({});
   const [runningTier, setRunningTier] = useState(null);
   const [runMonth, setRunMonth] = useState(new Date().getMonth() + 1);
   const [runYear, setRunYear] = useState(new Date().getFullYear());
@@ -167,41 +99,71 @@ export default function EarningsPanel() {
   const [skillType, setSkillType] = useState("ALL");
   const [thresholdType, setThresholdType] = useState("fixed"); // "fixed" | "percentage"
   const [thresholdValue, setThresholdValue] = useState("");
-  const [percentageFrom, setPercentageFrom] = useState("Basic Salary");
+  const [percentageFrom, setPercentageFrom] = useState("Monthly gross");
   const [priority, setPriority] = useState(1);
 
   const loadEarnings = async () => {
     setLoading(true);
     try {
-      const [res, empRes] = await Promise.all([
+      const [res, empRes, wageRes, empWageRes] = await Promise.all([
         getPayrollComponentConfigs().catch(() => ({ data: [] })),
         getEmployees().catch(() => ({ data: [] })),
+        getWageRates().catch(() => ({ data: [] })),
+        getEmployeeWages().catch(() => ({ data: [] })),
       ]);
       const serverComps = (res.data || []).filter(
-        (c) => c.kind !== "deduction",
+        (c) => String(c.kind || "").toLowerCase() !== "deduction",
       );
       setEmployeesList(empRes.data || []);
+      setWageRates(wageRes.data || []);
+      const map = {};
+      (empWageRes.data || []).forEach((w) => {
+        map[w.employeeCode] = w;
+        if (w.employeeId) map[w.employeeId] = w;
+      });
+      setWageMap(map);
 
       if (serverComps.length > 0) {
         // Map backend components to earnings UI format
-        const mapped = serverComps.map((c, idx) => ({
-          id: c.id,
-          name: c.name,
-          code: c.code || c.name.toUpperCase().replace(/\s+/g, "_"),
-          skillType: c.applicableCategory || "ALL",
-          thresholdType: c.calcType === "percentage" ? "percentage" : "fixed",
-          thresholdValue:
-            c.maxCap || c.value || (c.calcType === "percentage" ? 40 : 1500),
-          percentageFrom: c.percentageFrom || "Basic Salary",
-          priority: c.priority || idx + 1,
-          isActive: c.isActive ?? true,
-        }));
+        // Backend now returns priority and percentageFrom fields.
+        // NOTE: backend stores percentage in `pct` (not `value`), and fixed
+        // amounts in `value` (`maxCap` is only an upper cap, not the amount).
+        // No static fallback — earnings are strictly whatever is fetched from
+        // wage rates + overrides + component configs. A component with no
+        // configured amount reads 0 instead of an invented default.
+        const mapped = serverComps.map((c, idx) => {
+          const calcType = c.calcType === "percentage" ? "percentage" : "fixed";
+          const numOr = (...args) => {
+            const fallback = args.pop();
+            for (const v of args) {
+              const n = Number(v);
+              if (v !== null && v !== undefined && v !== "" && !Number.isNaN(n)) return n;
+            }
+            return fallback;
+          };
+          return {
+            id: c.id,
+            name: c.name,
+            code: c.code || c.name.toUpperCase().replace(/\s+/g, "_"),
+            skillType: c.applicableCategory || "ALL",
+            thresholdType: calcType,
+            thresholdValue:
+              calcType === "percentage"
+                ? numOr(c.pct, c.value, 0)
+                : numOr(c.value, 0),
+            percentageFrom: c.percentageFrom && !isMonthlyGrossBase(c.percentageFrom) ? c.percentageFrom : MONTHLY_GROSS_LABEL,
+            maxCap: c.maxCap != null && c.maxCap !== "" ? Number(c.maxCap) : null,
+            priority: c.priority ?? (idx + 1),
+            isActive: c.isActive ?? true,
+          };
+        });
         setEarnings(mapped);
       } else {
-        setEarnings(DEFAULT_EARNINGS);
+        // No static data — empty until wage rates / overrides create components
+        setEarnings([]);
       }
     } catch {
-      setEarnings(DEFAULT_EARNINGS);
+      setEarnings([]);
     } finally {
       setLoading(false);
     }
@@ -211,6 +173,36 @@ export default function EarningsPanel() {
     loadEarnings();
   }, []);
 
+  // Re-fetch when the tab regains focus / becomes visible so salary edits
+  // made in EmployeeProfile (a different route) are reflected in gross
+  // earnings without requiring a hard reload. Also refresh when wage rates
+  // change (back-and-forth sync: wage edits update earnings + employees).
+  // Plus auto-sync the statewise employee filter when the Wage Rates panel
+  // state selector changes (e.g. switched to Maharashtra).
+  useEffect(() => {
+    const refresh = () => loadEarnings();
+    const onWageState = (e) => {
+      const s = e?.detail?.state || "ALL";
+      setEmpStateFilter(s === "All States (Default)" ? "ALL" : s);
+      setEmpPage(1);
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("hrms:employees-changed", refresh);
+    window.addEventListener("hrms:wage-rates-changed", refresh);
+    window.addEventListener("hrms:wage-state-selected", onWageState);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadEarnings();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("hrms:employees-changed", refresh);
+      window.removeEventListener("hrms:wage-rates-changed", refresh);
+      window.removeEventListener("hrms:wage-state-selected", onWageState);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   const handleOpenAdd = () => {
     setEditingItem(null);
     setName("");
@@ -218,19 +210,25 @@ export default function EarningsPanel() {
     setSkillType("ALL");
     setThresholdType("fixed");
     setThresholdValue("");
-    setPercentageFrom("Basic Salary");
+    setMaxCapValue("");
+    setPercentageFrom("Monthly gross");
     setPriority(earnings.length + 1);
     setShowModal(true);
   };
 
   const handleOpenEdit = (item) => {
+    if (isBasicKey(item.code, item.name)) {
+      toast("Basic wages are pulled from Wage Rates & overrides (skill/state-wise) and are non-editable.", "error");
+      return;
+    }
     setEditingItem(item);
     setName(item.name);
     setCode(item.code);
     setSkillType(item.skillType || "ALL");
     setThresholdType(item.thresholdType || "fixed");
     setThresholdValue(String(item.thresholdValue || ""));
-    setPercentageFrom(item.percentageFrom || "Basic Salary");
+    setMaxCapValue(item.maxCap != null && item.maxCap !== "" ? String(item.maxCap) : "");
+    setPercentageFrom(item.percentageFrom || "Monthly gross");
     setPriority(item.priority || 1);
     setShowModal(true);
   };
@@ -241,9 +239,23 @@ export default function EarningsPanel() {
       toast("Please enter a component name", "error");
       return;
     }
+    // Basic wages are system-driven (wage rates + overrides) — locked.
+    if (isBasicKey(code, name) || (editingItem && isBasicKey(editingItem.code, editingItem.name))) {
+      toast("Basic wages are pulled from Wage Rates & overrides (skill/state-wise) and are non-editable.", "error");
+      return;
+    }
     const val = parseFloat(thresholdValue);
     if (isNaN(val) || val < 0) {
       toast("Please enter a valid numeric threshold value", "error");
+      return;
+    }
+    // Monthly Cap (optional upper limit applied before the envelope fit)
+    const cap =
+      maxCapValue.trim() !== "" && !Number.isNaN(parseFloat(maxCapValue))
+        ? parseFloat(maxCapValue)
+        : null;
+    if (cap != null && cap < 0) {
+      toast("Monthly cap must be a positive number", "error");
       return;
     }
 
@@ -257,8 +269,10 @@ export default function EarningsPanel() {
       kind: "earning",
       calcType: thresholdType === "percentage" ? "percentage" : "fixed",
       applicableCategory: skillType,
-      value: val,
-      maxCap: thresholdType === "fixed" ? val : null,
+      value: thresholdType === "percentage" ? null : val,
+      pct: thresholdType === "percentage" ? val : null,
+      maxCap: cap,
+      sourceField: "ctc",
       percentageFrom: thresholdType === "percentage" ? percentageFrom : null,
       priority: Number(priority) || 1,
       isActive: true,
@@ -267,27 +281,30 @@ export default function EarningsPanel() {
     try {
       if (editingItem && !String(editingItem.id).startsWith("e-")) {
         await updatePayrollComponentConfig(editingItem.id, payload);
-      } else if (!editingItem) {
-        await createPayrollComponentConfig(payload);
-      }
 
-      setEarnings((prev) => {
-        if (editingItem) {
-          return prev.map((item) =>
-            item.id === editingItem.id
-              ? { ...item, ...payload, thresholdValue: val }
-              : item,
-          );
-        } else {
-          return [
-            ...prev,
-            { id: `e-${Date.now()}`, ...payload, thresholdValue: val },
-          ];
-        }
-      });
+        // Optimistic update for edits (immediate UI feedback)
+        const localEntry = {
+          ...payload,
+          skillType: skillType,
+          thresholdValue: val,
+          thresholdType,
+          maxCap: cap,
+          percentageFrom: thresholdType === "percentage" ? percentageFrom : "",
+        };
+        setEarnings((prev) =>
+          prev.map((item) =>
+            item.id === editingItem.id ? { ...item, ...localEntry } : item,
+          ),
+        );
+      } else if (!editingItem) {
+        // For new items: create then reload to get real server ID + priority
+        await createPayrollComponentConfig(payload);
+        await loadEarnings();
+      }
 
       toast(`Earning component "${name}" saved successfully!`);
       setShowModal(false);
+      try { window.dispatchEvent(new CustomEvent("hrms:payroll-components-changed")); } catch { /* ignore */ }
     } catch (err) {
       toast(
         err.response?.data?.message ||
@@ -300,7 +317,11 @@ export default function EarningsPanel() {
     }
   };
 
-  const handleDelete = async (id, compName) => {
+  const handleDelete = async (id, compName, compCode = "") => {
+    if (isBasicKey(compCode, compName)) {
+      toast("Basic wages are system-driven and non-deletable. Edit the Wage Rate instead.", "error");
+      return;
+    }
     if (
       !window.confirm(
         `Are you sure you want to remove "${compName}" from earnings?`,
@@ -313,6 +334,7 @@ export default function EarningsPanel() {
       }
       setEarnings((prev) => prev.filter((item) => item.id !== id));
       toast(`Removed "${compName}"`);
+      try { window.dispatchEvent(new CustomEvent("hrms:payroll-components-changed")); } catch { /* ignore */ }
     } catch (err) {
       toast(
         err.response?.data?.message ||
@@ -324,6 +346,12 @@ export default function EarningsPanel() {
   };
 
   const handleSavePriority = async (id, newPriority) => {
+    const target = earnings.find((e) => e.id === id);
+    if (target && isBasicKey(target.code, target.name)) {
+      toast("Basic wages are wage-driven and non-editable.", "error");
+      setPriorityEditingId(null);
+      return;
+    }
     const num = parseInt(newPriority, 10);
     if (isNaN(num) || num < 1) {
       toast("Priority must be a positive integer", "error");
@@ -340,6 +368,7 @@ export default function EarningsPanel() {
       );
       setPriorityEditingId(null);
       toast(`Updated priority to #${num}`);
+      try { window.dispatchEvent(new CustomEvent("hrms:payroll-components-changed")); } catch { /* ignore */ }
     } catch {
       toast("Could not update priority", "error");
     }
@@ -364,13 +393,14 @@ export default function EarningsPanel() {
     );
   };
 
-  // Existing earning components available for "Percentage From" select
+  // Existing earning components available for "Percentage From" select.
+  // Single dynamic base first: the employee's Monthly gross (₹).
   const existingComponentOptions = useMemo(() => {
     const names = earnings.map((e) => e.name).filter((n) => n !== name);
+    const legacy = new Set(["Basic Salary", "Gross Pay", "Basic + DA", "Gross Wages", "Basic"]);
     return [
-      "Basic Salary",
-      "Gross Pay",
-      ...names.filter((n) => n !== "Basic Salary" && n !== "Gross Pay"),
+      MONTHLY_GROSS_LABEL,
+      ...names.filter((n) => !legacy.has(n)),
     ];
   }, [earnings, name]);
 
@@ -435,38 +465,266 @@ export default function EarningsPanel() {
     return list;
   }, [earnings]);
 
-  // Dynamic calculation of an employee's entitlement for a specific component
-  const calculateEmployeeComponent = (emp, comp) => {
-    const isDaily =
-      emp.salaryType === "Daily" ||
-      (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
-    const monthlyGross = isDaily
-      ? Number(emp.dailyWageRate || 750) * 26
-      : Math.round((Number(emp.annualSalary) || 300000) / 12);
-    const basic = Math.round(monthlyGross * 0.5);
-
-    if (comp.code === "BASIC") {
-      return basic;
+  // Doctrine: monthly salary (base pay) = Basic (locked state/skill minimum
+  // wage) + allowances; gross earnings === monthly salary, always.
+  // E.g. monthly ₹40,000, state minimum ₹22,000 → basic ₹22,000 and the
+  // ₹18,000 remainder is divided into the allowance components. Basic is
+  // FIXED (never a residual); allowances scale to fit the remainder.
+  const isBasicComponent = (c) => isBasicKey(c?.code, c?.name);
+  const isEligibleForEmployee = (emp, c, applicableEarningCodes, hasAllowanceFilter, { bypassSkillForBasic = true } = {}) => {
+    if (c?.isActive === false) return false;
+    if (bypassSkillForBasic && isBasicComponent(c)) {
+      return true;
     }
-
+    const empSkill = (emp.skillType || "Skilled").toLowerCase().replace(/[^a-z]/g, "");
+    const compSkill = (c.skillType || c.applicableCategory || "ALL").toLowerCase().replace(/[^a-z]/g, "");
+    const skillOk = compSkill === "all" || compSkill === empSkill;
+    if (!skillOk) return false;
+    if (!hasAllowanceFilter) return true;
+    return applicableEarningCodes.some(
+      (code) =>
+        code?.toUpperCase?.() === c.code?.toUpperCase?.() ||
+        code?.toUpperCase?.() === c.name?.toUpperCase?.().replace(/\s+/g, "_"),
+    );
+  };
+  const getApplicableCodes = (emp) => {
+    const codes =
+      emp.wizardData?.payRules?.earnings || emp.payRules?.earnings || [];
+    const hasFilter = Array.isArray(codes) && codes.length > 0;
+    return { codes, hasFilter };
+  };
+  const isPctFromGross = (c) => {
+    const src = String(c?.percentageFrom || c?.sourceField || "basic").toLowerCase();
+    return src.includes("gross") || src.includes("ctc") || src === "gross pay";
+  };
+  // Per-employee package: Basic locked to the statutory wage; the remainder
+  // (monthly − basic) is divided into allowances so
+  // basic + allowances === monthly salary === gross, always.
+  const packageForEmployee = (emp, allActiveComps) => {
+    const comps = (allActiveComps || activeEarningComponents).filter((c) => c.isActive !== false);
+    const { codes: applicableEarningCodes, hasFilter: hasAllowanceFilter } = getApplicableCodes(emp);
+    const eligible = comps.filter((c) =>
+      isEligibleForEmployee(emp, c, applicableEarningCodes, hasAllowanceFilter, { bypassSkillForBasic: false }),
+    );
+    const { basicMonthly: statutoryBasic, source, isOverride, dailyRate } = basicMonthlyFor(emp, wageRates);
+    const storedMonthly = Math.round((Number(emp.annualSalary) || 0) / 12);
+    const isDailyEmp =
+      String(emp.salaryType || "").trim().toLowerCase() === "daily" ||
+      (Number(emp.dailyWageRate) > 0 && !Number(emp.annualSalary));
+    const serverWage = wageMap[emp.employeeCode] || wageMap[emp.id];
+    const nonBasic = eligible.filter((c) => !isBasicComponent(c));
+    // No employee-defined monthly (monthly staff without a package): there is
+    // NO monthly to split — never invent one from wages. Basic (the wage-rate
+    // monthly rate) still shows; allowances are 0 until a package is set.
+    if ((serverWage && serverWage.monthlyGross == null) || (!serverWage && !isDailyEmp && storedMonthly <= 0)) {
+      return {
+        basic: serverWage?.basicMonthly ?? statutoryBasic, gross: null, amounts: {},
+        eligible, nonBasic,
+        statutoryBasic, monthlySalary: null, allowanceRemainder: 0,
+        nonCompliant: true, needsPackage: true,
+        source: serverWage?.wageSource || source,
+        isOverride: serverWage?.isOverride ?? isOverride,
+        dailyRate: serverWage?.dailyRate ?? dailyRate,
+      };
+    }
+    // Fixed and percentage parts must respect maxCap (>0) — mirrors backend
+    // getEmployeeWages capping so threshold/formula is honoured exactly.
+    const capWeight = (comp, raw) => {
+      const cap = comp.maxCap != null && Number(comp.maxCap) > 0 ? Math.round(Number(comp.maxCap)) : null;
+      if (cap != null && raw > cap) return cap;
+      return raw;
+    };
+    const fixedWeights = nonBasic
+      .filter((c) => c.thresholdType !== "percentage")
+      .map((c) => ({ key: String(c.code || c.name), weight: capWeight(c, Math.round(Number(c.thresholdValue || 0) || 0)) }));
+    const basicPctParts = nonBasic
+      .filter((c) => c.thresholdType === "percentage" && !isPctFromGross(c))
+      .map((c) => ({ key: String(c.code || c.name), amount: capWeight(c, Math.round((statutoryBasic * Number(c.thresholdValue || 0)) / 100)) }));
+    // %‑of‑gross parts are computed from the monthly envelope (known upfront
+    // since gross === monthly by doctrine — no circularity).
+    const envelopeForPct = storedMonthly > 0 ? storedMonthly : monthlyGrossFor(emp, eligible, wageRates).monthlyGross;
+    const grossPctParts = nonBasic
+      .filter((c) => c.thresholdType === "percentage" && isPctFromGross(c))
+      .map((c) => ({ key: String(c.code || c.name), amount: capWeight(c, Math.round((envelopeForPct * Number(c.thresholdValue || 0)) / 100)) }));
+    const otherComp = nonBasic.find((c) => /other/i.test(String(c.code || c.name)));
+    const split = splitMonthlyPackage({
+      target: storedMonthly > 0 ? storedMonthly : envelopeForPct,
+      basic: statutoryBasic,
+      fixedWeights,
+      basicPctParts,
+      grossPctParts,
+      otherKey: otherComp ? String(otherComp.code || otherComp.name) : "otherAllowances",
+    });
+    // Server join wins for basic/gross (single source of truth); re-split the
+    // local allowance weights around the server figures so the row still sums
+    // exactly to basic + allowances === monthly === gross.
+    if (serverWage && (serverWage.basicMonthly !== split.basic || serverWage.monthlyGross !== split.gross)) {
+      const sBasic = serverWage.basicMonthly ?? split.basic;
+      const sGross = serverWage.monthlyGross ?? split.gross;
+      const capWeightFor = (comp, raw) => {
+        const cap = comp.maxCap != null && Number(comp.maxCap) > 0 ? Math.round(Number(comp.maxCap)) : null;
+        if (cap != null && raw > cap) return cap;
+        return raw;
+      };
+      const sBasicPct = nonBasic
+        .filter((c) => c.thresholdType === "percentage" && !isPctFromGross(c))
+        .map((c) => ({ key: String(c.code || c.name), amount: capWeightFor(c, Math.round((sBasic * Number(c.thresholdValue || 0)) / 100)) }));
+      const sGrossPct = nonBasic
+        .filter((c) => c.thresholdType === "percentage" && isPctFromGross(c))
+        .map((c) => ({ key: String(c.code || c.name), amount: capWeightFor(c, Math.round((sGross * Number(c.thresholdValue || 0)) / 100)) }));
+      const re = splitMonthlyPackage({
+        target: sGross, basic: sBasic, fixedWeights,
+        basicPctParts: sBasicPct, grossPctParts: sGrossPct,
+        otherKey: otherComp ? String(otherComp.code || otherComp.name) : "otherAllowances",
+      });
+      return {
+        basic: re.basic, gross: re.gross, amounts: re.amounts,
+        eligible, nonBasic,
+        statutoryBasic, monthlySalary: re.gross,
+        allowanceRemainder: Math.max(re.gross - re.basic, 0),
+        nonCompliant: serverWage.nonCompliant ?? re.nonCompliant,
+        source: serverWage.wageSource || source,
+        isOverride: serverWage.isOverride ?? isOverride,
+        dailyRate: serverWage.dailyRate ?? dailyRate,
+      };
+    }
+    return {
+      basic: split.basic, gross: split.gross, amounts: split.amounts,
+      eligible, nonBasic,
+      statutoryBasic, monthlySalary: split.gross,
+      allowanceRemainder: Math.max(split.gross - split.basic, 0),
+      nonCompliant: serverWage?.nonCompliant ?? split.nonCompliant,
+      source: serverWage?.wageSource || source,
+      isOverride: serverWage?.isOverride ?? isOverride,
+      dailyRate: serverWage?.dailyRate ?? dailyRate,
+    };
+  };
+  // Configured (pre-envelope) value of a NON-BASIC component for an employee:
+  // fixed = amount capped by maxCap; percentage = % of the dynamic base
+  // (Monthly gross, or one level of a referenced component), also capped by
+  // maxCap — mirroring the backend's maxCap handling. Used as the weight for
+  // the envelope fit below and for the excess disclaimer.
+  const capAmount = (comp, amt) => {
+    let v = Math.max(Math.round(amt), 0);
+    if (comp.maxCap != null && Number(comp.maxCap) > 0 && v > Math.round(Number(comp.maxCap))) {
+      v = Math.round(Number(comp.maxCap));
+    }
+    return v;
+  };
+  const configuredComponentValue = (emp, comp, allActiveComps) => {
+    const { codes: applicableEarningCodes, hasFilter: hasAllowanceFilter } = getApplicableCodes(emp);
+    if (!isEligibleForEmployee(emp, comp, applicableEarningCodes, hasAllowanceFilter)) return 0;
+    // Single dynamic base: employee Monthly gross (₹). Fixed = cap value,
+    // percentage = % of Monthly gross (legacy Basic/Gross bases map here too).
+    const monthlyBase = employeeMonthlyGross(emp);
     if (comp.thresholdType === "percentage") {
-      const base = comp.percentageFrom?.toLowerCase().includes("basic")
-        ? basic
-        : monthlyGross;
-      return Math.round((base * Number(comp.thresholdValue || 0)) / 100);
+      const from = String(comp.percentageFrom || MONTHLY_GROSS_LABEL);
+      if (!isMonthlyGrossBase(from)) {
+        // % of another named component (one level, then Monthly gross fallback).
+        const ref = (allActiveComps || activeEarningComponents).find(
+          (c) => String(c.name).toLowerCase() === from.toLowerCase() || String(c.code).toLowerCase() === from.toLowerCase()
+        );
+        if (ref && ref !== comp) {
+          if (ref.thresholdType === "percentage") {
+            if (monthlyBase == null) return 0;
+            return capAmount(comp, (monthlyBase * Number(ref.thresholdValue || 0) * Number(comp.thresholdValue || 0)) / 10000);
+          }
+          return capAmount(comp, (Number(ref.thresholdValue || 0) * Number(comp.thresholdValue || 0)) / 100);
+        }
+      }
+      if (monthlyBase == null) return 0;
+      return capAmount(comp, (monthlyBase * Number(comp.thresholdValue || 0)) / 100);
     }
 
-    // Fixed amount
-    const empSkill = (emp.skillType || "Skilled")
-      .toLowerCase()
-      .replace(/[^a-z]/g, "");
-    const compSkill = (comp.skillType || "ALL")
-      .toLowerCase()
-      .replace(/[^a-z]/g, "");
-    if (compSkill === "all" || compSkill === empSkill) {
-      return Number(comp.thresholdValue || 0);
+    // Fixed amount (already confirmed eligible above), capped by maxCap
+    return capAmount(comp, Number(comp.thresholdValue || 0));
+  };
+
+  // Rupee-exact largest-remainder scale — now mirrors backend splitMonthlyPackage:
+  // only scales DOWN when configured > envelope (over-drawn). When configured <=
+  // envelope the threshold/formula values are returned verbatim (no inflation)
+  // so the Associated Employees table shows exactly what was configured
+  // (₹2,500 stays ₹2,500, 5% of Monthly gross stays 5% etc.). Remainder, if any,
+  // is implicitly otherAllowances (not shown) — matching backend's otherKey logic.
+  const scaleToEnvelope = (parts, envelope) => {
+    const out = new Map();
+    if (envelope == null || envelope <= 0 || parts.length === 0) {
+      parts.forEach((p) => out.set(p.comp.id, 0));
+      return out;
     }
-    return 0;
+    const total = parts.reduce((s, p) => s + p.configured, 0);
+    if (total <= envelope) {
+      // Fit: return configured verbatim — thresholds are honoured exactly.
+      parts.forEach((p) => out.set(p.comp.id, p.configured));
+      return out;
+    }
+    if (total <= 0) {
+      parts.forEach((p) => out.set(p.comp.id, 0));
+      return out;
+    }
+    // Over-drawn: scale down pro-rata rupee-exact so Σ == envelope.
+    const factor = envelope / total;
+    const floored = parts.map((p) => {
+      const raw = p.configured * factor;
+      return { id: p.comp.id, base: Math.floor(raw), frac: raw - Math.floor(raw) };
+    });
+    let assigned = floored.reduce((s, f) => s + f.base, 0);
+    let left = envelope - assigned;
+    floored.sort((a, b) => b.frac - a.frac);
+    let i = 0;
+    while (left > 0 && floored.length > 0) {
+      floored[i % floored.length].base += 1;
+      left -= 1;
+      i += 1;
+    }
+    floored.forEach((f) => out.set(f.id, f.base));
+    return out;
+  };
+
+  /**
+   * Per-employee earnings breakdown — thresholds honoured exactly:
+   *   - Basic is wage-driven (daily × 26 from wage rates / override, never static)
+   *   - Each non-basic component's value = threshold/formula capped by maxCap
+   *     (fixed = ₹threshold capped, percentage = % of Monthly gross capped)
+   *   - If Σ(configured) fits the envelope (monthly − basic), values are shown
+   *     verbatim so ₹2,500 stays ₹2,500 and 5% shows 5% (matches the Threshold
+   *     column). If Σ exceeds the envelope, values are scaled down pro-rata
+   *     rupee-exact so gross never exceeds monthly gross.
+   *   - monthly < basic → allowances 0, gross = basic (flagged)
+   *   - no package (monthly null) → values shown as configured
+   */
+  const employeeEarningsBreakdown = (emp, allActiveComps) => {
+    const comps = (allActiveComps || activeEarningComponents).filter((c) => c.isActive !== false);
+    const basic = packageForEmployee(emp, comps).basic;
+    const mg = employeeMonthlyGross(emp);
+    const envelope = mg != null ? Math.max(mg - basic, 0) : null;
+    const parts = comps
+      .filter((c) => !isBasicComponent(c))
+      .map((comp) => ({ comp, configured: configuredComponentValue(emp, comp, comps) }));
+    const configuredTotal = parts.reduce((s, p) => s + p.configured, 0);
+    const values =
+      mg == null
+        ? new Map(parts.map((p) => [p.comp.id, p.configured]))
+        : scaleToEnvelope(parts, envelope);
+    const displayedSum = Array.from(values.values()).reduce((s, v) => s + v, 0);
+    const grossEarnings = mg == null ? basic + configuredTotal : mg < basic ? basic : basic + displayedSum;
+    return {
+      basic,
+      mg,
+      envelope,
+      parts,
+      values,
+      configuredTotal,
+      grossEarnings,
+      excess: mg != null && mg >= basic ? Math.max(configuredTotal - envelope, 0) : 0,
+    };
+  };
+
+  const calculateEmployeeComponent = (emp, comp, allActiveComps) => {
+    // Basic stays wage-driven (locked component value); every other
+    // component is envelope-fitted so Σ(all) === Monthly gross always.
+    if (isBasicComponent(comp)) return packageForEmployee(emp, allActiveComps).basic;
+    return employeeEarningsBreakdown(emp, allActiveComps).values.get(comp.id) ?? 0;
   };
 
   // Associated employees dynamic filtering & sorting
@@ -479,8 +737,41 @@ export default function EarningsPanel() {
     return Array.from(depts);
   }, [employeesList]);
 
+  // Resolve an employee's state for statewise filtering: profile state first,
+  // then the joined wage row (backend falls back to location name), then the
+  // employee's location name. Empty string when unknown.
+  const empStateOf = (e) => {
+    const serverWage = wageMap[e.employeeCode] || wageMap[e.id];
+    const s =
+      e.state ||
+      serverWage?.state ||
+      e.location?.name ||
+      (typeof e.location === "string" ? e.location : "");
+    return String(s || "").trim();
+  };
+
+  const dynamicEmpStates = useMemo(() => {
+    const set = new Set();
+    employeesList.forEach((e) => {
+      const s = empStateOf(e);
+      if (s) set.add(s);
+    });
+    if (empStateFilter !== "ALL" && empStateFilter) set.add(empStateFilter);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeesList, wageMap, empStateFilter]);
+
   const processedAssociatedEmployees = useMemo(() => {
     let list = [...employeesList];
+
+    // Statewise filter — mirrors the Wage Rates & Overrides state selector.
+    // Basic wage (= wage monthly rate, daily × 26, skill/state-wise) resolves
+    // per-employee via basicMonthlyFor/wageMap, so filtering here surfaces
+    // exactly the employees whose Basic follows the selected state's scale.
+    if (empStateFilter !== "ALL") {
+      const normFilter = empStateFilter.trim().toLowerCase();
+      list = list.filter((e) => empStateOf(e).toLowerCase() === normFilter);
+    }
 
     // Skill Filter
     if (selectedSkillFilter !== "ALL") {
@@ -529,14 +820,17 @@ export default function EarningsPanel() {
         valA = (a.skillType || "").toLowerCase();
         valB = (b.skillType || "").toLowerCase();
       } else if (empSortKey === "rate") {
-        valA = Number(a.dailyWageRate || a.annualSalary || 0);
-        valB = Number(b.dailyWageRate || b.annualSalary || 0);
+        // Monthly gross (₹) from the employee — dynamic, nulls sort last.
+        const mA = employeeMonthlyGross(a);
+        const mB = employeeMonthlyGross(b);
+        valA = mA == null ? -1 : mA;
+        valB = mB == null ? -1 : mB;
       } else if (empSortKey.startsWith("comp_")) {
         const compId = empSortKey.replace("comp_", "");
         const targetComp = activeEarningComponents.find((c) => String(c.id) === compId);
         if (targetComp) {
-          valA = calculateEmployeeComponent(a, targetComp);
-          valB = calculateEmployeeComponent(b, targetComp);
+          valA = calculateEmployeeComponent(a, targetComp, activeEarningComponents);
+          valB = calculateEmployeeComponent(b, targetComp, activeEarningComponents);
         }
       }
 
@@ -546,14 +840,18 @@ export default function EarningsPanel() {
     });
 
     return list;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     employeesList,
     selectedSkillFilter,
     empDeptFilter,
+    empStateFilter,
     empSearch,
     empSortKey,
     empSortDir,
     activeEarningComponents,
+    wageRates,
+    wageMap,
   ]);
 
   const empPageCount = Math.max(1, Math.ceil(processedAssociatedEmployees.length / EMP_PAGE_SIZE));
@@ -657,7 +955,7 @@ export default function EarningsPanel() {
               maxWidth: "780px",
             }}
           >
-            Earning allowances, fixed caps, percentage ceilings calculated from base components, and numeric calculation priorities.
+            Earning allowances with fixed caps and percentages of the employee's Monthly gross (₹), plus numeric calculation priorities.
           </p>
         </div>
 
@@ -1034,25 +1332,37 @@ export default function EarningsPanel() {
                       )}
                     </td>
 
-                    {/* Component Name & Code */}
+                    {/* Component Name — NO code subheader */}
                     <td style={{ padding: "14px 16px" }}>
                       <div
                         style={{
                           fontWeight: 700,
                           color: "var(--text)",
                           fontSize: "13.5px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
                         }}
                       >
                         {item.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--subtext)",
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        {item.code}
+                        {isBasicKey(item.code, item.name) && (
+                          <span
+                            title="Basic wages are pulled from Wage Rates & overrides (skill/state-wise) — non-editable"
+                            style={{
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                              background: "rgba(99,102,241,0.1)",
+                              color: "var(--primary)",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "3px",
+                            }}
+                          >
+                            <Lock size={9} /> Wage-driven
+                          </span>
+                        )}
                       </div>
                     </td>
 
@@ -1101,7 +1411,7 @@ export default function EarningsPanel() {
                         }}
                       >
                         {isFixed ? (
-                          <DollarSign size={11} />
+                          <span style={{ fontSize: "11px", fontWeight: 800 }}>₹</span>
                         ) : (
                           <Percent size={11} />
                         )}
@@ -1109,14 +1419,39 @@ export default function EarningsPanel() {
                       </span>
                     </td>
 
-                    {/* Threshold Details / Formula */}
+                    {/* Threshold Details / Formula — Basic is the wage-rate
+                        monthly rate (non-editable), never a fixed amount here */}
                     <td
                       style={{
                         padding: "14px 16px",
                         background: "rgba(99, 102, 241, 0.02)",
                       }}
                     >
-                      {isFixed ? (
+                      {isBasicKey(item.code, item.name) ? (
+                        <div title="Basic wage = wage-rate monthly rate (daily × 26, skill/state-wise) — non-editable">
+                          <span
+                            style={{
+                              fontSize: "13px",
+                              fontWeight: 800,
+                              color: "var(--primary)",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                            }}
+                          >
+                            <Lock size={11} /> From Wage Rates
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "10.5px",
+                              color: "var(--subtext)",
+                              marginLeft: "4px",
+                            }}
+                          >
+                            (daily × 26 · skill/state-wise)
+                          </span>
+                        </div>
+                      ) : isFixed ? (
                         <div>
                           <span
                             style={{
@@ -1138,7 +1473,11 @@ export default function EarningsPanel() {
                               marginLeft: "4px",
                             }}
                           >
-                            (Monthly Cap)
+                            {item.maxCap != null &&
+                            Number(item.maxCap) !==
+                              Number(item.thresholdValue || 0)
+                              ? `(value · cap ₹${Number(item.maxCap).toLocaleString("en-IN")})`
+                              : "(Monthly Cap)"}
                           </span>
                         </div>
                       ) : (
@@ -1160,7 +1499,10 @@ export default function EarningsPanel() {
                               marginLeft: "4px",
                             }}
                           >
-                            of {item.percentageFrom || "Basic Salary"} (Maximum)
+                            of {item.percentageFrom || "Monthly gross"}
+                            {item.maxCap != null
+                              ? ` · cap ₹${Number(item.maxCap).toLocaleString("en-IN")}`
+                              : " (Maximum)"}
                           </span>
                         </div>
                       )}
@@ -1182,47 +1524,53 @@ export default function EarningsPanel() {
                       </span>
                     </td>
 
-                    {/* Actions */}
+                    {/* Actions — Basic is wage-driven (non-editable/non-deletable) */}
                     <td style={{ padding: "14px 16px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <button
-                          onClick={() => handleOpenEdit(item)}
+                      {isBasicKey(item.code, item.name) ? (
+                        <span style={{ fontSize: "11px", color: "var(--subtext)", fontStyle: "italic", display: "flex", alignItems: "center", gap: "4px" }} title="Basic wages are pulled from Wage Rates & overrides (skill/state-wise)">
+                          <Lock size={11} /> Wage-driven · non-editable
+                        </span>
+                      ) : (
+                        <div
                           style={{
-                            display: "inline-flex",
+                            display: "flex",
                             alignItems: "center",
-                            gap: "4px",
-                            padding: "5px 10px",
-                            background: "var(--primary-light)",
-                            color: "var(--primary)",
-                            border: "1px solid var(--primary)",
-                            borderRadius: "var(--radius-sm)",
-                            fontSize: "12px",
-                            fontWeight: 600,
-                            cursor: "pointer",
+                            gap: "8px",
                           }}
                         >
-                          <Edit3 size={12} /> Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(item.id, item.name)}
-                          style={{
-                            padding: "5px 7px",
-                            background: "transparent",
-                            color: "var(--red)",
-                            border: "none",
-                            cursor: "pointer",
-                            opacity: 0.7,
-                          }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+                          <button
+                            onClick={() => handleOpenEdit(item)}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "5px 10px",
+                              background: "var(--primary-light)",
+                              color: "var(--primary)",
+                              border: "1px solid var(--primary)",
+                              borderRadius: "var(--radius-sm)",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <Edit3 size={12} /> Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(item.id, item.name, item.code)}
+                            style={{
+                              padding: "5px 7px",
+                              background: "transparent",
+                              color: "var(--red)",
+                              border: "none",
+                              cursor: "pointer",
+                              opacity: 0.7,
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1691,12 +2039,48 @@ export default function EarningsPanel() {
                       <span
                         style={{ fontSize: "11px", color: "var(--subtext)" }}
                       >
-                        Select existing base component to compute this
-                        percentage against.
+                        % of the employee's Monthly gross (₹) — dynamic.
                       </span>
                     </div>
                   </div>
                 )}
+
+                {/* Monthly Cap (optional) — caps the component's value BEFORE
+                    the allowance-envelope auto-fit (mirrors backend maxCap). */}
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "var(--text)",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    Monthly Cap (₹, optional)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={maxCapValue}
+                    onChange={(e) => setMaxCapValue(e.target.value)}
+                    placeholder="No cap"
+                    style={{
+                      width: "100%",
+                      height: "36px",
+                      padding: "0 10px",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-sm)",
+                      background: "var(--card)",
+                      color: "var(--text)",
+                      fontSize: "13px",
+                      fontFamily: "monospace",
+                    }}
+                  />
+                  <span style={{ fontSize: "11px", color: "var(--subtext)" }}>
+                    Upper limit applied before the allowance-envelope auto-fit.
+                  </span>
+                </div>
               </div>
             </form>
 
@@ -1783,6 +2167,7 @@ export default function EarningsPanel() {
               {selectedSkillFilter === "ALL"
                 ? "All Categories"
                 : selectedSkillFilter}{" "}
+              · {empStateFilter === "ALL" ? "All States" : empStateFilter}{" "}
               ({processedAssociatedEmployees.length})
             </h3>
             <p
@@ -1792,11 +2177,11 @@ export default function EarningsPanel() {
                 margin: "3px 0 0",
               }}
             >
-              Dynamically maps active earning components ({activeEarningComponents.length}) to each employee based on skill level and pay structure.
+              Dynamically maps active earning components ({activeEarningComponents.length}) to each employee based on skill level and pay structure. Basic follows the Wage Rates monthly scale (daily × 26, skill/state-wise) and auto-syncs with the Wage Rates state selector.
             </p>
           </div>
 
-          {/* Month/Year and Run Payroll Action Controls */}
+          {/* Action Controls — Month/Year + Run Payroll for All Combined + Refresh & Help (dynamic) */}
           <div
             style={{
               display: "flex",
@@ -1861,7 +2246,6 @@ export default function EarningsPanel() {
               </select>
             </div>
 
-            {/* Run All Tiers Combined */}
             <button
               onClick={() => handleRunTierPayroll("ALL")}
               disabled={!!runningTier}
@@ -1883,8 +2267,140 @@ export default function EarningsPanel() {
               <Play size={13} fill="#fff" />
               {runningTier === "ALL" ? "Processing…" : "Run All Tiers Combined"}
             </button>
+            {/* Manual refresh — re-pulls employees + components so salary
+                edits saved elsewhere are reflected in gross immediately */}
+            <button
+              onClick={() => loadEarnings()}
+              disabled={loading}
+              title="Refresh employees and recalculate gross earnings"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                padding: "7px 12px",
+                background: "var(--card)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                fontSize: "12.5px",
+                fontWeight: 700,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              <RefreshCw size={13} />
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
 
-            {/* Run For Selected Tier Separately */}
+            {/* Help — explains the green/red/blue status dots and the
+                allowance-envelope auto-fit (replaces any disclaimer popup) */}
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setShowHelp((v) => !v)}
+                title="How earnings & status dots work"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  padding: "7px 12px",
+                  background: showHelp ? "var(--primary-light)" : "var(--card)",
+                  color: showHelp ? "var(--primary)" : "var(--text)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "12.5px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                <HelpCircle size={13} />
+                Help
+              </button>
+              {showHelp && (
+                <>
+                  <div
+                    style={{ position: "fixed", inset: 0, zIndex: 998 }}
+                    onClick={() => setShowHelp(false)}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 8px)",
+                      right: 0,
+                      width: "420px",
+                      zIndex: 999,
+                      background: "var(--card)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-lg)",
+                      boxShadow: "var(--shadow-lg)",
+                      padding: "16px 18px",
+                      fontSize: "12.5px",
+                      color: "var(--text)",
+                      lineHeight: 1.55,
+                      textAlign: "left",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: "8px" }}>
+                      How earnings & status dots work
+                    </div>
+                    <div style={{ color: "var(--subtext)", marginBottom: "10px" }}>
+                      Basic wage is locked (wage rate × 26, skill/state-wise).
+                      The allowance envelope = Monthly gross − Basic wage. The
+                      other components act as weights and are auto-fitted
+                      (rupee-exact) so their sum is <strong>exactly</strong> the
+                      envelope — i.e. <strong>Gross earnings always equals
+                      Monthly gross</strong> after the calculations.
+                    </div>
+                    {[
+                      {
+                        c: "var(--green)",
+                        t: "Monthly gross = Gross earnings and ≥ Basic wage — healthy row.",
+                      },
+                      {
+                        c: "var(--red)",
+                        t: "Gross earnings ≠ Monthly gross — happens when Monthly gross is below the Basic wage (nothing left for allowances) or no components are configured to fill the envelope.",
+                      },
+                      {
+                        c: "var(--blue)",
+                        t: "Monthly gross < Basic wage — should never be less (Basic is the statutory floor); usually appears together with red.",
+                      },
+                    ].map((d) => (
+                      <div
+                        key={d.c}
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: "8px",
+                          marginBottom: "6px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: "9px",
+                            height: "9px",
+                            borderRadius: "50%",
+                            background: d.c,
+                            flexShrink: 0,
+                            marginTop: "4px",
+                          }}
+                        />
+                        <span>{d.t}</span>
+                      </div>
+                    ))}
+                    <div style={{ color: "var(--subtext)", marginTop: "8px" }}>
+                      Dots appear next to each Monthly gross value in the
+                      Associated Employees table — hover any value for exact
+                      amounts. If configured components total more than the
+                      envelope, values are proportionally reduced (hover a
+                      component value to see configured → fitted); a Monthly Cap
+                      limits a component before the fit. Use Refresh after
+                      editing salaries elsewhere.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             {selectedSkillFilter !== "ALL" && (
               <button
                 onClick={() => handleRunTierPayroll(selectedSkillFilter)}
@@ -2025,11 +2541,59 @@ export default function EarningsPanel() {
               </select>
             </div>
 
-            {(empSearch || empDeptFilter !== "ALL") && (
+            {/* Statewise Filter — synced with Wage Rates & Overrides */}
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--subtext)" }}>
+                State:
+              </span>
+              <select
+                value={empStateFilter}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setEmpStateFilter(v);
+                  setEmpPage(1);
+                  try {
+                    localStorage.setItem(
+                      "hrms:selectedWageState",
+                      v === "ALL" ? "All States (Default)" : v,
+                    );
+                  } catch {
+                    /* ignore */
+                  }
+                  window.dispatchEvent(
+                    new CustomEvent("hrms:wage-state-selected", {
+                      detail: { state: v === "ALL" ? "All States (Default)" : v },
+                    }),
+                  );
+                }}
+                title="Statewise filter — auto-synced with the Wage Rates state selector"
+                style={{
+                  height: "32px",
+                  padding: "0 8px",
+                  borderRadius: "var(--radius-sm)",
+                  border: empStateFilter !== "ALL" ? "1px solid var(--primary)" : "1px solid var(--border)",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  maxWidth: "190px",
+                }}
+              >
+                <option value="ALL">All States</option>
+                {dynamicEmpStates.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {(empSearch || empDeptFilter !== "ALL" || empStateFilter !== "ALL") && (
               <button
                 onClick={() => {
                   setEmpSearch("");
                   setEmpDeptFilter("ALL");
+                  setEmpStateFilter("ALL");
                   setEmpPage(1);
                 }}
                 style={{
@@ -2073,8 +2637,8 @@ export default function EarningsPanel() {
           <EmptyState
             title="No employees found"
             subtitle={
-              empSearch || empDeptFilter !== "ALL"
-                ? "No employees match your current search or department filter."
+              empSearch || empDeptFilter !== "ALL" || empStateFilter !== "ALL"
+                ? `No employees match your current search / department / state filter${empStateFilter !== "ALL" ? ` (state: ${empStateFilter})` : ""}.`
                 : `No active employees are currently assigned to the ${selectedSkillFilter} tier.`
             }
           />
@@ -2183,11 +2747,11 @@ export default function EarningsPanel() {
                     }}
                   >
                     <div style={{ display: "inline-flex", alignItems: "center" }}>
-                      Base Pay / Rate {renderEmpSortIcon("rate")}
+                      Monthly gross (₹) {renderEmpSortIcon("rate")}
                     </div>
                   </th>
 
-                  {/* Dynamic Columns for each Active Earning Component */}
+                  {/* Dynamic Columns for each Active Earning Component — component name only, no subheader */}
                   {activeEarningComponents.map((comp) => (
                     <th
                       key={comp.id}
@@ -2205,34 +2769,15 @@ export default function EarningsPanel() {
                         background: "rgba(13, 148, 136, 0.04)",
                         borderLeft: "1px solid var(--border)",
                       }}
-                      title={`Calculation: ${comp.thresholdType === "percentage" ? `${comp.thresholdValue}% of ${comp.percentageFrom || "Basic"}` : `Fixed ₹${comp.thresholdValue}`} | Tier: ${comp.skillType || "ALL"}`}
+                      title={`Calculation: ${comp.thresholdType === "percentage" ? `${comp.thresholdValue}% of ${comp.percentageFrom || "Monthly gross"}` : `Fixed ₹${comp.thresholdValue}`}${comp.maxCap != null ? ` | Monthly cap: ₹${Number(comp.maxCap).toLocaleString("en-IN")}` : ""} | Tier: ${comp.skillType || "ALL"}`}
                     >
-                      <div style={{ display: "flex", flexDirection: "column" }}>
-                        <div
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "2px",
-                          }}
-                        >
-                          <span>{comp.name}</span>
-                          {renderEmpSortIcon(`comp_${comp.id}`)}
-                        </div>
-                        <span
-                          style={{
-                            fontSize: "9.5px",
-                            color: "var(--subtext)",
-                            fontWeight: 500,
-                            textTransform: "none",
-                          }}
-                        >
-                          {comp.thresholdType === "percentage"
-                            ? `${comp.thresholdValue}% (${comp.percentageFrom?.includes("Basic") ? "Basic" : "Gross"})`
-                            : `₹${Number(comp.thresholdValue).toLocaleString("en-IN")}`}
-                        </span>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                        <span>{comp.name}</span>
+                        {renderEmpSortIcon(`comp_${comp.id}`)}
                       </div>
                     </th>
                   ))}
+
 
                   <th
                     style={{
@@ -2245,8 +2790,9 @@ export default function EarningsPanel() {
                       whiteSpace: "nowrap",
                       borderLeft: "1px solid var(--border)",
                     }}
+                    title="Sum of all active earning components for this employee"
                   >
-                    Est. Total
+                    Gross Earnings
                   </th>
 
                   <th
@@ -2267,15 +2813,22 @@ export default function EarningsPanel() {
               <tbody>
                 {pagedAssociatedEmployees.map((emp, idx) => {
                   const skill = emp.skillType || "Skilled";
-                  const isDaily =
-                    emp.salaryType === "Daily" ||
-                    (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
 
+                  // Envelope-aware breakdown: Basic is locked; non-basic
+                  // components are auto-fitted (rupee-exact) so their sum is
+                  // EXACTLY Monthly gross − Basic wage, i.e.
+                  // Gross earnings === Monthly gross, always.
+                  const breakdown = employeeEarningsBreakdown(emp, activeEarningComponents);
                   let rowTotalEarnings = 0;
                   const compValues = activeEarningComponents.map((comp) => {
-                    const val = calculateEmployeeComponent(emp, comp);
+                    const val = isBasicComponent(comp)
+                      ? breakdown.basic
+                      : breakdown.values.get(comp.id) ?? 0;
+                    const configured = isBasicComponent(comp)
+                      ? breakdown.basic
+                      : breakdown.parts.find((p) => p.comp.id === comp.id)?.configured ?? 0;
                     rowTotalEarnings += val;
-                    return { comp, val };
+                    return { comp, val, configured };
                   });
 
                   return (
@@ -2377,39 +2930,84 @@ export default function EarningsPanel() {
                         </span>
                       </td>
 
-                      <td
-                        style={{
-                          padding: "10px 14px",
-                          fontSize: "12.5px",
-                          fontFamily: "monospace",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {isDaily ? (
-                          <span style={{ color: "#0284c7", fontWeight: 700 }}>
-                            ₹
-                            {Number(emp.dailyWageRate || 750).toLocaleString(
-                              "en-IN",
-                            )}
-                            /day
-                          </span>
-                        ) : (
-                          <span
-                            style={{ color: "var(--text)", fontWeight: 700 }}
+                      {(() => {
+                        const mg = breakdown.mg;
+                        const basic = breakdown.basic;
+                        const grossEarnings = rowTotalEarnings;
+                        // Red and Blue are INDEPENDENT indicators — when both
+                        // violations apply, BOTH dots are rendered together.
+                        // Green shows only when neither violation applies.
+                        const dots = [];
+                        if (mg != null) {
+                          const rupee = (n) => `₹${n.toLocaleString("en-IN")}`;
+                          if (mg !== grossEarnings) {
+                            dots.push({
+                              color: "var(--red)",
+                              title: `Monthly gross (${rupee(mg)}) ≠ Gross earnings (${rupee(grossEarnings)})`,
+                            });
+                          }
+                          if (mg < basic) {
+                            dots.push({
+                              color: "var(--blue)",
+                              title: `Monthly gross (${rupee(mg)}) < Basic wage (${rupee(basic)}) — should never be less`,
+                            });
+                          }
+                          if (mg === grossEarnings && mg >= basic) {
+                            dots.push({
+                              color: "var(--green)",
+                              title: `Monthly gross (${rupee(mg)}) = Gross earnings (${rupee(grossEarnings)}) and ≥ Basic wage (${rupee(basic)})`,
+                            });
+                          }
+                        }
+                        return (
+                          <td
+                            style={{
+                              padding: "10px 14px",
+                              fontSize: "12.5px",
+                              fontFamily: "monospace",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={mg != null ? `Monthly gross (₹) ₹${mg.toLocaleString("en-IN")} — from the employee profile, updates dynamically${dots.length ? `\n${dots.map((d) => d.title).join("\n")}` : ""}` : "No monthly package set — add Monthly gross (₹) in the employee profile."}
                           >
-                            ₹
-                            {Math.round(
-                              (Number(emp.annualSalary) || 300000) / 12,
-                            ).toLocaleString("en-IN")}
-                            /mo
-                          </span>
-                        )}
-                      </td>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              {mg != null ? (
+                                <span style={{ color: "var(--text)", fontWeight: 700 }}>
+                                  ₹{mg.toLocaleString("en-IN")}
+                                  <span style={{ fontSize: "10px", fontWeight: 500, color: "var(--subtext)" }}>/mo</span>
+                                </span>
+                              ) : (
+                                <span style={{ color: "var(--subtext)", fontWeight: 700 }}>—</span>
+                              )}
+                              {dots.map((d) => (
+                                <span
+                                  key={d.color}
+                                  style={{
+                                    width: "8px",
+                                    height: "8px",
+                                    borderRadius: "50%",
+                                    background: d.color,
+                                    flexShrink: 0,
+                                  }}
+                                  title={d.title}
+                                />
+                              ))}
+                            </div>
+                            <div style={{ fontSize: "10.5px", color: "var(--subtext)" }}>
+                              {mg != null ? "from employee" : "set package"}
+                            </div>
+                          </td>
+                        );
+                      })()}
 
                       {/* Dynamic Component Values for this Employee */}
-                      {compValues.map(({ comp, val }) => (
+                      {compValues.map(({ comp, val, configured }) => (
                         <td
                           key={comp.id}
+                          title={
+                            !isBasicComponent(comp) && val !== configured
+                              ? `Auto-fitted: configured ₹${configured.toLocaleString("en-IN")} → ₹${val.toLocaleString("en-IN")} so Gross earnings = Monthly gross (envelope ₹${(breakdown.envelope ?? 0).toLocaleString("en-IN")})`
+                              : undefined
+                          }
                           style={{
                             padding: "10px 14px",
                             fontSize: "12.5px",
@@ -2438,9 +3036,11 @@ export default function EarningsPanel() {
                           color: "var(--primary)",
                           whiteSpace: "nowrap",
                           borderLeft: "1px solid var(--border)",
+                          background: "transparent",
                         }}
+                        title="Sum of all active earning components for this employee"
                       >
-                        ₹{rowTotalEarnings.toLocaleString("en-IN")}
+                        {`₹${rowTotalEarnings.toLocaleString("en-IN")}`}
                       </td>
 
                       <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>

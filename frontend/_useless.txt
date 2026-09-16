@@ -1,0 +1,18 @@
+﻿
+### src/components/payroll/DeductionsPanel.jsx
+  L407:9 no-useless-assignment :: The value assigned to 'amount' is not used in subsequent statements.
+      | let amount = 0;
+
+### src/pages/Payroll/Payroll.jsx
+  L531:7 no-useless-assignment :: The value assigned to 'tabs' is not used in subsequent statements.
+      | let tabs = [];
+
+### src/pages/Performance/Performance.jsx
+  L2760:42 no-useless-assignment :: The value assigned to 'index' is not used in subsequent statements.
+      | adminEmployeesResult = results[index++];
+
+### src/services/api.js
+  L128:9 no-useless-assignment :: The value assigned to 'message' is not used in subsequent statements.
+      | let message = null;
+
+COUNT 4

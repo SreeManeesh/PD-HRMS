@@ -12,7 +12,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Calculator,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   getWageRates,
@@ -78,15 +79,22 @@ export default function WageRatesPanel({ locations = [] }) {
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStateFilter, setSelectedStateFilter] = useState(
-    "All States (Default)",
-  );
+  const [selectedStateFilter, setSelectedStateFilter] = useState(() => {
+    try {
+      return localStorage.getItem("hrms:selectedWageState") || "All States (Default)";
+    } catch {
+      return "All States (Default)";
+    }
+  });
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("ALL");
   const [selectedLocationFilter, setSelectedLocationFilter] = useState("ALL");
 
   // Sorting state
   const [sortField, setSortField] = useState("skillCategory");
   const [sortOrder, setSortOrder] = useState("asc");
+
+  // Pagination state (10 rows per page)
+  const [ratePage, setRatePage] = useState(1);
 
   // Form state
   const [formCategory, setFormCategory] = useState("Skilled");
@@ -118,6 +126,23 @@ export default function WageRatesPanel({ locations = [] }) {
 
   useEffect(() => {
     loadRates(selectedStateFilter);
+  }, [selectedStateFilter]);
+
+  // Broadcast the selected wage state so Earnings / Deductions associated-
+  // employee tables can auto-filter statewise + stay dynamically in sync.
+  // Basic wage (= monthly rate, daily × 26) itself is resolved per-employee
+  // from the full wage table, so no reload is needed — just the filter sync.
+  useEffect(() => {
+    try {
+      localStorage.setItem("hrms:selectedWageState", selectedStateFilter);
+    } catch {
+      /* storage unavailable — event sync still works */
+    }
+    window.dispatchEvent(
+      new CustomEvent("hrms:wage-state-selected", {
+        detail: { state: selectedStateFilter },
+      }),
+    );
   }, [selectedStateFilter]);
 
   // Combine standard Indian States/UTs with any custom state strings from live DB rates
@@ -155,6 +180,9 @@ export default function WageRatesPanel({ locations = [] }) {
         ),
       );
       setEditingId(null);
+      // Back-and-forth sync: basics + gross + deductions re-derive everywhere.
+      window.dispatchEvent(new Event("hrms:wage-rates-changed"));
+      window.dispatchEvent(new Event("hrms:employees-changed"));
       toast(
         `Rate updated to ₹${val.toLocaleString("en-IN")}/day (₹${Math.round(val * 26).toLocaleString("en-IN")}/mo). Dynamic payroll updated!`,
       );
@@ -195,6 +223,8 @@ export default function WageRatesPanel({ locations = [] }) {
       setFormHourlyRate("");
       setFormLocationId("");
       setFormState("All States (Default)");
+      window.dispatchEvent(new Event("hrms:wage-rates-changed"));
+      window.dispatchEvent(new Event("hrms:employees-changed"));
       loadRates(selectedStateFilter);
     } catch (err) {
       toast(
@@ -216,6 +246,8 @@ export default function WageRatesPanel({ locations = [] }) {
     try {
       await deleteWageRate(id);
       setRates((prev) => prev.filter((r) => r.id !== id));
+      window.dispatchEvent(new Event("hrms:wage-rates-changed"));
+      window.dispatchEvent(new Event("hrms:employees-changed"));
       toast("Wage rate deleted");
     } catch (err) {
       toast(
@@ -302,6 +334,18 @@ export default function WageRatesPanel({ locations = [] }) {
     sortOrder,
   ]);
 
+  // Pagination — 10 wage rates / overrides per page
+  const WR_PAGE_SIZE = 10;
+  const ratePageCount = Math.max(
+    1,
+    Math.ceil(processedRates.length / WR_PAGE_SIZE),
+  );
+  const safeRatePage = Math.min(Math.max(1, ratePage), ratePageCount);
+  const pagedRates = processedRates.slice(
+    (safeRatePage - 1) * WR_PAGE_SIZE,
+    safeRatePage * WR_PAGE_SIZE,
+  );
+
   const getCategoryBadge = (cat) => {
     const c = String(cat).toLowerCase();
     if (c.includes("skilled") && !c.includes("semi")) {
@@ -375,7 +419,9 @@ export default function WageRatesPanel({ locations = [] }) {
           >
             statutory minimum wage rates categorized by skill level across all
             28 Indian States & 8 Union Territories. Monthly statutory rates are
-            calibrated dynamically (`Daily Rate × 26`).
+            calibrated dynamically (`Daily Rate × 26`). Basic wages in
+            Earnings/Employees are wage-driven (non-editable) and monthly gross
+            re-derives from them automatically.
           </p>
         </div>
 
@@ -797,7 +843,7 @@ export default function WageRatesPanel({ locations = [] }) {
               </tr>
             </thead>
             <tbody>
-              {processedRates.map((rate, idx) => {
+              {pagedRates.map((rate, idx) => {
                 const badge = getCategoryBadge(rate.skillCategory);
                 const isEditing = editingId === rate.id;
                 const stateDisplay = rate.state || "All States (Default)";
@@ -818,7 +864,7 @@ export default function WageRatesPanel({ locations = [] }) {
                     key={rate.id}
                     style={{
                       borderBottom:
-                        idx < processedRates.length - 1
+                        idx < pagedRates.length - 1
                           ? "1px solid var(--border)"
                           : "none",
                       transition: "background 0.12s",
@@ -1116,6 +1162,124 @@ export default function WageRatesPanel({ locations = [] }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination — 10 per page (Previous / 1 2 3 / Next) */}
+      {!loading && processedRates.length > WR_PAGE_SIZE && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px",
+            marginTop: "16px",
+            padding: "12px 16px",
+            background: "var(--background)",
+            borderRadius: "var(--radius)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <div style={{ fontSize: "12.5px", color: "var(--subtext)" }}>
+            Showing{" "}
+            <strong>{(safeRatePage - 1) * WR_PAGE_SIZE + 1}</strong>
+            –
+            <strong>
+              {Math.min(safeRatePage * WR_PAGE_SIZE, processedRates.length)}
+            </strong>{" "}
+            of <strong>{processedRates.length}</strong> wage rates
+            (Page {safeRatePage} of {ratePageCount})
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <button
+              onClick={() => setRatePage((p) => Math.max(1, p - 1))}
+              disabled={safeRatePage <= 1}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "5px 12px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: safeRatePage <= 1 ? "var(--subtext)" : "var(--text)",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                cursor: safeRatePage <= 1 ? "not-allowed" : "pointer",
+                opacity: safeRatePage <= 1 ? 0.5 : 1,
+              }}
+            >
+              <ChevronLeft size={14} /> Previous
+            </button>
+
+            {Array.from({ length: ratePageCount }, (_, i) => i + 1).map((pg) => {
+              const isCurrent = pg === safeRatePage;
+              if (
+                ratePageCount > 7 &&
+                pg !== 1 &&
+                pg !== ratePageCount &&
+                Math.abs(pg - safeRatePage) > 1
+              ) {
+                if (pg === 2 || pg === ratePageCount - 1) {
+                  return (
+                    <span
+                      key={`dots-${pg}`}
+                      style={{ padding: "0 4px", color: "var(--subtext)" }}
+                    >
+                      …
+                    </span>
+                  );
+                }
+                return null;
+              }
+              return (
+                <button
+                  key={pg}
+                  onClick={() => setRatePage(pg)}
+                  style={{
+                    minWidth: "30px",
+                    height: "30px",
+                    padding: "0 6px",
+                    borderRadius: "var(--radius-sm)",
+                    border: isCurrent
+                      ? "1px solid var(--primary)"
+                      : "1px solid var(--border)",
+                    background: isCurrent ? "var(--primary)" : "var(--card)",
+                    color: isCurrent ? "#fff" : "var(--text)",
+                    fontSize: "12.5px",
+                    fontWeight: isCurrent ? 700 : 500,
+                    cursor: "pointer",
+                  }}
+                >
+                  {pg}
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setRatePage((p) => Math.min(ratePageCount, p + 1))}
+              disabled={safeRatePage >= ratePageCount}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "5px 12px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color:
+                  safeRatePage >= ratePageCount ? "var(--subtext)" : "var(--text)",
+                fontSize: "12.5px",
+                fontWeight: 600,
+                cursor: safeRatePage >= ratePageCount ? "not-allowed" : "pointer",
+                opacity: safeRatePage >= ratePageCount ? 0.5 : 1,
+              }}
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
 

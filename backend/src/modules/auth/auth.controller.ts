@@ -28,6 +28,12 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   sendSuccess(res, { message: "Password changed successfully. Please log in again." });
 });
 
+export const revokeSessions = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.auth) throw AppError.unauthorized();
+  const count = await authService.revokeAllUserSessions(req.auth.sub, "USER_REQUESTED");
+  sendSuccess(res, { message: `Successfully revoked ${count} session(s).` });
+});
+
 export const me = asyncHandler(async (req: Request, res: Response) => {
   if (!req.auth) throw AppError.unauthorized();
   const user = await prisma.user.findUnique({

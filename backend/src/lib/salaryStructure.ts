@@ -38,12 +38,18 @@ export function salaryStructureBreakdown(
   options?: SalaryBreakdownOptions,
 ): SalaryBreakdown {
   const cfg = { ...COMPANY_CONFIG_DEFAULTS, ...(options ?? {}) };
-  const monthly = Math.max(Number(annualSalary) || 0, 0) / 12;
-  const basic = Math.round((monthly * cfg.basicSalaryFactor) / 10) * 10;
-  const hra = Math.round((monthly * cfg.hraFactor) / 10) * 10;
-  const conveyance = cfg.conveyanceAllowance;
-  const medical = cfg.medicalAllowance;
-  const other = Math.max(0, Math.round((monthly - basic - hra - conveyance - medical) / 10) * 10);
+  // Rupee-exact split: monthly is rounded ONCE, then basic/hra are rounded to
+  // the rupee and `other` absorbs the remainder so that
+  // basic+hra+conveyance+medical+bonus+other === monthly EXACTLY.
+  // (Previously every leg was rounded to the nearest ₹10, so the parts could
+  // sum to monthly±₹5 and annualised figures drifted, e.g. ₹5,00,000 →
+  // ₹5,00,040.)
+  const monthly = Math.round(Math.max(Number(annualSalary) || 0, 0) / 12);
+  const basic = Math.round(monthly * cfg.basicSalaryFactor);
+  const hra = Math.round(monthly * cfg.hraFactor);
+  const conveyance = Math.round(cfg.conveyanceAllowance);
+  const medical = Math.round(cfg.medicalAllowance);
+  const other = Math.max(0, monthly - basic - hra - conveyance - medical);
   return {
     basicSalary: basic,
     hra,
@@ -51,10 +57,10 @@ export function salaryStructureBreakdown(
     medicalAllowance: medical,
     performanceBonus: 0,
     otherAllowances: other,
-    providentFund: Math.round((basic * cfg.providentFundRate) / 10) * 10,
-    professionalTax: cfg.professionalTax,
-    incomeTax: Math.round((monthly * cfg.incomeTaxRate) / 10) * 10,
-    healthInsurance: cfg.healthInsurance,
+    providentFund: Math.round(basic * cfg.providentFundRate),
+    professionalTax: Math.round(cfg.professionalTax),
+    incomeTax: Math.round(monthly * cfg.incomeTaxRate),
+    healthInsurance: Math.round(cfg.healthInsurance),
   };
 }
 

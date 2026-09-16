@@ -12,6 +12,7 @@
  */
 
 import axios from "axios";
+import { captureException } from "../lib/apm.js";
 
 let rawBaseUrl = import.meta.env.VITE_API_URL || "/api";
 
@@ -46,6 +47,27 @@ async function tryRefresh() {
   if (newRefresh) localStorage.setItem("hrms_refresh", newRefresh);
   if (permissions) localStorage.setItem("hrms_permissions", JSON.stringify(permissions));
   return token;
+}
+
+// Global toast throttling to avoid toast storms during network outages
+let lastToastTime = 0;
+let lastToastMessage = "";
+
+function notifyUser(message, type = "error") {
+  const now = Date.now();
+  if (now - lastToastTime < 3500 && lastToastMessage === message) {
+    return;
+  }
+  lastToastTime = now;
+  lastToastMessage = message;
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("hrms:toast", {
+        detail: { message, type },
+      })
+    );
+  }
 }
 
 api.interceptors.response.use(
@@ -85,6 +107,22 @@ api.interceptors.response.use(
       }
     }
 
+    // Capture timeout and network failure toasts
+    const isTimeout = error.code === "ECONNABORTED" || error.message?.toLowerCase().includes("timeout");
+    const isNetworkError = error.code === "ERR_NETWORK" || (!error.response && !isTimeout);
+    const status = error.response?.status || 0;
+
+    if (isTimeout) {
+      notifyUser("Request timed out. Please check your network connection and try again.", "warning");
+      captureException(error, { reason: "API_TIMEOUT", url: original?.url });
+    } else if (isNetworkError) {
+      notifyUser("Unable to reach the server. Please verify your connection.", "error");
+      captureException(error, { reason: "API_NETWORK_ERROR", url: original?.url });
+    } else if (status >= 500) {
+      notifyUser("Server error encountered. Please try again shortly.", "error");
+      captureException(error, { reason: "API_5XX_ERROR", status, url: original?.url });
+    }
+
     // Do NOT expose raw stack traces — re-throw a clean object
     // Handle Blob error bodies (responseType: "blob") by reading the JSON back.
     let message = null;
@@ -108,3 +146,4 @@ api.interceptors.response.use(
 );
 
 export default api;
+

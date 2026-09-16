@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Separation Management Page � Module 19
  * Tabs: Separations � Clearance � Exit Interview � Settlement & Alumni
  */
@@ -224,11 +224,6 @@ function InitiateSeparationModal({
           status: "Active",
         });
 
-        console.log(
-          "EMPLOYEE API RESPONSE:",
-          response
-        );
-
         if (mounted) {
           setEmployees(response?.data || []);
         }
@@ -333,10 +328,6 @@ function InitiateSeparationModal({
         ),
       };
 
-      console.log(
-        "SEPARATION PAYLOAD:",
-        separation
-      );
 
       const response =
         await initiateSeparation(

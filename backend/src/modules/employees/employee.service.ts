@@ -7,7 +7,8 @@ import { AppError } from "../../lib/errors";
 import { salaryStructureBreakdown } from "../../lib/salaryStructure";
 import { hashPassword } from "../../lib/password";
 import { writeAuditLog } from "../../services/audit.service";
-import { serializeEmployeeList } from "../../serializers/employee.serializer";
+import { serializeEmployeeList, serializeEmployee, sanitizeWizardData, type SerializationContext } from "../../serializers/employee.serializer";
+export { serializeEmployeeList, serializeEmployee, sanitizeWizardData, type SerializationContext };
 import { parsePagination } from "../../lib/utils";
 import minioClient, { MINIO_BUCKET, ensureMinioBucket } from "../../config/minio";
 
@@ -24,11 +25,25 @@ export interface EmployeeFilters {
   search?: string;
   department?: string;
   status?: string;
+  skillType?: string;
   page?: number;
   limit?: number;
 }
 
-export async function listEmployees(filters: EmployeeFilters) {
+/** Normalize skill labels so profile edits match table/payroll filters. */
+function normalizeSkillKey(s?: string | null): string {
+  return String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function skillTypeVariants(canonical: string): string[] {
+  const n = normalizeSkillKey(canonical);
+  if (n === "semiskilled") return ["Semi Skilled", "Semi-Skilled", "SEMISKILLED", "SemiSkilled"];
+  if (n === "unskilled") return ["Unskilled", "UNSKILLED"];
+  if (n === "skilled") return ["Skilled", "SKILLED"];
+  return [canonical];
+}
+
+export async function listEmployees(filters: EmployeeFilters, context?: SerializationContext) {
   const { page, limit, skip } = parsePagination({
     page: filters.page,
     limit: filters.limit,
@@ -40,17 +55,25 @@ export async function listEmployees(filters: EmployeeFilters) {
   if (filters.department) {
     where.department = { name: filters.department };
   }
+  const andClauses: Prisma.EmployeeWhereInput[] = [];
+  if (filters.skillType) {
+    const variants = skillTypeVariants(filters.skillType);
+    andClauses.push({ OR: variants.map((v) => ({ skillType: { equals: v, mode: "insensitive" as const } })) });
+  }
   if (filters.search) {
     const q = filters.search.trim();
-    where.OR = [
-      { firstName: { contains: q, mode: "insensitive" } },
-      { lastName: { contains: q, mode: "insensitive" } },
-      { employeeCode: { contains: q, mode: "insensitive" } },
-      { personalEmail: { contains: q, mode: "insensitive" } },
-      { designation: { title: { contains: q, mode: "insensitive" } } },
-      { user: { email: { contains: q, mode: "insensitive" } } },
-    ];
+    andClauses.push({
+      OR: [
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { employeeCode: { contains: q, mode: "insensitive" } },
+        { personalEmail: { contains: q, mode: "insensitive" } },
+        { designation: { title: { contains: q, mode: "insensitive" } } },
+        { user: { email: { contains: q, mode: "insensitive" } } },
+      ],
+    });
   }
+  if (andClauses.length) where.AND = andClauses;
 
   const [rows, total] = await Promise.all([
     prisma.employee.findMany({ where, include: EMPLOYEE_INCLUDE, orderBy: { employeeCode: "asc" }, skip, take: limit }),
@@ -58,7 +81,7 @@ export async function listEmployees(filters: EmployeeFilters) {
   ]);
 
   return {
-    data: serializeEmployeeList(rows),
+    data: serializeEmployeeList(rows, context),
     total,
     page,
     limit,
@@ -66,22 +89,22 @@ export async function listEmployees(filters: EmployeeFilters) {
   };
 }
 
-export async function getEmployeeById(id: string) {
+export async function getEmployeeById(id: string, context?: SerializationContext) {
   const emp = await prisma.employee.findUnique({
     where: { id },
     include: EMPLOYEE_INCLUDE,
   });
   if (!emp) throw AppError.notFound("Employee not found");
-  return { data: serializeEmployeeList([emp])[0] };
+  return { data: serializeEmployeeList([emp], context)[0] };
 }
 
-export async function getEmployeeByCode(code: string) {
+export async function getEmployeeByCode(code: string, context?: SerializationContext) {
   const emp = await prisma.employee.findUnique({
     where: { employeeCode: code },
     include: EMPLOYEE_INCLUDE,
   });
   if (!emp) throw AppError.notFound("Employee not found");
-  return { data: serializeEmployeeList([emp])[0] };
+  return { data: serializeEmployeeList([emp], context)[0] };
 }
 
 export interface CreateEmployeeInput {
@@ -104,7 +127,7 @@ export interface CreateEmployeeInput {
   password?: string;
   state?: string;
   country?: string;
-  annualSalary?: number;
+  annualSalary?: number | string | null;
   photoUrl?: string;
   status?: string;
   wizardData?: unknown;
@@ -151,6 +174,22 @@ function toOptionalDate(value?: string): Date | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Coerce an annual-salary payload (number or numeric string with commas/
+ *  spaces) to a rounded integer. Returns `undefined` when the field was not
+ *  supplied (no change), `null` when it should be cleared, otherwise the
+ *  parsed amount. Previously a string salary (e.g. "500000" from a form)
+ *  failed the `typeof === "number"` check and was stored as NULL — wiping
+ *  the package and freezing gross earnings at the fallback. */
+function parseAnnualSalaryInput(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const cleaned = typeof value === "string" ? value.replace(/[,\s₹]/g, "") : value;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n);
 }
 
 /** Resolve an org reference (designation/department/location) by name for
@@ -279,6 +318,7 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
     userId = user.id;
   }
 
+  const parsedCreateSalary = parseAnnualSalaryInput(input.annualSalary) ?? null;
   const emp = await prisma.employee.create({
     data: {
       userId,
@@ -298,9 +338,9 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
       employmentType: input.employmentType ?? "Full-Time",
       state: input.state ?? null,
       country: input.country ?? null,
-      annualSalary: typeof input.annualSalary === "number" ? input.annualSalary : null,
+      annualSalary: parsedCreateSalary,
       photoUrl: input.photoUrl ?? null,
-      wizardData: input.wizardData ?? undefined,
+      wizardData: (input.wizardData ?? undefined) as any,
     },
     include: EMPLOYEE_INCLUDE,
   });
@@ -314,7 +354,7 @@ export async function createEmployee(input: CreateEmployeeInput, opts: CreateEmp
 
   // Auto-create an active salary structure so the employee immediately shows up
   // in payroll (summary + runs) with a computed salary breakdown.
-  await ensureActiveSalaryStructure(emp.id, input.annualSalary);
+  await ensureActiveSalaryStructure(emp.id, parsedCreateSalary);
 
   return { data: serializeEmployeeList([emp])[0], employeePk: emp.id };
 }
@@ -741,6 +781,21 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
     }
   }
 
+  const parsedAnnualSalary = parseAnnualSalaryInput(input.annualSalary);
+
+  // Keep the flat payroll columns in sync when callers only send wizardData
+  // (EmployeeProfile saves job.skillType / employmentType inside wizardData).
+  // Without this, the table + payroll keep showing the stale flat value.
+  const wizJob = (input.wizardData as unknown as { job?: Record<string, unknown> } | undefined)?.job;
+  const wizSkill = wizJob ? String((wizJob as Record<string, unknown>).skillType ?? "").trim() : "";
+  const wizEmpType = wizJob ? String((wizJob as Record<string, unknown>).employmentType ?? "").trim() : "";
+  const wizEmpCat = wizJob ? String((wizJob as Record<string, unknown>).employeeCategory ?? "").trim() : "";
+  const effectiveSkillType = input.skillType !== undefined ? input.skillType : (wizSkill || undefined);
+  const effectiveEmploymentType = (input as Record<string, unknown>).employmentType !== undefined
+    ? (input as Record<string, unknown>).employmentType as string
+    : (wizEmpType || undefined);
+  void wizEmpCat;
+
 let finalUserId = existing.userId;
   if (email !== undefined && email !== null) {
     if (!existing.userId) {
@@ -767,30 +822,31 @@ let finalUserId = existing.userId;
       personalMobile: input.phone !== undefined ? input.phone || null : undefined,
       dateOfBirth: input.dob !== undefined ? toOptionalDate(input.dob) : undefined,
       gender: input.gender !== undefined ? input.gender || null : undefined,
-      skillType: input.skillType !== undefined ? input.skillType || null : undefined,
+      skillType: effectiveSkillType !== undefined ? effectiveSkillType || null : undefined,
       designationId: designationId !== undefined ? designationId : undefined,
       departmentId: departmentId !== undefined ? departmentId : undefined,
       locationId: locationId !== undefined ? locationId : undefined,
       reportingManagerId: input.managerId !== undefined ? input.managerId || null : undefined,
       dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
-      employmentType: input.employmentType ?? undefined,
+      employmentType: (effectiveEmploymentType as string | undefined) ?? undefined,
       status: input.status ?? undefined,
       state: input.state !== undefined ? input.state || null : undefined,
       country: input.country !== undefined ? input.country || null : undefined,
-      annualSalary: input.annualSalary !== undefined ? (typeof input.annualSalary === "number" ? input.annualSalary : null) : undefined,
+      annualSalary: parsedAnnualSalary,
       photoUrl: input.photoUrl !== undefined ? input.photoUrl || null : undefined,
-      wizardData:
+      wizardData: (
         input.wizardData === undefined
           ? undefined
           : input.wizardData === null
             ? Prisma.DbNull
-            : (input.wizardData as Prisma.InputJsonValue),
+            : (input.wizardData as Prisma.InputJsonValue)
+      ) as any,
     },
     include: EMPLOYEE_INCLUDE,
   });
 
-  if (input.annualSalary !== undefined) {
-    await ensureActiveSalaryStructure(updated.id, input.annualSalary, true);
+  if (parsedAnnualSalary !== undefined) {
+    await ensureActiveSalaryStructure(updated.id, parsedAnnualSalary, true);
   }
 
   writeAuditLog({

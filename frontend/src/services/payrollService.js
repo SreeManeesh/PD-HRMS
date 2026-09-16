@@ -149,6 +149,12 @@ export const deleteWageRate = async (id) => {
   return res.data;
 };
 
+/** Joined per-employee Basic + monthly gross (wage rates + overrides + earnings). */
+export const getEmployeeWages = async () => {
+  const res = await api.get("/payroll/employee-wages");
+  return res.data; // { data: [...] }
+};
+
 export const runPayrollForSkillGroup = async ({ skillType, month, year }) => {
   const res = await api.post("/payroll/run-skill-group", { skillType, month, year });
   return res.data;

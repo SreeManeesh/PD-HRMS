@@ -16,24 +16,43 @@ async function resolveEmployeeId(idOrCode: string): Promise<string> {
   return emp.id;
 }
 
+function isUserPrivileged(auth?: { role?: string; permissions?: string[] }): boolean {
+  if (!auth) return false;
+  const privilegedRoles = ["Super Admin", "Admin", "HR Manager"];
+  if (auth.role && privilegedRoles.includes(auth.role)) return true;
+  if (auth.permissions?.includes("employees:write") || auth.permissions?.includes("payroll:read")) return true;
+  return false;
+}
+
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const q = req.query as Record<string, string | undefined>;
-  const result = await employeeService.listEmployees({
-    search: q.search,
-    department: q.department,
-    status: q.status,
-    page: q.page ? Number(q.page) : undefined,
-    limit: q.limit ? Number(q.limit) : undefined,
-  });
+  const isPrivileged = isUserPrivileged(req.auth);
+  const result = await employeeService.listEmployees(
+    {
+      search: q.search,
+      department: q.department,
+      status: q.status,
+      skillType: (q as Record<string, string | undefined>).skillType,
+      page: q.page ? Number(q.page) : undefined,
+      limit: q.limit ? Number(q.limit) : undefined,
+    },
+    { isPrivileged }
+  );
   res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit, totalPages: result.totalPages });
 });
 
 export const getOne = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
+  const isPrivileged = isUserPrivileged(req.auth);
   // Accept either the UUID PK or the human-readable employee code.
   const result = UUID_RE.test(id)
     ? await employeeService.getEmployeeById(id)
     : await employeeService.getEmployeeByCode(id);
+
+  const isSelf = Boolean(req.auth?.sub && (req.auth.sub === result.data.pk || req.auth.sub === result.data.id));
+  if (!isPrivileged && !isSelf) {
+    result.data.wizardData = employeeService.sanitizeWizardData(result.data.wizardData, { isPrivileged: false, isSelf: false });
+  }
   sendSuccess(res, result.data);
 });
 

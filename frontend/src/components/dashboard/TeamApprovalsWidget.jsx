@@ -13,7 +13,7 @@ export default function TeamApprovalsWidget() {
       isEmpty={!loading && !error && !data?.pendingCount} emptyLabel="No pending approvals">
       <p style={{ fontSize: "22px", fontWeight: 800, color: "var(--text)", marginBottom: "6px" }}>{data?.pendingCount}</p>
       <div style={{ display: "flex", gap: "12px" }}>
-        {data?.breakdown.map((b) => (
+        {(data?.breakdown || []).map((b) => (
           <span key={b.type} style={{ fontSize: "12px", color: "var(--subtext)" }}>{b.type}: <strong style={{ color: "var(--text)" }}>{b.count}</strong></span>
         ))}
       </div>

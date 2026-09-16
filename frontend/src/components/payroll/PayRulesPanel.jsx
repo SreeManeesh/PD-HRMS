@@ -3,14 +3,12 @@ import {
   Plus,
   Sliders,
   CheckCircle2,
-  AlertCircle,
   Layers,
   Award,
   Moon,
   Factory,
   Utensils,
   Edit3,
-  Trash2,
   X,
 } from "lucide-react";
 import {

@@ -275,13 +275,13 @@ export default function EmployeeSalaryBreakdown({
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Fixed Monthly Salary</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {inr(summary.fixedMonthlySalary || (summary.annualSalary ? summary.annualSalary / 12 : 24000))}
+                        {inr(summary.fixedMonthlySalary || (summary.annualSalary ? summary.annualSalary / 12 : 0))}
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Daily Salary (÷{summary.calendarDaysInMonth || 30})</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {inr(summary.dailySalaryRate || Math.round((summary.fixedMonthlySalary || 24000) / (summary.calendarDaysInMonth || 30)))}/d
+                        {inr(summary.dailySalaryRate || Math.round((summary.fixedMonthlySalary || 0) / (summary.calendarDaysInMonth || 30)))}/d
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
@@ -369,7 +369,7 @@ export default function EmployeeSalaryBreakdown({
                       </span>
                     </div>
                     <span style={{ fontSize: "11.5px", color: "var(--subtext)", fontFamily: "monospace" }}>
-                      Formula: {summary.overtimeHours || 5}h × (₹{Math.round((summary.dailySalaryRate || 800) / 8)}/h × 1.5x)
+                      Formula: {summary.overtimeHours ?? 0}h × (₹{Math.round((summary.dailySalaryRate || 0) / 8)}/h × 1.5x)
                     </span>
                   </div>
 
@@ -377,25 +377,25 @@ export default function EmployeeSalaryBreakdown({
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Overtime Hours</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "#ea580c", fontFamily: "monospace", marginTop: "2px" }}>
-                        {summary.overtimeHours || 5} hrs
+                        {summary.overtimeHours ?? 0} hrs
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Base Hourly Rate</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        ₹{Math.round((summary.dailySalaryRate || 800) / 8)}/hr
+                        ₹{Math.round((summary.dailySalaryRate || 0) / 8)}/hr
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Configured OT Rate</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        1.5× = ₹{Math.round((summary.dailySalaryRate || 800) / 8 * 1.5)}/hr
+                        1.5× = ₹{Math.round((summary.dailySalaryRate || 0) / 8 * 1.5)}/hr
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>OT Payment</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "#16a34a", fontFamily: "monospace", marginTop: "2px" }}>
-                        +{inr(summary.overtime || summary.earnings?.overtime || 750)}
+                        +{inr(summary.overtime || summary.earnings?.overtime || 0)}
                       </div>
                     </div>
                   </div>
@@ -403,7 +403,7 @@ export default function EmployeeSalaryBreakdown({
               )}
 
               {/* Scenario 6: Threshold-Based Attendance Bonus */}
-              {(summary.attendanceBonus > 0 || summary.earnings?.ATT_BONUS > 0 || summary.days >= 24) && (
+              {(summary.attendanceBonus > 0 || summary.earnings?.ATT_BONUS > 0) && (
                 <div
                   style={{
                     background: "linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(5, 150, 105, 0.02) 100%)",
@@ -431,13 +431,13 @@ export default function EmployeeSalaryBreakdown({
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Payable Days</div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {summary.days} days
+                        {summary?.days ?? 0} days
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
                       <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 700, textTransform: "uppercase" }}>Qualified Slab</div>
-                      <div style={{ fontSize: "14px", fontWeight: 800, color: summary.days >= 26 ? "#059669" : summary.days >= 24 ? "#0284c7" : "var(--subtext)", fontFamily: "monospace", marginTop: "2px" }}>
-                        {summary.days >= 26 ? "Tier 1 (26+ Days)" : summary.days >= 24 ? "Tier 2 (24–25 Days)" : "Below Threshold (<24)"}
+                      <div style={{ fontSize: "14px", fontWeight: 800, color: (summary?.days ?? 0) >= 26 ? "#059669" : (summary?.days ?? 0) >= 24 ? "#0284c7" : "var(--subtext)", fontFamily: "monospace", marginTop: "2px" }}>
+                        {(summary?.days ?? 0) >= 26 ? "Tier 1 (26+ Days)" : (summary?.days ?? 0) >= 24 ? "Tier 2 (24–25 Days)" : "Below Threshold (<24)"}
                       </div>
                     </div>
                     <div style={{ background: "var(--card)", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
@@ -573,7 +573,7 @@ export default function EmployeeSalaryBreakdown({
                     </div>
 
                     <div style={{ fontSize: "11px", color: "var(--subtext)", background: "rgba(37, 99, 235, 0.04)", padding: "6px 10px", borderRadius: "4px", border: "1px dashed #bfdbfe", display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span>🏭 Data Flow:</span>
+                      <span>Data Flow:</span>
                       <strong>Production Data ({prodUnits.toLocaleString("en-IN")} units)</strong>
                       <span>→</span>
                       <strong>Target Achievement ({targetAchievedPct}%)</strong>
@@ -586,148 +586,7 @@ export default function EmployeeSalaryBreakdown({
                 );
               })()}
 
-              {/* Scenario 9: Multiple Payroll Components & Scenario 10 Configurable Components Banner */}
-              {(() => {
-                const earn = summary.earnings || {};
-                const ded = summary.deductions || {};
-                const hasMultipleComponents =
-                  (earn.FOOD_ALLOW || earn.foodAllowance) &&
-                  (earn.TRANSPORT_ALLOW || earn.transportAllowance) &&
-                  (earn.basicSalary >= 10000);
-
-                if (!hasMultipleComponents && summary.employeeId !== "EMP018") return null;
-
-                const basicVal = earn.basicSalary || 18000;
-                const hraVal = earn.hra || 3000;
-                const transportVal = earn.TRANSPORT_ALLOW || earn.transportAllowance || 1500;
-                const foodVal = earn.FOOD_ALLOW || earn.foodAllowance || 1000;
-                const nightVal = earn.nightShiftAllowance || earn.NIGHT_ALLOW || 1200;
-                const otVal = earn.overtime || 2000;
-                const bonusVal = earn.attendanceBonus || earn.ATT_BONUS || 1500;
-                const totalGrossVal = basicVal + hraVal + transportVal + foodVal + nightVal + otVal + bonusVal;
-
-                const pfVal = ded.providentFund || 1040;
-                const ptVal = ded.professionalTax || 200;
-                const itVal = ded.incomeTax || 870;
-                const esiVal = ded.healthInsurance || 180;
-                const advVal = ded.salaryAdvanceRecovery || 2000;
-                const lwfVal = ded.lwf || 20;
-                const totalDedVal = Number(ded.total) || (pfVal + ptVal + itVal + esiVal + advVal + lwfVal);
-                const netPayVal = totalGrossVal - totalDedVal;
-
-                return (
-                  <div
-                    style={{
-                      background: "linear-gradient(135deg, rgba(16, 185, 129, 0.06) 0%, rgba(14, 165, 233, 0.04) 100%)",
-                      border: "1px solid #6ee7b7",
-                      borderRadius: "var(--radius)",
-                      padding: "16px",
-                      marginBottom: "16px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{ fontSize: "11px", fontWeight: 800, background: "#059669", color: "#fff", padding: "3px 9px", borderRadius: "4px" }}>
-                          SCENARIO 9: MULTIPLE PAYROLL COMPONENTS
-                        </span>
-                        <span style={{ fontSize: "13px", fontWeight: 800, color: "var(--text)" }}>
-                          Comprehensive 7-Component Earnings & Statutory Deductions
-                        </span>
-                      </div>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--green)", fontFamily: "monospace" }}>
-                        Gross Earnings − Total Deductions = Net Pay ({inr(netPayVal)})
-                      </span>
-                    </div>
-
-                    {/* 7 Earnings line grid */}
-                    <div style={{ marginBottom: "12px" }}>
-                      <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", marginBottom: "6px" }}>
-                        7 Earning Components (Total: {inr(totalGrossVal)})
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "8px" }}>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>1. Basic Salary</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace" }}>{inr(basicVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>2. HRA</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text)", fontFamily: "monospace" }}>{inr(hraVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>3. Transport</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#16a34a", fontFamily: "monospace" }}>+{inr(transportVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>4. Food Allowance</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#16a34a", fontFamily: "monospace" }}>+{inr(foodVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>5. Night Shift</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#8b5cf6", fontFamily: "monospace" }}>+{inr(nightVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>6. Overtime (10h)</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#ea580c", fontFamily: "monospace" }}>+{inr(otVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>7. Attendance Bonus</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#059669", fontFamily: "monospace" }}>+{inr(bonusVal)}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Deductions line grid */}
-                    <div style={{ marginBottom: "12px" }}>
-                      <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", marginBottom: "6px" }}>
-                        Deductions Applied (Total: −{inr(totalDedVal)})
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "8px" }}>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>PF (Provident Fund)</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#dc2626", fontFamily: "monospace" }}>−{inr(pfVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>Professional Tax</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#dc2626", fontFamily: "monospace" }}>−{inr(ptVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>Income Tax (TDS)</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#dc2626", fontFamily: "monospace" }}>−{inr(itVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>Health Ins (ESIC)</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#dc2626", fontFamily: "monospace" }}>−{inr(esiVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
-                          <div style={{ fontSize: "10px", color: "#b91c1c", fontWeight: 700 }}>Advance Recovery</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "#b91c1c", fontFamily: "monospace" }}>−{inr(advVal)}</div>
-                        </div>
-                        <div style={{ background: "var(--card)", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
-                          <div style={{ fontSize: "10px", color: "var(--subtext)", fontWeight: 600 }}>LOP Days (0d)</div>
-                          <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--subtext)", fontFamily: "monospace" }}>₹0</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Dynamic Configuration metadata footer */}
-                    <div style={{ fontSize: "11.5px", color: "var(--subtext)", background: "var(--card)", padding: "8px 12px", borderRadius: "6px", border: "1px dashed var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span style={{ fontSize: "12px" }}>⚙️</span>
-                        <strong style={{ color: "var(--text)" }}>Configured Allowances:</strong>
-                        <span>Food Allowance</span>
-                        <span>·</span>
-                        <span>Transport Allowance</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span style={{ color: "var(--subtext)" }}>Net Calculation:</span>
-                        <strong style={{ color: "#16a34a", fontFamily: "monospace", fontSize: "12.5px" }}>
-                          {inr(totalGrossVal)} − {inr(totalDedVal)} = {inr(netPayVal)}
-                        </strong>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* Scenario 9 removed — earnings/deductions are rendered fully dynamic from fetched summary data below */}
 
               {/* Earnings / Deductions grouped by blueprint nesting */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>

@@ -161,11 +161,12 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
       }
     };
 
-    const CHARCOAL = "#1f2937";
+    const LIGHT_CHARCOAL = "#374151";  // Lighter than #0e1e2c, easier on eyes
     const GREEN = "#16a34a";
     const LIGHT_GREEN = "#f0fdf4";
     const GRAY = "#6b7280";
     const BORDER = "#e5e7eb";
+    const DIVIDER_COLOR = "#cbd5e1";  // Light gray divider instead of dark secondary color
 
     if (reference) {
       // ═══════════════════════════ HEADER ═══════════════════════════
@@ -178,7 +179,7 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
           headerTextX = m.left + 56;
         } catch { /* skip */ }
       }
-      doc.font("Helvetica-Bold").fontSize(18).fillColor(CHARCOAL)
+      doc.font("Helvetica-Bold").fontSize(18).fillColor(LIGHT_CHARCOAL)
         .text(String(company.name || data.employee.companyName || "HRMS"), headerTextX, y, { width: contentW - 56 });
       doc.font("Helvetica").fontSize(9).fillColor(GRAY)
         .text(String(company.tagline || "HRMS  ·  People | Process | Progress"), headerTextX, y + 22, { width: contentW - 56 });
@@ -193,7 +194,7 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
       y += 18;
 
       // ═══════════════════════════ TITLE ═══════════════════════════
-      doc.font("Helvetica-Bold").fontSize(24).fillColor(CHARCOAL)
+      doc.font("Helvetica-Bold").fontSize(24).fillColor(LIGHT_CHARCOAL)
         .text("Salary Payslip", m.left, y);
       y += 26;
       doc.font("Helvetica").fontSize(9.5).fillColor(GRAY)
@@ -201,35 +202,35 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
       y += 20;
 
       // ═══════════════════════════ EMPLOYEE CARD ═══════════════════════════
-      ensureSpace(150);
-      const cardPad = 14;
-      const empCardH = 132;
+      ensureSpace(140);
+      const cardPad = 12;
+      const empCardH = 120;
       doc.roundedRect(m.left, y, contentW, empCardH, 10).fillColor(LIGHT_GREEN).fill();
-      doc.rect(m.left, y + 8, contentW, 1).fillColor("#bbf7d0").fill();
+      doc.rect(m.left, y + 6, contentW, 1).fillColor("#bbf7d0").fill();
 
       const initials = String(data.employee.name || "—")
         .split(/\s+/).map((s) => s[0] || "").filter(Boolean).slice(0, 2).join("").toUpperCase() || "—";
       const avatarX = m.left + cardPad;
       const avatarY = y + cardPad;
-      doc.circle(avatarX + 22, avatarY + 22, 22).fillColor(GREEN).fill();
-      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(14).text(initials, avatarX + 22, avatarY + 15, { width: 44, align: "center" });
+      doc.circle(avatarX + 20, avatarY + 20, 20).fillColor(GREEN).fill();
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(13).text(initials, avatarX + 20, avatarY + 14, { width: 40, align: "center" });
 
-      doc.font("Helvetica-Bold").fontSize(10).fillColor(CHARCOAL).text("Employee Details", avatarX + 58, avatarY + 4);
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(LIGHT_CHARCOAL).text("Employee Details", avatarX + 52, avatarY + 4);
       const empRows: [string, string | number][] = [
         ["Name", data.employee.name ?? "—"],
         ["Employee ID", data.employee.employeeId ?? "—"],
         ["Department", data.employee.department ?? "—"],
         ["Designation", data.employee.designation ?? "—"],
       ];
-      let ey = avatarY + 24;
+      let ey = avatarY + 22;
       for (const [label, val] of empRows) {
-        doc.font("Helvetica").fontSize(8).fillColor(GRAY).text(label.toUpperCase(), avatarX + 58, ey);
-        doc.font("Helvetica-Bold").fontSize(10).fillColor(CHARCOAL).text(String(val) || "—", avatarX + 160, ey, { width: 150 });
-        ey += 20;
+        doc.font("Helvetica").fontSize(8).fillColor(GRAY).text(label.toUpperCase(), avatarX + 52, ey);
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(LIGHT_CHARCOAL).text(String(val) || "—", avatarX + 150, ey, { width: 140 });
+        ey += 18;
       }
 
-      const col2X = m.left + contentW / 2 + 6;
-      doc.font("Helvetica-Bold").fontSize(10).fillColor(CHARCOAL).text("Payroll", col2X, avatarY + 4);
+      const col2X = m.left + contentW / 2 + 4;
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(LIGHT_CHARCOAL).text("Payroll", col2X, avatarY + 4);
       const empRows2: [string, string | number][] = [
         ["Pay Period", String(data.employee.period ?? "—")],
         ["Location", data.employee.location ?? "—"],
@@ -237,70 +238,70 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
         ["PAN", data.employee.pan ?? "—"],
         ["Date of Joining", data.employee.dateOfJoining ?? "—"],
       ];
-      ey = avatarY + 24;
+      ey = avatarY + 22;
       for (const [label, val] of empRows2) {
         doc.font("Helvetica").fontSize(8).fillColor(GRAY).text(label.toUpperCase(), col2X, ey);
-        doc.font("Helvetica-Bold").fontSize(10).fillColor(CHARCOAL).text(String(val) || "—", col2X + 118, ey, { width: contentW / 2 - 150 });
-        ey += 17;
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(LIGHT_CHARCOAL).text(String(val) || "—", col2X + 108, ey, { width: contentW / 2 - 140 });
+        ey += 15;
       }
-      y += empCardH + 18;
+      y += empCardH + 14;
 
       // ═══════════════════════════ EARNINGS / DEDUCTIONS CARDS ═══════════════════════════
-      const halfW = (contentW - 14) / 2;
+      const halfW = (contentW - 12) / 2;
       const drawMoneyCard = (x: number, w: number, title: string, rows: { label: string; amount: number }[], total: number, accent: string, noRowsText: string) => {
-        ensureSpace(80);
+        ensureSpace(70);
         const rowsCount = Math.max(rows.length, rows.length === 0 ? 0 : 0);
-        const boxH = 24 + rowsCount * 15 + 24 + 12;
-        doc.roundedRect(x, y, w, boxH, 8).fillColor("#ffffff").strokeColor(BORDER).lineWidth(0.6).stroke();
-        doc.font("Helvetica-Bold").fontSize(11).fillColor(accent).text(title, x + 12, y + 10);
-        doc.rect(x + 12, y + 28, w - 24, 0.6).fillColor(BORDER).fill();
-        let ry = y + 36;
+        const boxH = 20 + rowsCount * 13 + 20 + 10;
+        doc.roundedRect(x, y, w, boxH, 6).fillColor("#ffffff").strokeColor(BORDER).lineWidth(0.5).stroke();
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(accent).text(title, x + 10, y + 8);
+        doc.rect(x + 10, y + 24, w - 20, 0.5).fillColor(BORDER).fill();
+        let ry = y + 30;
         if (!rows.length) {
-          doc.font("Helvetica").fontSize(9.5).fillColor(GRAY).text(noRowsText, x + 12, ry);
-          ry += 16;
+          doc.font("Helvetica").fontSize(9).fillColor(GRAY).text(noRowsText, x + 10, ry);
+          ry += 14;
         } else {
           for (const r of rows) {
-            doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text(r.label, x + 12, ry, { width: w - 90 });
-            doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CHARCOAL).text(inr(r.amount), x + w - 90, ry, { width: w - 24 - (w - 90 - 12), align: "right" });
-            ry += 15;
+            doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text(r.label, x + 10, ry, { width: w - 80 });
+            doc.font("Helvetica-Bold").fontSize(9).fillColor(LIGHT_CHARCOAL).text(inr(r.amount), x + w - 80, ry, { width: w - 20 - (w - 80 - 10), align: "right" });
+            ry += 13;
           }
         }
-        doc.rect(x + 12, ry - 8, w - 24, 0.6).fillColor(BORDER).fill();
-        doc.font("Helvetica-Bold").fontSize(10.5).fillColor(CHARCOAL).text(`Total  ${title.split(" ")[0]}`, x + 12, ry);
-        doc.font("Helvetica-Bold").fontSize(11).fillColor(total >= 0 ? CHARCOAL : "#dc2626").text(inr(total), x + 12, ry, { width: w - 24, align: "right" });
+        doc.rect(x + 10, ry - 6, w - 20, 0.5).fillColor(BORDER).fill();
+        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(LIGHT_CHARCOAL).text(`Total  ${title.split(" ")[0]}`, x + 10, ry);
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(total >= 0 ? LIGHT_CHARCOAL : "#dc2626").text(inr(total), x + 10, ry, { width: w - 20, align: "right" });
       };
 
-      const earH = 24 + Math.max(data.earnings.length, 1) * 15 + 24 + 12;
-      const dedH = 24 + Math.max(data.deductions.length, 1) * 15 + 24 + 12;
+      const earH = 20 + Math.max(data.earnings.length, 1) * 13 + 20 + 10;
+      const dedH = 20 + Math.max(data.deductions.length, 1) * 13 + 20 + 10;
       const cardH = Math.max(earH, dedH);
-      drawMoneyCard(m.left, halfW, "+  Earnings", data.earnings, data.payroll.gross, GREEN, "No Earnings\n—");
-      drawMoneyCard(m.left + halfW + 14, halfW, "−  Deductions", data.deductions, data.deductions.reduce((s, d) => s + d.amount, 0), "#0ea5e9", "No Deductions\n—");
-      y += cardH + 16;
+      drawMoneyCard(m.left, halfW, "+  Earnings", data.earnings, data.payroll.gross, GREEN, "No Earnings—");
+      drawMoneyCard(m.left + halfW + 12, halfW, "−  Deductions", data.deductions, data.deductions.reduce((s, d) => s + d.amount, 0), "#0ea5e9", "No Deductions—");
+      y += cardH + 12;
 
       // ═══════════════════════════ EMPLOYER CONTRIBUTIONS ═══════════════════════════
       if (data.employer?.length) {
-        ensureSpace(70);
-        const boxH = 24 + data.employer.length * 15 + 18;
-        doc.roundedRect(m.left, y, contentW, boxH, 8).fillColor("#ffffff").strokeColor(BORDER).lineWidth(0.6).stroke();
-        doc.font("Helvetica-Bold").fontSize(11).fillColor(GREEN).text("Employer Contributions", m.left + 12, y + 10);
-        doc.rect(m.left + 12, y + 28, contentW - 24, 0.6).fillColor(BORDER).fill();
-        let ry = y + 36;
+        ensureSpace(60);
+        const boxH = 20 + data.employer.length * 13 + 16;
+        doc.roundedRect(m.left, y, contentW, boxH, 6).fillColor("#ffffff").strokeColor(BORDER).lineWidth(0.5).stroke();
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(GREEN).text("Employer Contributions", m.left + 10, y + 8);
+        doc.rect(m.left + 10, y + 22, contentW - 20, 0.5).fillColor(BORDER).fill();
+        let ry = y + 28;
         for (const r of data.employer) {
-          doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text(r.label, m.left + 12, ry, { width: contentW - 140 });
-          doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CHARCOAL).text(inr(r.amount), m.left + contentW - 128, ry, { width: 118, align: "right" });
-          ry += 15;
+          doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text(r.label, m.left + 10, ry, { width: contentW - 130 });
+          doc.font("Helvetica-Bold").fontSize(9).fillColor(LIGHT_CHARCOAL).text(inr(r.amount), m.left + contentW - 118, ry, { width: 108, align: "right" });
+          ry += 13;
         }
-        doc.font("Helvetica").fontSize(8).fillColor(GRAY)
-          .text("Employer contributions are paid by the company and do not reduce employee net pay.", m.left + 12, ry);
-        y += boxH + 14;
+        doc.font("Helvetica").fontSize(7.5).fillColor(GRAY)
+          .text("Employer contributions are paid by the company and do not reduce employee net pay.", m.left + 10, ry);
+        y += boxH + 10;
       }
 
       // ═══════════════════════════ ATTENDANCE ═══════════════════════════
       if (data.attNumbers && Object.keys(data.attNumbers).length) {
-        ensureSpace(60);
+        ensureSpace(50);
         const a = data.attNumbers;
-        doc.font("Helvetica-Bold").fontSize(10.5).fillColor(CHARCOAL).text("Attendance Summary", m.left, y);
-        y += 14;
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(LIGHT_CHARCOAL).text("Attendance Summary", m.left, y);
+        y += 12;
         const items: [string, number][] = [
           ["Working Days", a.workingDays ?? 0],
           ["Present", a.presentDays ?? 0],
@@ -312,44 +313,44 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
           ["Overtime (hrs)", a.overtimeHours ?? 0],
         ];
         const boxW = Math.floor(contentW / items.length);
-        doc.font("Helvetica").fontSize(8.5).fillColor(GRAY);
+        doc.font("Helvetica").fontSize(8).fillColor(GRAY);
         items.forEach(([label], i) => doc.text(label, m.left + i * boxW, y, { width: boxW - 4 }));
-        y += 12;
-        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CHARCOAL);
+        y += 10;
+        doc.font("Helvetica-Bold").fontSize(9).fillColor(LIGHT_CHARCOAL);
         items.forEach(([, v], i) => doc.text(String(v ?? "—"), m.left + i * boxW, y, { width: boxW - 4 }));
-        y += 16;
+        y += 12;
       }
 
       // ═══════════════════════════ SALARY SUMMARY ═══════════════════════════
-      ensureSpace(120);
+      ensureSpace(100);
       const gross = data.payroll.gross;
       const dedTotal = data.deductions.reduce((s, d) => s + d.amount, 0);
       const net = data.payroll.net;
-      const sumH = 120;
-      doc.roundedRect(m.left, y, contentW, sumH, 10).fillColor(LIGHT_GREEN).fill();
-      doc.rect(m.left, y + 10, contentW, 1).fillColor("#bbf7d0").fill();
-      doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text("Gross Earnings", m.left + 16, y + 20);
-      doc.font("Helvetica-Bold").fontSize(13).fillColor(CHARCOAL).text(inr(gross), m.left + 16, y + 34);
+      const sumH = 100;
+      doc.roundedRect(m.left, y, contentW, sumH, 8).fillColor(LIGHT_GREEN).fill();
+      doc.rect(m.left, y + 6, contentW, 1).fillColor("#bbf7d0").fill();
+      doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text("Gross Earnings", m.left + 14, y + 14);
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(LIGHT_CHARCOAL).text(inr(gross), m.left + 14, y + 26);
 
-      doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text("Total Deductions", m.left + contentW / 3 + 16, y + 20);
-      doc.font("Helvetica-Bold").fontSize(13).fillColor(CHARCOAL).text(inr(dedTotal), m.left + contentW / 3 + 16, y + 34);
+      doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text("Total Deductions", m.left + contentW / 3 + 14, y + 14);
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(LIGHT_CHARCOAL).text(inr(dedTotal), m.left + contentW / 3 + 14, y + 26);
 
-      doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text("Net Pay", m.left + (2 * contentW) / 3 + 16, y + 20);
-      doc.font("Helvetica-Bold").fontSize(16).fillColor(GREEN).text(inr(net), m.left + (2 * contentW) / 3 + 16, y + 32);
+      doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text("Net Pay", m.left + (2 * contentW) / 3 + 14, y + 14);
+      doc.font("Helvetica-Bold").fontSize(14).fillColor(GREEN).text(inr(net), m.left + (2 * contentW) / 3 + 14, y + 24);
 
-      doc.font("Helvetica").fontSize(9.5).fillColor(CHARCOAL).text("In Words", m.left + 16, y + 70);
-      doc.font("Helvetica").fontSize(10.5).fillColor(CHARCOAL).text(String(data.netInWords || "—"), m.left + 16, y + 84, { width: contentW - 32 });
+      doc.font("Helvetica").fontSize(9).fillColor(LIGHT_CHARCOAL).text("In Words", m.left + 14, y + 52);
+      doc.font("Helvetica").fontSize(10).fillColor(LIGHT_CHARCOAL).text(String(data.netInWords || "—"), m.left + 14, y + 62, { width: contentW - 28 });
 
       // tax line
       if (data.tax) {
-        doc.font("Helvetica").fontSize(9).fillColor(GRAY)
+        doc.font("Helvetica").fontSize(8.5).fillColor(GRAY)
           .text(
             `Tax regime: ${String(data.tax.regime ?? "—")}  ·  Annual tax ${inr(Number(data.tax.annualTax) || 0)}  ·  Monthly ${inr(Number(data.tax.monthlyTax) || 0)}`,
-            m.left + 16, y + 104, { width: contentW - 32 }
+            m.left + 14, y + 78, { width: contentW - 28 }
           );
-        y += sumH + 20;
-      } else {
         y += sumH + 14;
+      } else {
+        y += sumH + 10;
       }
 
       // ═══════════════════════════ GENERATED / SIGNATURE ═══════════════════════════
@@ -360,7 +361,7 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
 
       const sig = decodeLogo(company.signatureDataUri);
       const sigX = m.left + contentW - 180;
-      doc.font("Helvetica-Bold").fontSize(9).fillColor(CHARCOAL).text("Authorized Signatory", sigX, y, { width: 180, align: "right" });
+      doc.font("Helvetica-Bold").fontSize(9).fillColor(LIGHT_CHARCOAL).text("Authorized Signatory", sigX, y, { width: 180, align: "right" });
       if (sig) {
         try {
           doc.image(sig.buffer, sigX + 180 - 90, y + 12, { width: 70, height: 36, fit: [70, 36] });
@@ -369,7 +370,7 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
         doc.rect(sigX + 180 - 90, y + 14, 70, 32).fillColor("#ffffff").strokeColor(BORDER).lineWidth(0.6).stroke();
         doc.font("Helvetica").fontSize(8).fillColor(GRAY).text("Signature", sigX + 180 - 90, y + 30, { width: 70, align: "center" });
       }
-      doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CHARCOAL).text(String(company.signatoryName || "—"), sigX, y + 52, { width: 180, align: "right" });
+      doc.font("Helvetica-Bold").fontSize(9.5).fillColor(LIGHT_CHARCOAL).text(String(company.signatoryName || "—"), sigX, y + 52, { width: 180, align: "right" });
       doc.font("Helvetica").fontSize(8.5).fillColor(GRAY).text(String(company.signatoryDesignation || "Authorized Signatory"), sigX, y + 66, { width: 180, align: "right" });
 
       // ═══════════════════════════ FOOTER ═══════════════════════════
@@ -403,7 +404,7 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
 
     y = 88;
 
-    doc.fontSize(10).fillColor("#0e1e2c").font("Helvetica-Bold").text("Employee", m.left, y);
+    doc.fontSize(10).fillColor(LIGHT_CHARCOAL).font("Helvetica-Bold").text("Employee", m.left, y);
     doc.font("Helvetica").fontSize(9.5);
     const empLines = [
       `Name: ${data.employee.name ?? "—"}`,
@@ -424,8 +425,8 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
         doc.font("Helvetica").fontSize(9.5);
         for (const rw of sec.rows) {
           ensureSpace(14);
-          doc.fillColor("#0e1e2c").text(rw.label, m.left + 8, y, { continued: true });
-          doc.fillColor("#0e1e2c").text(inr(rw.amount), { align: "right", width: contentW + 8 });
+          doc.fillColor(LIGHT_CHARCOAL).text(rw.label, m.left + 8, y, { continued: true });
+          doc.fillColor(LIGHT_CHARCOAL).text(inr(rw.amount), { align: "right", width: contentW + 8 });
           y += 14;
         }
         y += 8;
@@ -437,8 +438,8 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
         doc.font("Helvetica").fontSize(9.5);
         for (const e of data.earnings) {
           ensureSpace(14);
-          doc.fillColor("#0e1e2c").text(e.label, m.left + 8, y, { continued: true });
-          doc.fillColor("#0e1e2c").text(inr(e.amount), { align: "right", width: contentW + 8 });
+          doc.fillColor(LIGHT_CHARCOAL).text(e.label, m.left + 8, y, { continued: true });
+          doc.fillColor(LIGHT_CHARCOAL).text(inr(e.amount), { align: "right", width: contentW + 8 });
           y += 14;
         }
         doc.fillColor(theme.primaryColor || "#16a34a").font("Helvetica-Bold")
@@ -451,8 +452,8 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
         doc.font("Helvetica").fontSize(9.5);
         for (const d of data.deductions) {
           ensureSpace(14);
-          doc.fillColor("#0e1e2c").text(d.label, m.left + 8, y, { continued: true });
-          doc.fillColor("#0e1e2c").text(inr(d.amount), { align: "right", width: contentW + 8 });
+          doc.fillColor(LIGHT_CHARCOAL).text(d.label, m.left + 8, y, { continued: true });
+          doc.fillColor(LIGHT_CHARCOAL).text(inr(d.amount), { align: "right", width: contentW + 8 });
           y += 14;
         }
         doc.fillColor("#dc2626").font("Helvetica-Bold")
@@ -482,9 +483,9 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
       y += 6;
     }
 
-    doc.rect(m.left, y, contentW, 1).fillColor(theme.secondaryColor || "#94a3b8").fill();
+    doc.rect(m.left, y, contentW, 1).fillColor(DIVIDER_COLOR).fill();
     y += 10;
-    doc.font("Helvetica-Bold").fontSize(11).fillColor("#0e1e2c");
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(LIGHT_CHARCOAL);
     doc.text(`Gross Earnings      ${inr(data.payroll.gross)}`, m.left, y, { align: "right", width: contentW });
     y += 18;
     doc.fillColor("#dc2626").text(`Total Deductions    ${inr(data.deductions.reduce((s, d) => s + d.amount, 0))}`, m.left, y, { align: "right", width: contentW });
@@ -508,3 +509,4 @@ export function generatePayslipPdf(bp: Blueprint, data: RenderData): Promise<Buf
     doc.end();
   });
 }
+

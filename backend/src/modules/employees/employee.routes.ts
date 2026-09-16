@@ -15,6 +15,7 @@ const listQuerySchema = z.object({
   search: z.string().optional(),
   department: z.string().optional(),
   status: z.string().optional(),
+  skillType: z.string().optional(),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(5000).optional(),
 });

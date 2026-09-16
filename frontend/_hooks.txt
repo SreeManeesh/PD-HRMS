@@ -1,0 +1,184 @@
+﻿
+### src/components/payroll/BlueCollarPayrollPanel.jsx
+  L56:23 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (initialMonth) setMonth(initialMonth);
+  L60:22 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (initialYear) setYear(initialYear);
+  L214:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadData();
+  L216:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array.
+      | }, [month, year]);
+  L219:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setPage(1);
+
+### src/components/payroll/ContractorBillingPanel.jsx
+  L60:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadData();
+  L61:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array.
+      | }, [month, year]);
+
+### src/components/payroll/DeductionsPanel.jsx
+  L206:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setDeductions((prev) =>
+
+### src/components/payroll/EarningsPanel.jsx
+  L212:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadEarnings();
+  L612:6 react-hooks/exhaustive-deps :: React Hook useMemo has a missing dependency: 'calculateEmployeeComponent'. Either include it or remove the dependency array.
+      | }, [
+
+### src/components/payroll/EmployeeSalaryBreakdown.jsx
+  L64:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/components/payroll/PayRulesPanel.jsx
+  L69:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadComponents();
+  L70:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadComponents'. Either include it or remove the dependency array.
+      | }, []);
+
+### src/components/payroll/ProductionRecordsPanel.jsx
+  L53:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadRecords();
+  L54:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadRecords'. Either include it or remove the dependency array.
+      | }, []);
+  L186:6 react-hooks/exhaustive-deps :: React Hook useMemo has a missing dependency: 'calculateIncentivePreview'. Either include it or remove the dependency array.
+      | }, [records, searchQuery, selectedMonthFilter, selectedSkillFilter, sortField, sortOrder]);
+
+### src/components/payroll/SalaryAdvancesPanel.jsx
+  L40:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadAdvances();
+  L41:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadAdvances'. Either include it or remove the dependency array.
+      | }, []);
+
+### src/components/payroll/WageRatesPanel.jsx
+  L120:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadRates(selectedStateFilter);
+  L121:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadRates'. Either include it or remove the dependency array.
+      | }, [selectedStateFilter]);
+
+### src/pages/Attendance/Attendance.jsx
+  L113:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadDashboard();
+  L328:6 react-hooks/exhaustive-deps :: React Hook useMemo has a missing dependency: 'STATUS_META_ALIAS'. Either include it or remove the dependency array.
+      | }, [rawDisplayRecords, search, filterStatus, filterContractor, filterDepartment, filterSkillTier, sortField, sortOrder, productionMap, contractorMap]);
+
+### src/pages/CandidatePortal/CandidatePortal.jsx
+  L25:18 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (token) { loadPortal(); return; }
+
+### src/pages/Employees/BulkImportPreviewModal.jsx
+  L16:9 react-hooks/exhaustive-deps :: The 'rows' logical expression could make the dependencies of useMemo Hook (at line 42) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'rows' in its own useMemo() Hook.
+      | const rows = previewData?.rows || [];
+
+### src/pages/Employees/Employees.jsx
+  L350:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'undoBatch'. Either include it or remove the dependency array.
+      | }, [undoBatch?.batchId]);
+  L363:21 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | useEffect(() => { load(); }, [load]);
+
+### src/pages/Employees/RegistrationWizardModal.jsx
+  L47:7 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | open();
+
+### src/pages/ESS/ESS.jsx
+  L472:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/Expenses/Expenses.jsx
+  L213:21 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | useEffect(() => { loadAll(); }, []);
+  L213:35 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'loadAll'. Either include it or remove the dependency array.
+      | useEffect(() => { loadAll(); }, []);
+
+### src/pages/LMS/CertificateManagement.jsx
+  L97:9 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | loadCertificates();
+
+### src/pages/LMS/CertificateVerificationPage.jsx
+  L14:7 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setData({
+
+### src/pages/LMS/LMS.jsx
+  L226:7 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setTitle(editingCourse.title || "");
+  L1694:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+  L2162:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+  L2946:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/Onboarding/Onboarding.jsx
+  L133:21 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | useEffect(() => { loadAll(); }, []);
+
+### src/pages/Payroll/Payroll.jsx
+  L193:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+  L232:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'user.email'. Either include it or remove the dependency array.
+      | }, [user.id, user.employeeId, user.role, isEmployee, isManager]);
+  L327:25 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (!expandedRun) { setYearRows([]); return; }
+  L428:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setDayLoading(true);
+  L465:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'scopedEmployees'. Either include it or remove the dependency array.
+      | }, [employees, month, year, user.id, refreshKey, isManager]);
+
+### src/pages/PayslipDesigner/PayslipDesigner.jsx
+  L193:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoadingTemplates(true);
+  L208:6 react-hooks/exhaustive-deps :: React Hook useEffect has a missing dependency: 'templateId'. Either include it or remove the dependency array.
+      | }, []);
+  L212:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | load(templateId);
+  L219:30 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (!matchedSkillType) { setMatchedEmployees([]); return; }
+  L296:7 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | runTaxCompare();
+
+### src/pages/PayslipDistribution/PayslipDistribution.jsx
+  L136:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoadingRuns(true);
+  L160:21 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (selected) { setNewMonth(selected.month); setNewYear(selected.year); }
+  L166:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoadingStatus(true);
+
+### src/pages/PayslipPortal/PayslipPortal.jsx
+  L26:17 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | if (active) setStatus("Loading payslipΓÇª");
+
+### src/pages/Performance/Performance.jsx
+  L224:7 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setTitle(goal.title || "");
+  L239:7 react-hooks/immutability :: Error: Cannot access variable before it is declared
+      | reset();
+  L1473:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+  L2175:21 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | useEffect(() => { loadCandidates(); }, []);
+  L2705:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/SecurityAdmin/SecurityAdmin.jsx
+  L195:23 react-hooks/rules-of-hooks :: React Hook "useBreakGlass" is called in function "handleSubmit" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word "use".
+      | const res = await useBreakGlass(justification.trim(), ME_NAME);
+  L744:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/Separation/Separation.jsx
+  L1103:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/Tasks/Tasks.jsx
+  L750:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+### src/pages/Travel/Travel.jsx
+  L526:69 react-hooks/purity :: Error: Cannot call impure function during render
+      | const simulateFailure = req.status !== "Booking In Progress" && Math.random() < 0.4;
+  L655:5 react-hooks/set-state-in-effect :: Error: Calling setState synchronously within an effect can trigger cascading renders
+      | setLoading(true);
+
+COUNT 62

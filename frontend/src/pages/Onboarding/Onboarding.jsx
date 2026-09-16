@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Onboarding Checklist Page
  * Module 4 � Onboarding
  * Features: summary stat cards, new-joiner list with progress, per-employee
@@ -46,7 +46,7 @@ function JoinerListItem({ record, active, onSelect }) {
         textAlign: "left",
       }}
     >
-      <img src={record.avatar} alt={record.employeeName} style={{ width: "38px", height: "38px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+      <img loading="lazy" src={record.avatar} alt={record.employeeName} style={{ width: "38px", height: "38px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <p style={{ fontSize: "13.5px", fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{record.employeeName}</p>
@@ -172,7 +172,7 @@ export default function OnboardingChecklist() {
               <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                 {/* Selected joiner header */}
                 <div style={{ background: "var(--card)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)", padding: "22px 26px", display: "flex", gap: "18px", alignItems: "center", flexWrap: "wrap" }}>
-                  <img src={selected.avatar} alt={selected.employeeName} style={{ width: "56px", height: "56px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)" }} />
+                  <img loading="lazy" src={selected.avatar} alt={selected.employeeName} style={{ width: "56px", height: "56px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)" }} />
                   <div style={{ flex: 1, minWidth: "200px" }}>
                     <h2 style={{ fontSize: "17px", fontWeight: 700, color: "var(--text)" }}>{selected.employeeName}</h2>
                     <p style={{ fontSize: "13px", color: "var(--subtext)" }}>{selected.designation} � {selected.department}</p>

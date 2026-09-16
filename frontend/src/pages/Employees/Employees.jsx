@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Users, Upload, MoreVertical, Trash2, RotateCcw, CheckCircle2, X, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Search, Filter, Users, Upload, MoreVertical, Trash2, RotateCcw, CheckCircle2, X, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -24,6 +24,8 @@ import {
   undoBulkEmployees,
   deleteEmployee,
 } from "../../services/employeeService.js";
+import { getWageRates } from "../../services/payrollService.js";
+import { basicMonthlyFor } from "../../utils/wageRates.js";
 import RegistrationWizardModal from "./RegistrationWizardModal.jsx";
 import BulkImportPreviewModal from "./BulkImportPreviewModal.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -54,9 +56,11 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
   const [error, setError] = useState("");
   const [liveDepartments, setLiveDepartments] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
+  const [wageRates, setWageRates] = useState([]);
 
   useEffect(() => {
     if (!isOpen) return;
+    getWageRates().catch(() => ({ data: [] })).then((res) => setWageRates(Array.isArray(res.data) ? res.data : []));
     getDepartments()
       .then((res) => {
         const depts = res.data || [];
@@ -79,6 +83,34 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
       })
       .catch(() => setLiveLocations(mockLocations.map((l) => ({ id: l, value: l, label: l, name: l }))));
   }, [isOpen]);
+
+  const monthlyGrossForWarning = useMemo(() => {
+    const ann = Number(form.annualSalary);
+    if (ann > 0) return Math.round(ann / 12);
+    return null;
+  }, [form.annualSalary]);
+
+  const basicWageForWarning = useMemo(() => {
+    if (!wageRates.length) return null;
+    const locId = (() => {
+      const sel = liveLocations.find((l) => l.value === form.location || l.label === form.location);
+      return sel?.id && sel.id.length > 10 ? sel.id : null;
+    })();
+    try {
+      const emp = {
+        skillType: form.skillType || "Skilled",
+        state: form.state || "",
+        locationId: locId,
+        contractorId: null,
+        dailyWageRate: 0,
+        location: form.location ? { name: form.location } : null,
+      };
+      const r = basicMonthlyFor(emp, wageRates);
+      return r.basicMonthly > 0 ? r.basicMonthly : null;
+    } catch { return null; }
+  }, [wageRates, form.skillType, form.state, form.location, liveLocations]);
+
+  const showGrossWarning = monthlyGrossForWarning != null && basicWageForWarning != null && monthlyGrossForWarning < basicWageForWarning;
 
   const validate = () => {
     const e = {};
@@ -228,6 +260,15 @@ function AddEmployeeModal({ employees, isOpen, onClose, onCreated }) {
           {field("Country", "country")}
         </div>
 
+        {showGrossWarning && (
+          <div style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "10px", color: "#dc2626" }}>
+            <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: "1px" }} />
+            <div style={{ fontSize: "12.5px", lineHeight: 1.5 }}>
+              <strong>Monthly gross below Basic wage</strong> — Monthly gross (₹{Number(monthlyGrossForWarning).toLocaleString("en-IN")}) is less than the statutory Basic wage (₹{Number(basicWageForWarning).toLocaleString("en-IN")}) for <strong>{form.skillType || "this skill"}</strong> in <strong>{form.state || "selected state"}</strong> as per Wage Rates & Overrides. Monthly gross should always be ≥ Basic wage.
+            </div>
+          </div>
+        )}
+
         {error && (
           <div style={{ background: "var(--red-light)", color: "var(--red)", borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: "12.5px", fontWeight: 600 }}>
             {error}
@@ -282,12 +323,18 @@ export default function Employees() {
     return Array.from(set).filter(Boolean);
   }, [employees]);
 
+  const normSkill = (s) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
   const dynamicSkills = useMemo(() => {
-    const set = new Set(skillTypes);
-    employees.forEach((e) => {
-      if (e.skillType && e.skillType.trim()) set.add(e.skillType.trim());
+    // Dedupe by normalized key so "Semi Skilled" / "Semi-Skilled" / "SEMISKILLED"
+    // collapse to a single filter option instead of three.
+    const byNorm = new Map();
+    [...skillTypes, ...employees.map((e) => e.skillType).filter(Boolean)].forEach((s) => {
+      const t = String(s || "").trim();
+      if (!t) return;
+      const n = normSkill(t);
+      if (!byNorm.has(n)) byNorm.set(n, t);
     });
-    return Array.from(set).filter(Boolean);
+    return Array.from(byNorm.values()).filter(Boolean);
   }, [employees]);
 
   const handleSort = (field) => {
@@ -470,7 +517,7 @@ export default function Employees() {
       list = list.filter((e) => String(e.location || "").toLowerCase() === filterLocation.toLowerCase());
     }
     if (filterSkill) {
-      list = list.filter((e) => String(e.skillType || "").toLowerCase() === filterSkill.toLowerCase());
+      list = list.filter((e) => normSkill(e.skillType) === normSkill(filterSkill));
     }
 
     list.sort((a, b) => {
@@ -547,7 +594,7 @@ export default function Employees() {
             />
             <button
               id="add-employee-btn"
-              onClick={() => setShowWizard(true)}
+              onClick={() => setShowAddModal(true)}
               style={{
                 display: "flex", alignItems: "center", gap: "6px",
                 padding: "9px 16px", background: "var(--primary)", color: "#fff",
@@ -1046,7 +1093,12 @@ export default function Employees() {
       )}
 
       <AddEmployeeModal isOpen={showAddModal} employees={employees} onClose={() => setShowAddModal(false)} onCreated={load} />
-      <RegistrationWizardModal isOpen={showWizard} onClose={() => setShowWizard(false)} onRegistered={load} />
+      <RegistrationWizardModal
+        isOpen={showWizard}
+        onClose={() => setShowWizard(false)}
+        onRegistered={load}
+        onSwitchToStandard={() => setShowAddModal(true)}
+      />
       <ConfirmDialog
         isOpen={!!deleteTarget}
         title="Delete employee"

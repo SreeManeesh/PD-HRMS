@@ -4,6 +4,7 @@ import { countWeekdays } from "../../serializers/helpers";
 
 export interface AttendanceSummary {
   workingDays: number; // calendar working days in period
+  hasAttendanceData: boolean; // true when at least one punch exists this period
   presentDays: number; // punches marked Present/Late/WFH (includes 0.5 for Half Day)
   halfDays: number;
   lateDays: number;
@@ -313,12 +314,20 @@ export function reconcile(
 
   const summary: AttendanceSummary = {
     workingDays: workingDaysCount,
+    hasAttendanceData: hasRecordedPunches,
     presentDays: hasRecordedPunches ? presentDays : workingDaysCount,
     halfDays,
     lateDays,
     paidLeaveDays,
     unpaidLeaveDays,
-    holidayDays: holidays.filter((d) => d.isHoliday && !d.isWeekend).length,
+    // Holiday/weekend tallies are clipped to the employment window (like
+    // workingDays) so joiners/exiters don't inherit full-month counts.
+    holidayDays: holidays.filter((d) => {
+      const dt = new Date(d.date);
+      const hired = joiningDate ? dt >= joiningDate : true;
+      const exited = exitDate ? dt > exitDate : false;
+      return d.isHoliday && !d.isWeekend && hired && !exited;
+    }).length,
     weekendDays: holidays.filter((d) => d.isWeekend).length,
     weeklyOffWorkedDays,
     holidayWorkedDays,

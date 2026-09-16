@@ -144,3 +144,12 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ── Project-specific ─────────────────────────────────────────────────────────
+# Uploaded files (company logos, signatures, etc.) — never commit user uploads
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Sample/fixture data files (keep the directory, not the contents)
+backend/fixtures/*.xlsx
+backend/fixtures/*.csv

@@ -15,7 +15,6 @@ import {
   Paperclip,
   Download,
   Eye,
-  ExternalLink,
   X,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";

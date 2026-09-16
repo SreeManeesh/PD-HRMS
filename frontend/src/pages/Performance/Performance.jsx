@@ -17,6 +17,7 @@ import {
   Circle,
   UserCheck,
   Users2,
+  Sparkles,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -261,14 +262,14 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
     }
   }, [isOpen, goal, isManagerOrAdmin, user]);
 
-  const reset = () => {
+  function reset() {
     setTitle("");
     setCategory("Technical");
     setKeyResults([{ text: "" }]);
     setErrors({});
     setTarget("self");
     setSelectedEmpId("");
-  };
+  }
 
   const updateKR = (i, value) => {
     setKeyResults((prev) =>

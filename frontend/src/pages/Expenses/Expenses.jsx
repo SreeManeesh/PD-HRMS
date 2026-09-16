@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Expense Management Page � Module 14
  * Tabs: My Claims (submit + track), Approvals (Manager/Finance queue).
  * Policy violations and possible duplicates are surfaced for approver
@@ -13,16 +13,16 @@ import StatusBadge from "../../components/shared/StatusBadge.jsx";
 import Spinner from "../../components/shared/Spinner.jsx";
 import EmptyState from "../../components/shared/EmptyState.jsx";
 import Modal from "../../components/shared/Modal.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getMyExpenseClaims, getPendingApprovals, submitExpenseClaim, approveClaim, rejectClaim,
 } from "../../services/Expenseservice.js";
 import { EXPENSE_CATEGORIES, EXPENSE_POLICY, expenseStatusMeta, LOCKED_STATUSES } from "../../mock/Expenses.js";
 
-const CURRENT_EMPLOYEE = { id: "EMP014", name: "Ananya Verma" };
 const fmtDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-const fmtAmount = (n) => `?${n.toLocaleString("en-IN")}`;
-
-function SubmitClaimModal({ isOpen, onClose, onSubmitted }) {
+const fmtAmount = (n) => `₹${n.toLocaleString("en-IN")}`;
+function SubmitClaimModal({ isOpen, onClose, onSubmitted, currentEmployeeId, currentEmployeeName }) {
   const [form, setForm] = useState({ category: "", amount: "", expenseDate: "", businessPurpose: "", receiptFileName: "" });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -47,8 +47,8 @@ function SubmitClaimModal({ isOpen, onClose, onSubmitted }) {
     if (!validate()) return;
     setSaving(true);
     await submitExpenseClaim({
-      employeeId: CURRENT_EMPLOYEE.id,
-      employeeName: CURRENT_EMPLOYEE.name,
+      employeeId: currentEmployeeId,
+      employeeName: currentEmployeeName,
       category: form.category,
       amount: amountNum,
       expenseDate: form.expenseDate,
@@ -188,6 +188,10 @@ function RejectModal({ claim, onClose, onRejected }) {
 }
 
 export default function Expenses() {
+  const { user } = useAuth();
+  const currentEmployeeId = user?.employeeCode || user?.id || "EMP014";
+  const currentEmployeeName = user ? `${user.firstName} ${user.lastName}` : "Ananya Verma";
+
   const [tab, setTab] = useState("mine");
   const [myClaims, setMyClaims] = useState([]);
   const [approvals, setApprovals] = useState([]);
@@ -198,7 +202,7 @@ export default function Expenses() {
   const loadAll = () => {
     setLoading(true);
     Promise.all([
-      getMyExpenseClaims(CURRENT_EMPLOYEE.id),
+      getMyExpenseClaims(currentEmployeeId),
       Promise.all([getPendingApprovals("Manager"), getPendingApprovals("Finance")]),
     ]).then(([mineRes, [mgrRes, finRes]]) => {
       setMyClaims(mineRes.data);
@@ -225,6 +229,7 @@ export default function Expenses() {
   return (
     <MainLayout>
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
+        <DemoBanner module="Expense Management" />
         <PageHeader title="Expense Management" subtitle="Submit and track out-of-pocket business expense claims">
           <button id="submit-claim-btn-header" onClick={() => setShowSubmit(true)}
             style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "var(--primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
@@ -319,7 +324,13 @@ export default function Expenses() {
         </div>
       </div>
 
-      <SubmitClaimModal isOpen={showSubmit} onClose={() => setShowSubmit(false)} onSubmitted={loadAll} />
+      <SubmitClaimModal
+        isOpen={showSubmit}
+        onClose={() => setShowSubmit(false)}
+        onSubmitted={loadAll}
+        currentEmployeeId={currentEmployeeId}
+        currentEmployeeName={currentEmployeeName}
+      />
       <RejectModal claim={rejectTarget} onClose={() => setRejectTarget(null)} onRejected={loadAll} />
     </MainLayout>
   );

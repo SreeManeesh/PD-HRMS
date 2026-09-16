@@ -35,16 +35,16 @@
   --subtext: #5a7a8e;
   --label: #3d5a70;
 
-  /* ─── Semantic ────────────────────────────────────────── */
-  --green: #059669;
+  /* ─── Semantic (WCAG AA compliant contrast) ───────────── */
+  --green: #047857;            /* Emerald-700 — 5.6:1 contrast on #ecfdf5 */
   --green-light: #ecfdf5;
-  --amber: #d97706;
+  --amber: #92400e;            /* Amber-800 — 7.3:1 contrast on #fffbeb  */
   --amber-light: #fffbeb;
-  --red: #dc2626;
+  --red: #b91c1c;              /* Red-700 — 5.8:1 contrast on #fef2f2    */
   --red-light: #fef2f2;
-  --blue: #2563eb;
+  --blue: #1d4ed8;             /* Blue-700 — 6.1:1 contrast on #eff6ff   */
   --blue-light: #eff6ff;
-  --purple: #7c3aed;
+  --purple: #6d28d9;           /* Purple-700 — 6.3:1 contrast on #f5f3ff */
   --purple-light: #f5f3ff;
 
   /* ─── Elevation ───────────────────────────────────────── */

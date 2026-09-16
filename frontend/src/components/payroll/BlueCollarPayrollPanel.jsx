@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Users,
   Wallet,
@@ -8,22 +8,21 @@ import {
   RefreshCw,
   Download,
   Search,
-  Filter,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
   Eye,
   CheckCircle2,
-  ShieldCheck,
-  Edit3,
   X,
   Copy,
-  FileDown,
+  Upload,
 } from "lucide-react";
 import {
   getEmployeePayrollSummaries,
   runPayrollForSkillGroup,
   runPayrollForIndividualEmployee,
+  getPayrollComponentConfigs,
+  getWageRates,
 } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
@@ -33,8 +32,18 @@ import EmployeeSalaryBreakdown from "./EmployeeSalaryBreakdown";
 
 const CATEGORIES = ["All Categories", "SKILLED", "SEMISKILLED", "UNSKILLED"];
 const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December"
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 export default function BlueCollarPayrollPanel({
@@ -42,7 +51,7 @@ export default function BlueCollarPayrollPanel({
   initialYear = new Date().getFullYear(),
   years = [2024, 2025, 2026],
   title = "Workforce Payroll Calculations",
-  subtitle = "Comprehensive Indian statutory payroll table (20 columns) dynamically computed from verified attendance, state minimum wages, PF, ESIC, PT, and LWF.",
+  subtitle = "Fully dynamic payroll table — earning and deduction columns are built from the live payroll components and values computed from verified attendance.",
   onViewEmployeeSlip,
   isAnnual = false,
   onPayrollCompleted,
@@ -70,8 +79,12 @@ export default function BlueCollarPayrollPanel({
   const [hasRun, setHasRun] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [showTxnModal, setShowTxnModal] = useState(false);
+  const [paymentUpload, setPaymentUpload] = useState(null);
   const [editingGrossEmpId, setEditingGrossEmpId] = useState(null);
   const [selectedEmpForBreakdown, setSelectedEmpForBreakdown] = useState(null);
+  const paymentFileInputRef = useRef(null);
+  const [componentConfigs, setComponentConfigs] = useState([]);
+  const [wageRates, setWageRates] = useState([]);
 
   // Pagination state (Strictly 10 items per page)
   const PAGE_SIZE = 10;
@@ -81,66 +94,199 @@ export default function BlueCollarPayrollPanel({
   const [sortKey, setSortKey] = useState("srNo");
   const [sortDir, setSortDir] = useState("asc");
 
+  // ── Dynamic helpers: columns come from REAL earnings/deduction data, never
+  // a hardcoded component list ──────────────────────────────────────────────
+  const num = (v, fb = 0) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fb;
+  };
+  const prettifyKey = (k) =>
+    String(k || "")
+      .replace(/[_-]+/g, " ")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/\b\w/g, (s) => s.toUpperCase())
+      .trim() || String(k);
+  const EARNINGS_EXCLUDE = ["total"];
+  const DEDUCTIONS_EXCLUDE = ["total", "leaveDeduction"];
+  const normalizeDetails = (details, obj, exclude) => {
+    if (Array.isArray(details)) {
+      return details.map((d) => ({
+        key: String(d.key),
+        label: d.label || prettifyKey(d.key),
+        amount: num(d.amount),
+      }));
+    }
+    const o = obj || {};
+    return Object.entries(o)
+      .filter(([k]) => k !== "total" && !exclude.includes(k))
+      .map(([k, v]) => ({ key: k, label: prettifyKey(k), amount: num(v) }));
+  };
+  const isBasicLikeKey = (k) =>
+    String(k || "")
+      .toLowerCase()
+      .replace(/[^a-z]/g, "")
+      .includes("basic");
+
+  const normKey = (k) => String(k || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Uniform basic wage per skill+state — always from Wage Rates & Overrides.
+  // Ignores per-employee overrides / location-specific overrides so picking
+  // e.g. Maharashtra makes every SKILLED show the same Basic wage (daily×26).
+  const getUniformBasicForRow = (row) => {
+    if (!wageRates.length) return null;
+    const skillNorm = normKey(row.category || row.skillType || "skilled");
+    const stateTarget = stateFilter !== "All States (Default)" ? stateFilter : row.state || "All States (Default)";
+    const stateNorm = normKey(stateTarget);
+    const byState = (w) => normKey(w.state || "All States (Default)");
+    const candidates = wageRates.filter((w) => normKey(w.skillCategory) === skillNorm);
+    if (!candidates.length) return null;
+    let found =
+      candidates.find((w) => !w.locationId && !w.contractorId && byState(w) === stateNorm) ||
+      candidates.find((w) => !w.locationId && !w.contractorId && (byState(w).includes(stateNorm) || stateNorm.includes(byState(w))));
+    if (!found) found = candidates.find((w) => !w.locationId && !w.contractorId && byState(w) === normKey("All States (Default)"));
+    if (!found) found = candidates.find((w) => !w.locationId && !w.contractorId);
+    if (!found) found = candidates[0];
+    if (!found || found.dailyRate == null) return null;
+    return Math.round(Number(found.dailyRate) * 26);
+  };
+  const lookupByNorm = (map, targetKey) => {
+    if (!map || targetKey == null) return undefined;
+    if (map[targetKey] !== undefined) return map[targetKey];
+    const nk = normKey(targetKey);
+    for (const [k, v] of Object.entries(map)) {
+      if (normKey(k) === nk) return v;
+      // allow label vs code match: e.g. "Carlease policy" vs "CARLEASE_POLICY"
+      if (normKey(prettifyKey(k)) === nk) return v;
+    }
+    return undefined;
+  };
+
   const normalizeRows = (rows) => {
     return rows.map((r, index) => {
-      const gross = Number(r.gross || 0);
-      const basic = Number(r.basic || 0);
-      const hra = Number(r.hra || 0);
-      const conv = Number(r.conv || 0);
-      const med = Number(r.med || 0);
-      const cca = Number(r.cca || 0);
-      const special = Number(r.special || 0);
-
-      const pf = Number(r.pf || r.deductions?.providentFund || 0);
-      const esic = Number(r.esic || r.deductions?.healthInsurance || 0);
-      const pt = Number(r.pt || r.deductions?.professionalTax || 0);
-      const lwf = Number(r.lwf || r.deductions?.lwf || 20);
-      const deductions = Number(r.totalDeductions || r.deductions?.total || (pf + esic + pt + lwf));
-      const net = Number(r.net || r.netPay || (gross - deductions));
-
-      const salaryType = r.salaryType || r.rawRecord?.summary?.salaryType || (Number(r.annualSalary) > 0 ? "Monthly" : "Daily");
-      const fixedMonthlySalary = Number(r.fixedMonthlySalary || (salaryType === "Monthly" ? (r.annualSalary ? r.annualSalary / 12 : 24000) : 0));
-      const dailySalaryRate = Number(r.dailySalaryRate || r.dailyRate || r.dailyWageRate || (fixedMonthlySalary > 0 ? fixedMonthlySalary / 30 : 900));
-      const lopDays = Number(r.lopDays != null ? r.lopDays : (r.leaveDays || 0));
-      const lopDeduction = Number(r.lopDeduction != null ? r.lopDeduction : (r.leaveDeduction || (salaryType === "Monthly" ? lopDays * dailySalaryRate : 0)));
-      const grossPayableSalary = Number(r.grossPayableSalary || (salaryType === "Monthly" ? Math.max(fixedMonthlySalary - lopDeduction, 0) : gross));
-
-      const overtime = Number(r.overtime || r.earnings?.overtime || 0);
-      const overtimeHours = Number(r.overtimeHours || r.rawRecord?.summary?.overtimeHours || (overtime > 0 ? Math.round(overtime / ((dailySalaryRate / 8) * 1.5)) : 0));
-      const attendanceBonus = Number(
-        r.attendanceBonus ||
-        r.earnings?.attendanceBonus ||
-        r.earnings?.attendance_bonus ||
-        r.earnings?.ATT_BONUS ||
-        r.earnings?.performanceBonus ||
-        0
+      const gross = num(r.gross);
+      const totalDeductions = num(
+        r.totalDeductions ?? r.deductions?.total,
+        null,
       );
-      const nightShiftCount = Number(r.nightShiftCount || r.rawRecord?.summary?.nightShiftCount || 0);
-      const nightShiftAllowance = Number(
-        r.nightShiftAllowance ||
-        r.earnings?.nightShiftAllowance ||
-        r.earnings?.NIGHT_ALLOW ||
-        r.earnings?.night_shift_allowance ||
-        0
+      const pf = num(r.pf ?? r.deductions?.providentFund);
+      const esic = num(r.esic ?? r.deductions?.healthInsurance ?? r.deductions?.esic);
+      const pt = num(r.pt ?? r.deductions?.professionalTax);
+      const lwf = num(r.lwf ?? r.deductions?.lwf);
+      const incomeTax = num(r.incomeTax ?? r.deductions?.incomeTax ?? r.deductions?.tds);
+      const advanceRecovery = num(
+        r.advanceRecovery ?? r.deductions?.salaryAdvanceRecovery ?? r.deductions?.advanceRecovery,
       );
-      const productionUnits = Number(r.productionUnits || r.rawRecord?.summary?.productionUnits || 0);
-      const productionIncentive = Number(
-        r.productionIncentive ||
-        r.earnings?.productionIncentive ||
-        r.earnings?.PROD_INC ||
-        r.earnings?.production_incentive ||
-        0
+      const deductions =
+        r.totalDeductions != null || r.deductions?.total != null
+          ? num(r.totalDeductions ?? r.deductions?.total)
+          : pf + esic + pt + lwf + incomeTax + advanceRecovery;
+      const net =
+        r.net != null || r.netPay != null
+          ? num(r.net ?? r.netPay)
+          : gross - deductions;
+
+      const salaryType =
+        r.salaryType ||
+        r.rawRecord?.summary?.salaryType ||
+        (Number(r.annualSalary) > 0 ? "Monthly" : "Daily");
+      // Use the backend's real calendar length for this month — hardcoding 30
+      // skewed the daily rate (and hence LOP) for 28/29/31-day months.
+      const calendarDays = num(
+        r.calendarDaysInMonth ?? r.rawRecord?.calendarDaysInMonth ?? r.rawRecord?.summary?.calendarDaysInMonth,
+        30,
+      );
+      const fixedMonthlySalary = num(
+        r.fixedMonthlySalary ??
+          (salaryType === "Monthly"
+            ? r.annualSalary
+              ? Math.round(r.annualSalary / 12)
+              : 0
+            : 0),
+      );
+      const dailySalaryRate = num(
+        r.dailySalaryRate ||
+          r.dailyRate ||
+          r.dailyWageRate ||
+          (fixedMonthlySalary > 0 ? fixedMonthlySalary / calendarDays : 0),
+      );
+      const lopDays = num(r.lopDays ?? r.leaveDays);
+      const lopDeduction = num(
+        r.lopDeduction ??
+          r.leaveDeduction ??
+          (salaryType === "Monthly" ? lopDays * dailySalaryRate : 0),
+      );
+      const grossPayableSalary = num(
+        r.grossPayableSalary ??
+          (salaryType === "Monthly"
+            ? Math.max(fixedMonthlySalary - lopDeduction, 0)
+            : gross),
+      );
+
+      const overtime = num(r.overtime ?? r.earnings?.overtime);
+      const overtimeHours = num(
+        r.overtimeHours ??
+          r.rawRecord?.summary?.overtimeHours ??
+          (overtime > 0 && dailySalaryRate > 0
+            ? Math.round(overtime / ((dailySalaryRate / 8) * 1.5))
+            : 0),
+      );
+      const attendanceBonus = num(
+        r.attendanceBonus ??
+          r.earnings?.attendanceBonus ??
+          r.earnings?.attendance_bonus ??
+          r.earnings?.ATT_BONUS,
+      );
+      const nightShiftCount = num(
+        r.nightShiftCount ?? r.rawRecord?.summary?.nightShiftCount,
+      );
+      const nightShiftAllowance = num(
+        r.nightShiftAllowance ??
+          r.earnings?.nightShiftAllowance ??
+          r.earnings?.NIGHT_ALLOW ??
+          r.earnings?.night_shift_allowance,
+      );
+      const productionUnits = num(
+        r.productionUnits ?? r.rawRecord?.summary?.productionUnits,
+      );
+      const productionIncentive = num(
+        r.productionIncentive ??
+          r.earnings?.productionIncentive ??
+          r.earnings?.PROD_INC ??
+          r.earnings?.production_incentive,
+      );
+
+      // Real dynamic breakdowns from the backend (earningDetails /
+      // deductionDetails); fall back to deriving from the raw objects.
+      const earningDetails = normalizeDetails(
+        r.earningDetails,
+        r.earnings,
+        EARNINGS_EXCLUDE,
+      );
+      const deductionDetails = normalizeDetails(
+        r.deductionDetails,
+        r.deductions,
+        DEDUCTIONS_EXCLUDE,
+      );
+      const earningByKey = Object.fromEntries(
+        earningDetails.map((d) => [d.key, d.amount]),
+      );
+      const deductionByKey = Object.fromEntries(
+        deductionDetails.map((d) => [d.key, d.amount]),
       );
 
       const empCode = r.employeeId || r.id || `EMP${index + 1}`;
-      const txnId = r.transactionId || `TXN-${empCode}-${year}${String(month).padStart(2, "0")}`;
+      const txnId =
+        r.transactionId ||
+        `TXN-${empCode}-${year}${String(month).padStart(2, "0")}`;
 
       return {
         srNo: index + 1,
         id: r.id || r.employeeId,
         employeeId: empCode,
         employeeName: r.employeeName || "Worker",
-        category: (r.category || r.skillType || "SKILLED").toUpperCase().replace(/\s+/g, ""),
+        category: (r.category || r.skillType || "SKILLED")
+          .toUpperCase()
+          .replace(/[^A-Z]/g, ""),
         skillType: r.skillType || "Skilled",
         salaryType,
         fixedMonthlySalary,
@@ -156,20 +302,20 @@ export default function BlueCollarPayrollPanel({
         productionUnits,
         productionIncentive,
         gender: r.gender || "M",
-        doj: r.doj || "2024-01-01",
+        doj: r.doj || "—",
         state: r.state || "All States (Default)",
-        days: Number(r.days != null ? r.days : (r.workingDays || 26)),
-        basic,
-        hra,
-        conv,
-        med,
-        cca,
-        special,
+        days: num(r.days ?? r.workingDays, 0),
+        earningDetails,
+        deductionDetails,
+        earningByKey,
+        deductionByKey,
         gross,
         pf,
         esic,
         pt,
         lwf,
+        incomeTax,
+        advanceRecovery,
         deductions,
         net,
         status: r.status || "Draft",
@@ -182,25 +328,40 @@ export default function BlueCollarPayrollPanel({
   const loadData = async (shouldForceRun = false) => {
     setLoading(true);
     try {
-      const res = await getEmployeePayrollSummaries(month, year);
+      const [res, compRes, wageRes] = await Promise.all([
+        getEmployeePayrollSummaries(month, year),
+        getPayrollComponentConfigs().catch(() => ({ data: [] })),
+        getWageRates().catch(() => ({ data: [] })),
+      ]);
       const rows = res.data || [];
       const normalized = normalizeRows(rows);
       setAllFetchedRecords(normalized);
+      setComponentConfigs(compRes?.data || []);
+      setWageRates(wageRes?.data || []);
 
       // If any row is already Paid/Approved or shouldForceRun, populate
-      const alreadyPaid = rows.some((r) => r.status === "Paid" || r.status === "Approved");
+      const alreadyPaid = rows.some(
+        (r) => r.status === "Paid" || r.status === "Approved",
+      );
       if (alreadyPaid || shouldForceRun) {
         setRecords(normalized);
         setHasRun(true);
         setIsPaid(true);
+        setPaymentUpload(null);
       } else {
         // Initial empty state until Run Payroll is clicked
         setRecords([]);
         setHasRun(false);
         setIsPaid(false);
+        setPaymentUpload(null);
       }
     } catch (err) {
-      toast(err.response?.data?.message || err.message || "Failed to load blue-collar payroll data", "error");
+      toast(
+        err.response?.data?.message ||
+          err.message ||
+          "Failed to load blue-collar payroll data",
+        "error",
+      );
     } finally {
       setLoading(false);
     }
@@ -208,6 +369,28 @@ export default function BlueCollarPayrollPanel({
   useEffect(() => {
     loadData();
     setPage(1);
+  }, [month, year]);
+
+  // Refresh when employee skill/salary edits land (profile dispatches
+  // hrms:employees-changed) or when the tab regains focus — keeps payroll,
+  // attendance and leave-derived figures dynamically in sync.
+  // Also refresh when Earnings/Deductions components are added/removed/edited
+  // so Annual & Monthly tables reflect the exact 9+2 (or any) columns instantly.
+  useEffect(() => {
+    const refresh = () => loadData();
+    window.addEventListener("hrms:employees-changed", refresh);
+    window.addEventListener("hrms:payroll-components-changed", refresh);
+    window.addEventListener("hrms:wage-rates-changed", refresh);
+    window.addEventListener("focus", refresh);
+    const onVisibility = () => { if (document.visibilityState === "visible") loadData(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("hrms:employees-changed", refresh);
+      window.removeEventListener("hrms:payroll-components-changed", refresh);
+      window.removeEventListener("hrms:wage-rates-changed", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [month, year]);
 
   useEffect(() => {
@@ -222,31 +405,82 @@ export default function BlueCollarPayrollPanel({
         month,
         year,
       });
-      // Fetch freshly computed summaries
-      const res = await getEmployeePayrollSummaries(month, year);
+      // Fetch freshly computed summaries + latest component configs & wage rates (so new columns / basic uniformity appear immediately)
+      const [res, compRes, wageRes] = await Promise.all([
+        getEmployeePayrollSummaries(month, year),
+        getPayrollComponentConfigs().catch(() => ({ data: [] })),
+        getWageRates().catch(() => ({ data: [] })),
+      ]);
+      if (compRes?.data) setComponentConfigs(compRes.data);
+      if (wageRes?.data) setWageRates(wageRes.data);
       const rows = res.data || [];
-      const normalized = normalizeRows(rows.length ? rows : allFetchedRecords);
+      const normalized = normalizeRows(
+        rows.length ? rows : allFetchedRecords,
+      ).map((row) => ({
+        ...row,
+        status: "Processing",
+      }));
       setRecords(normalized);
       setAllFetchedRecords(normalized);
       setHasRun(true);
-      setIsPaid(true);
+      setIsPaid(false);
+      setPaymentUpload(null);
       setShowTxnModal(true);
-      toast(`Successfully computed and marked Paid for ${normalized.length} workers!`);
-      if (onPayrollCompleted) onPayrollCompleted();
+      toast(
+        `Payroll is processing for ${normalized.length} workers. Upload bank transaction Excel to mark Paid.`,
+      );
     } catch (err) {
       if (allFetchedRecords.length > 0) {
-        setRecords(allFetchedRecords);
+        setRecords(
+          allFetchedRecords.map((row) => ({ ...row, status: "Processing" })),
+        );
         setHasRun(true);
-        setIsPaid(true);
+        setIsPaid(false);
+        setPaymentUpload(null);
         setShowTxnModal(true);
-        toast(`Payroll generated and marked Paid for ${MONTH_NAMES[month - 1]} ${year}`);
-        if (onPayrollCompleted) onPayrollCompleted();
+        toast(
+          `Payroll is processing for ${MONTH_NAMES[month - 1]} ${year}. Upload bank transaction Excel to mark Paid.`,
+        );
       } else {
-        toast(err.response?.data?.message || err.message || "Failed to run payroll", "error");
+        toast(
+          err.response?.data?.message || err.message || "Failed to run payroll",
+          "error",
+        );
       }
     } finally {
       setRunning(false);
     }
+  };
+
+  const handlePaymentUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    const validExtensions = ["xls", "xlsx", "csv"];
+    if (!validExtensions.includes(extension)) {
+      toast(
+        "Upload an Excel or CSV file with bank transaction details.",
+        "error",
+      );
+      event.target.value = "";
+      return;
+    }
+
+    const uploadedAt = new Date();
+    setPaymentUpload({
+      name: file.name,
+      sizeKb: Math.max(1, Math.round(file.size / 1024)),
+      uploadedAt: uploadedAt.toLocaleString(),
+      rows: records.length,
+    });
+    setRecords((prev) => prev.map((row) => ({ ...row, status: "Paid" })));
+    setIsPaid(true);
+    toast(
+      `Bank transaction file uploaded. Payroll marked Paid for ${records.length} workers.`,
+    );
+    if (onPayrollCompleted) onPayrollCompleted();
+    event.target.value = "";
   };
 
   const handleRunIndividual = async (empId, empName) => {
@@ -260,29 +494,79 @@ export default function BlueCollarPayrollPanel({
       toast(`Payroll calculated for ${empName}`);
       loadData(true);
     } catch (err) {
-      toast(err.response?.data?.message || err.message || "Failed to run worker payroll", "error");
+      toast(
+        err.response?.data?.message ||
+          err.message ||
+          "Failed to run worker payroll",
+        "error",
+      );
     } finally {
       setRunningEmpId(null);
     }
   };
 
-  // Update Gross Salary inline when payroll is not active/running (Draft)
+  // Update Gross Salary inline when payroll is not active/running (Draft).
+  // Scales the row's REAL earning components proportionally to the new gross
+  // (remainder into the basic-like leg) and recomputes statutory deductions,
+  // so every dynamic column stays consistent — no fabricated static split.
   const handleUpdateGross = (empId, newGross) => {
-    const grossNum = Math.max(0, Number(newGross) || 0);
+    const grossNum = Math.max(0, Math.round(Number(newGross) || 0));
     setRecords((prev) =>
       prev.map((r) => {
         if (r.employeeId !== empId) return r;
-        const basic = Math.round(grossNum * 0.5);
-        const hra = Math.round(basic * 0.5);
-        const conv = Math.round(grossNum * 0.1);
-        const med = Math.round(grossNum * 0.05);
-        const special = Math.max(0, grossNum - (basic + hra + conv + med));
-
-        const pf = Math.round(Math.min(basic, 15000) * 0.12);
-        const esic = grossNum <= 21000 ? Math.round(grossNum * 0.0075) : 0;
-        const pt = grossNum > 10000 ? 200 : 0;
-        const lwf = 20;
-        const deductions = pf + esic + pt + lwf;
+        const keys = (r.earningDetails || []).map((d) => d.key);
+        const oldSum = keys.reduce((s, k) => s + num(r.earningByKey?.[k]), 0);
+        const basicKey =
+          keys.find((k) => isBasicLikeKey(k)) || keys[keys.length - 1];
+        const newByKey = {};
+        if (keys.length === 0) {
+          return { ...r, gross: grossNum, net: Math.max(0, grossNum - num(r.deductions)) };
+        }
+        if (oldSum > 0) {
+          let assigned = 0;
+          keys.forEach((k) => {
+            if (k === basicKey) return;
+            const v = Math.round((num(r.earningByKey?.[k]) * grossNum) / oldSum);
+            newByKey[k] = v;
+            assigned += v;
+          });
+          newByKey[basicKey] = Math.max(0, grossNum - assigned);
+        } else {
+          keys.forEach((k) => {
+            newByKey[k] = k === basicKey ? grossNum : 0;
+          });
+        }
+        const newEarningDetails = (r.earningDetails || []).map((d) => ({
+          ...d,
+          amount: newByKey[d.key] ?? 0,
+        }));
+        const newEarningByKey = Object.fromEntries(
+          newEarningDetails.map((d) => [d.key, d.amount]),
+        );
+        const findDedKey = (...cands) =>
+          (r.deductionDetails || []).map((d) => d.key).find((k) => {
+            const n = k.toLowerCase().replace(/[^a-z]/g, "");
+            return cands.some((c) => n.includes(c));
+          });
+        const pfKey = findDedKey("provident", "pf");
+        const esicKey = findDedKey("health", "esic", "esi");
+        const ptKey = findDedKey("professional", "pt");
+        // No hardcoded statutory rates here: rescale the row's own
+        // backend-computed deductions proportionally to the new gross so
+        // configured/capped values keep their ratios. Flat monthly
+        // deductions (PT) stay untouched.
+        const oldGross = num(r.gross);
+        const rescale = oldGross > 0 ? grossNum / oldGross : 0;
+        const newDeductionDetails = (r.deductionDetails || []).map((d) => {
+          if (pfKey && d.key === pfKey) return { ...d, amount: Math.round(num(d.amount) * rescale) };
+          if (esicKey && d.key === esicKey) return { ...d, amount: Math.round(num(d.amount) * rescale) };
+          if (ptKey && d.key === ptKey) return d;
+          return d;
+        });
+        const newDeductionByKey = Object.fromEntries(
+          newDeductionDetails.map((d) => [d.key, d.amount]),
+        );
+        const deductions = newDeductionDetails.reduce((s, d) => s + num(d.amount), 0);
         const net = Math.max(0, grossNum - deductions);
 
         return {
@@ -290,25 +574,39 @@ export default function BlueCollarPayrollPanel({
           gross: grossNum,
           fixedMonthlySalary: grossNum,
           grossPayableSalary: grossNum,
-          basic,
-          hra,
-          conv,
-          med,
-          special,
-          pf,
-          esic,
-          pt,
-          lwf,
+          earningDetails: newEarningDetails,
+          earningByKey: newEarningByKey,
+          earnings: { ...(r.earnings || {}), ...newByKey, total: grossNum },
+          deductionDetails: newDeductionDetails,
+          deductionByKey: newDeductionByKey,
+          pf: pfKey ? num(newDeductionByKey[pfKey]) : num(r.pf),
+          esic: esicKey ? num(newDeductionByKey[esicKey]) : num(r.esic),
+          pt: ptKey ? num(newDeductionByKey[ptKey]) : num(r.pt),
+          incomeTax: num(r.incomeTax),
+          advanceRecovery: num(r.advanceRecovery),
           deductions,
           net,
         };
-      })
+      }),
     );
-    toast(`Updated gross salary for ${empId} to ₹${grossNum.toLocaleString("en-IN")}`);
+    toast(
+      `Updated gross salary for ${empId} to ₹${grossNum.toLocaleString("en-IN")}`,
+    );
   };
 
-  // Working download payslip statement for Annual / Monthly
+  // Working download payslip statement for Annual / Monthly — fully dynamic,
+  // listing the row's real earning/deduction components.
   const handleDownloadPayslip = (r) => {
+    const pad = (label, val) =>
+      `${String(label).slice(0, 24).padEnd(25)}₹${Math.round(num(val)).toLocaleString("en-IN")}`;
+    const earnLines = (r.earningDetails || [])
+      .filter((d) => num(d.amount) !== 0)
+      .map((d) => pad(d.label || d.key, d.amount))
+      .join("\n");
+    const dedLines = (r.deductionDetails || [])
+      .filter((d) => num(d.amount) !== 0)
+      .map((d) => pad(d.label || d.key, d.amount))
+      .join("\n");
     const payslipContent = `===============================================================
 PAYSLIP STATEMENT - ${MONTH_NAMES[month - 1].toUpperCase()} ${year}
 PROTECCIO TECHNOLOGIES
@@ -322,32 +620,26 @@ Working Days:   ${r.days} (LOP: ${r.lopDays || 0})
 ---------------------------------------------------------------
 EARNINGS (INR)
 ---------------------------------------------------------------
-Basic Salary:            ₹${r.basic.toLocaleString("en-IN")}
-House Rent Allowance:    ₹${r.hra.toLocaleString("en-IN")}
-Conveyance Allowance:    ₹${r.conv.toLocaleString("en-IN")}
-Medical Allowance:       ₹${r.med.toLocaleString("en-IN")}
-City Compensatory (CCA): ₹${r.cca.toLocaleString("en-IN")}
-Special Allowance:       ₹${r.special.toLocaleString("en-IN")}
-${r.overtime > 0 ? `Overtime Pay:            ₹${Math.round(r.overtime).toLocaleString("en-IN")}\n` : ""}${r.attendanceBonus > 0 ? `Attendance Bonus:        ₹${Math.round(r.attendanceBonus).toLocaleString("en-IN")}\n` : ""}${r.nightShiftAllowance > 0 ? `Night Shift Allowance:   ₹${Math.round(r.nightShiftAllowance).toLocaleString("en-IN")}\n` : ""}---------------------------------------------------------------
-GROSS SALARY:            ₹${r.gross.toLocaleString("en-IN")}
+${earnLines || "No earnings"}
 ---------------------------------------------------------------
-STATUTORY DEDUCTIONS (INR)
+GROSS SALARY:            ₹${num(r.gross).toLocaleString("en-IN")}
 ---------------------------------------------------------------
-Provident Fund (PF):     ₹${r.pf.toLocaleString("en-IN")}
-ESIC (Health Insurance): ₹${r.esic.toLocaleString("en-IN")}
-Professional Tax (PT):   ₹${r.pt.toLocaleString("en-IN")}
-Labour Welfare Fund(LWF):₹${r.lwf.toLocaleString("en-IN")}
+DEDUCTIONS (INR)
 ---------------------------------------------------------------
-TOTAL DEDUCTIONS:        ₹${r.deductions.toLocaleString("en-IN")}
+${dedLines || "No deductions"}
 ---------------------------------------------------------------
-NET PAYOUT:              ₹${r.net.toLocaleString("en-IN")}
+TOTAL DEDUCTIONS:        ₹${num(r.deductions).toLocaleString("en-IN")}
+---------------------------------------------------------------
+NET PAYOUT:              ₹${num(r.net).toLocaleString("en-IN")}
 TRANSACTION ID:          ${r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
 PAYMENT STATUS:          PAID (Direct Bank Transfer)
 ===============================================================
 This is a computer-generated statutory payroll document.
 ===============================================================`;
 
-    const blob = new Blob([payslipContent], { type: "text/plain;charset=utf-8" });
+    const blob = new Blob([payslipContent], {
+      type: "text/plain;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -381,14 +673,18 @@ This is a computer-generated statutory payroll document.
     return records.filter((r) => {
       // State filter
       if (stateFilter && stateFilter !== "All States (Default)") {
-        if (!r.state || !r.state.toLowerCase().includes(stateFilter.toLowerCase())) {
+        if (
+          !r.state ||
+          !r.state.toLowerCase().includes(stateFilter.toLowerCase())
+        ) {
           // If employee state doesn't match and not Central
           return false;
         }
       }
-      // Category filter
+      // Category filter (normalized so SKILLED/SEMI-SKILLED variants match)
       if (categoryFilter && categoryFilter !== "All Categories") {
-        if (r.category !== categoryFilter) return false;
+        const norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z]/g, "");
+        if (norm(r.category) !== norm(categoryFilter)) return false;
       }
       // Search query
       if (searchQuery.trim()) {
@@ -405,9 +701,26 @@ This is a computer-generated statutory payroll document.
   // Sorted records
   const sortedRecords = useMemo(() => {
     const list = [...filteredRecords];
+    const sortVal = (r, key) => {
+      if (typeof key === "string" && key.startsWith("earn:")) {
+        const ek = key.slice(5);
+        if (isBasicLikeKey(ek)) {
+          const ub = getUniformBasicForRow(r);
+          if (ub != null) return ub;
+        }
+        return lookupByNorm(r.earningByKey, ek);
+      }
+      if (typeof key === "string" && key.startsWith("ded:")) {
+        return lookupByNorm(r.deductionByKey, key.slice(4));
+      }
+      if (key in r) return r[key];
+      if (r.earningByKey && key in r.earningByKey) return r.earningByKey[key];
+      if (r.deductionByKey && key in r.deductionByKey) return r.deductionByKey[key];
+      return undefined;
+    };
     list.sort((a, b) => {
-      let valA = a[sortKey];
-      let valB = b[sortKey];
+      let valA = sortVal(a, sortKey);
+      let valB = sortVal(b, sortKey);
 
       if (sortKey === "doj") {
         valA = new Date(valA || 0).getTime();
@@ -415,6 +728,9 @@ This is a computer-generated statutory payroll document.
       } else if (typeof valA === "string") {
         valA = valA.toLowerCase();
         valB = (valB || "").toLowerCase();
+      } else {
+        valA = Number(valA) || 0;
+        valB = Number(valB) || 0;
       }
 
       if (valA < valB) return sortDir === "asc" ? -1 : 1;
@@ -424,51 +740,96 @@ This is a computer-generated statutory payroll document.
     return list;
   }, [filteredRecords, sortKey, sortDir]);
 
-  // Aggregate totals
-  const totals = useMemo(() => {
-    return sortedRecords.reduce(
-      (acc, r) => ({
-        days: acc.days + r.days,
-        basic: acc.basic + r.basic,
-        hra: acc.hra + r.hra,
-        conv: acc.conv + r.conv,
-        med: acc.med + r.med,
-        cca: acc.cca + r.cca,
-        special: acc.special + r.special,
-        gross: acc.gross + r.gross,
-        pf: acc.pf + r.pf,
-        esic: acc.esic + r.esic,
-        pt: acc.pt + r.pt,
-        lwf: acc.lwf + r.lwf,
-        deductions: acc.deductions + r.deductions,
-        net: acc.net + r.net,
-      }),
-      {
-        days: 0,
-        basic: 0,
-        hra: 0,
-        conv: 0,
-        med: 0,
-        cca: 0,
-        special: 0,
-        gross: 0,
-        pf: 0,
-        esic: 0,
-        pt: 0,
-        lwf: 0,
-        deductions: 0,
-        net: 0,
+  // Fully dynamic columns — strictly from PayrollComponentConfigs (Earnings /
+  // Deductions tabs). No statutory fallback — if Earnings shows 9 and
+  // Deductions shows 2, payroll shows exactly 9 + 2 (+ GROSS/DEDUCTIONS/NET).
+  // Rows still come from backend earningDetails/deductionDetails but are
+  // looked up via normalized code/name so add/remove in the tabs reflects
+  // immediately in Annual & Monthly payroll.
+  const activeEarningConfigs = useMemo(() => {
+    const list = (componentConfigs || []).filter((c) => String(c.kind || "").toLowerCase() !== "deduction" && c.isActive !== false);
+    list.sort((a, b) => Number(a.priority ?? 999) - Number(b.priority ?? 999));
+    return list;
+  }, [componentConfigs]);
+  const activeDeductionConfigs = useMemo(() => {
+    const list = (componentConfigs || []).filter((c) => String(c.kind || "").toLowerCase() === "deduction" && c.isActive !== false);
+    list.sort((a, b) => Number(a.priority ?? 999) - Number(b.priority ?? 999));
+    return list;
+  }, [componentConfigs]);
+
+  const earningCols = useMemo(() => {
+    if (activeEarningConfigs.length > 0) {
+      return activeEarningConfigs.map((c) => ({
+        key: String(c.code || c.name),
+        label: String(c.name || c.code),
+      }));
+    }
+    // Fallback when configs not yet loaded: derive from rows (no hardcoding)
+    const seen = new Map();
+    for (const r of records) {
+      for (const d of r.earningDetails || []) {
+        if (!seen.has(d.key)) seen.set(d.key, d.label || prettifyKey(d.key));
       }
-    );
+    }
+    return [...seen.entries()]
+      .filter(([key]) => records.some((r) => Math.abs(num(lookupByNorm(r.earningByKey, key))) > 0))
+      .map(([key, label]) => ({ key, label }));
+  }, [records, activeEarningConfigs]);
+
+  const deductionCols = useMemo(() => {
+    if (activeDeductionConfigs.length > 0) {
+      return activeDeductionConfigs.map((c) => ({
+        key: String(c.code || c.name),
+        label: String(c.name || c.code),
+      }));
+    }
+    const seen = new Map();
+    for (const r of records) {
+      for (const d of r.deductionDetails || []) {
+        if (!seen.has(d.key)) seen.set(d.key, d.label || prettifyKey(d.key));
+      }
+    }
+    return [...seen.entries()]
+      .filter(([key]) => records.some((r) => Math.abs(num(lookupByNorm(r.deductionByKey, key))) > 0))
+      .map(([key, label]) => ({ key, label }));
+  }, [records, activeDeductionConfigs]);
+
+  // Aggregate totals (dynamic detail columns + headline figures)
+  const totals = useMemo(() => {
+    const t = {
+      days: 0,
+      gross: 0,
+      deductions: 0,
+      net: 0,
+      earning: {},
+      deduction: {},
+    };
+    for (const r of sortedRecords) {
+      t.days += num(r.days);
+      t.gross += num(r.gross);
+      t.deductions += num(r.deductions);
+      t.net += num(r.net);
+      for (const d of r.earningDetails || []) {
+        t.earning[d.key] = num(t.earning[d.key]) + num(d.amount);
+      }
+      for (const d of r.deductionDetails || []) {
+        t.deduction[d.key] = num(t.deduction[d.key]) + num(d.amount);
+      }
+    }
+    return t;
   }, [sortedRecords]);
 
-  // Export to Excel / CSV
+  // Export to Excel / CSV — mirrors the dynamic on-screen columns exactly
   const handleExportToExcel = () => {
     if (sortedRecords.length === 0) {
       toast("No records to export", "error");
       return;
     }
 
+    const csvCell = (v) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
     const headers = [
       "SR NO",
       "EMP ID",
@@ -477,45 +838,31 @@ This is a computer-generated statutory payroll document.
       "GENDER",
       "DOJ",
       "DAYS",
-      "BASIC",
-      "HRA",
-      "CONV",
-      "MED",
-      "CCA",
-      "SPECIAL",
-      "GROSS",
-      "PF",
-      "ESIC",
-      "PT",
-      "LWF",
+      ...earningCols.map((c) => String(c.label).toUpperCase()),
+      ...deductionCols.map((c) => String(c.label).toUpperCase()),
       "DEDUCTIONS",
       "NET",
     ];
 
     const rows = sortedRecords.map((r, idx) => [
       idx + 1,
-      `"${r.employeeId}"`,
-      `"${r.employeeName}"`,
-      `"${r.category}"`,
-      `"${r.gender}"`,
-      `"${r.doj}"`,
+      r.employeeId,
+      r.employeeName,
+      r.category,
+      r.gender,
+      r.doj,
       r.days,
-      r.basic,
-      r.hra,
-      r.conv,
-      r.med,
-      r.cca,
-      r.special,
-      r.gross,
-      r.pf,
-      r.esic,
-      r.pt,
-      r.lwf,
-      r.deductions,
-      r.net,
+      ...earningCols.map((c) => {
+        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+        const ub = isBasic ? getUniformBasicForRow(r) : null;
+        return Math.round(num(ub != null ? ub : lookupByNorm(r.earningByKey, c.key)));
+      }),
+      ...deductionCols.map((c) => Math.round(num(lookupByNorm(r.deductionByKey, c.key)))),
+      Math.round(num(r.deductions)),
+      Math.round(num(r.net)),
     ]);
 
-    // Summary Row
+    // Summary Row — mirrors header: DAYS | earnings | deductions | DEDUCTIONS | NET (GROSS removed per request)
     rows.push([
       "TOTAL",
       "",
@@ -524,22 +871,23 @@ This is a computer-generated statutory payroll document.
       "",
       "",
       totals.days,
-      totals.basic,
-      totals.hra,
-      totals.conv,
-      totals.med,
-      totals.cca,
-      totals.special,
-      totals.gross,
-      totals.pf,
-      totals.esic,
-      totals.pt,
-      totals.lwf,
-      totals.deductions,
-      totals.net,
+      ...earningCols.map((c) => {
+        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+        if (isBasic) {
+          const sum = sortedRecords.reduce((s, r) => s + (getUniformBasicForRow(r) ?? num(lookupByNorm(r.earningByKey, c.key))), 0);
+          return Math.round(num(sum));
+        }
+        return Math.round(num(lookupByNorm(totals.earning, c.key)));
+      }),
+      ...deductionCols.map((c) => Math.round(num(lookupByNorm(totals.deduction, c.key)))),
+      Math.round(num(totals.deductions)),
+      Math.round(num(totals.net)),
     ]);
 
-    const csvString = [headers.join(","), ...rows.map((row) => row.join(","))].join("\r\n");
+    const csvString = [
+      headers.map(csvCell).join(","),
+      ...rows.map((row) => row.map(csvCell).join(",")),
+    ].join("\r\n");
     const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -554,7 +902,12 @@ This is a computer-generated statutory payroll document.
 
   const renderSortIndicator = (key) => {
     if (sortKey !== key) {
-      return <ArrowUpDown size={11} style={{ color: "var(--subtext)", opacity: 0.5, marginLeft: 4 }} />;
+      return (
+        <ArrowUpDown
+          size={11}
+          style={{ color: "var(--subtext)", opacity: 0.5, marginLeft: 4 }}
+        />
+      );
     }
     return sortDir === "asc" ? (
       <ArrowUp size={12} style={{ color: "var(--primary)", marginLeft: 4 }} />
@@ -563,16 +916,32 @@ This is a computer-generated statutory payroll document.
     );
   };
 
-  const fmtInr = (n) => `₹${Math.round(Number(n || 0)).toLocaleString("en-IN")}`;
+  const fmtInr = (n) =>
+    `₹${Math.round(Number(n || 0)).toLocaleString("en-IN")}`;
 
   const pageCount = Math.max(1, Math.ceil(sortedRecords.length / PAGE_SIZE));
   const safePage = Math.min(Math.max(1, page), pageCount);
   const pagedRecords = useMemo(() => {
-    return sortedRecords.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+    return sortedRecords.slice(
+      (safePage - 1) * PAGE_SIZE,
+      safePage * PAGE_SIZE,
+    );
   }, [sortedRecords, safePage]);
+  const isProcessing = hasRun && records.length > 0 && !isPaid;
+  const canEditPayroll = !isProcessing && !isPaid;
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "20px", width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <section
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "20px",
+        width: "100%",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        overflowX: "hidden",
+      }}
+    >
       {/* ── Top Header Controls ── */}
       <div
         style={{
@@ -586,35 +955,77 @@ This is a computer-generated statutory payroll document.
           gap: "16px",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px",
+          }}
+        >
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <h2 style={{ fontSize: "19px", fontWeight: 800, color: "var(--text)", margin: 0 }}>
+              <h2
+                style={{
+                  fontSize: "19px",
+                  fontWeight: 800,
+                  color: "var(--text)",
+                  margin: 0,
+                }}
+              >
                 {title}
               </h2>
             </div>
-            <p style={{ fontSize: "13px", color: "var(--subtext)", margin: "4px 0 0" }}>
+            <p
+              style={{
+                fontSize: "13px",
+                color: "var(--subtext)",
+                margin: "4px 0 0",
+              }}
+            >
               {subtitle}
             </p>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              flexWrap: "wrap",
+            }}
+          >
             <button
-              onClick={handleRunAllPayroll}
+              onClick={
+                isProcessing ? () => setShowTxnModal(true) : handleRunAllPayroll
+              }
               disabled={running || loading || isPaid}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "6px",
                 padding: "9px 18px",
-                background: isPaid ? "#f0fdf4" : "var(--primary)",
-                color: isPaid ? "#16a34a" : "#fff",
-                border: isPaid ? "1px solid #bbf7d0" : "none",
+                background: isPaid
+                  ? "#f0fdf4"
+                  : isProcessing
+                    ? "#fff7ed"
+                    : "var(--primary)",
+                color: isPaid ? "#16a34a" : isProcessing ? "#c2410c" : "#fff",
+                border: isPaid
+                  ? "1px solid #bbf7d0"
+                  : isProcessing
+                    ? "1px solid #fed7aa"
+                    : "none",
                 borderRadius: "var(--radius-sm)",
                 fontSize: "13px",
                 fontWeight: 700,
-                cursor: running || loading || isPaid ? "not-allowed" : "pointer",
-                boxShadow: isPaid ? "none" : "0 2px 4px rgba(16, 185, 129, 0.2)",
+                cursor:
+                  running || loading || isPaid ? "not-allowed" : "pointer",
+                boxShadow:
+                  isPaid || isProcessing
+                    ? "none"
+                    : "0 2px 4px rgba(16, 185, 129, 0.2)",
               }}
             >
               {running ? (
@@ -624,6 +1035,10 @@ This is a computer-generated statutory payroll document.
               ) : isPaid ? (
                 <>
                   <CheckCircle2 size={15} /> Paid
+                </>
+              ) : isProcessing ? (
+                <>
+                  <Upload size={15} /> Processing
                 </>
               ) : (
                 <>
@@ -650,7 +1065,8 @@ This is a computer-generated statutory payroll document.
                 cursor: "pointer",
               }}
             >
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />{" "}
+              Refresh
             </button>
 
             <button
@@ -690,7 +1106,15 @@ This is a computer-generated statutory payroll document.
         >
           {/* Month & Year */}
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--subtext)" }}>Period:</span>
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+              }}
+            >
+              Period:
+            </span>
             <select
               value={month}
               onChange={(e) => setMonth(Number(e.target.value))}
@@ -706,10 +1130,22 @@ This is a computer-generated statutory payroll document.
               }}
             >
               {[
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December"
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
               ].map((mName, idx) => (
-                <option key={mName} value={idx + 1}>{mName}</option>
+                <option key={mName} value={idx + 1}>
+                  {mName}
+                </option>
               ))}
             </select>
 
@@ -728,14 +1164,24 @@ This is a computer-generated statutory payroll document.
               }}
             >
               {years.map((y) => (
-                <option key={y} value={y}>{y}</option>
+                <option key={y} value={y}>
+                  {y}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Indian States Dropdown */}
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--subtext)" }}>State:</span>
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+              }}
+            >
+              State:
+            </span>
             <select
               value={stateFilter}
               onChange={(e) => setStateFilter(e.target.value)}
@@ -751,14 +1197,24 @@ This is a computer-generated statutory payroll document.
               }}
             >
               {INDIAN_STATES.map((st) => (
-                <option key={st} value={st}>{st}</option>
+                <option key={st} value={st}>
+                  {st}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Category Filter */}
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--subtext)" }}>Category:</span>
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+              }}
+            >
+              Category:
+            </span>
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
@@ -774,7 +1230,9 @@ This is a computer-generated statutory payroll document.
               }}
             >
               {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
               ))}
             </select>
           </div>
@@ -815,7 +1273,13 @@ This is a computer-generated statutory payroll document.
       </div>
 
       {/* ── 4 Metric Summary Cards ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "16px",
+        }}
+      >
         {/* EMPLOYEES */}
         <div
           style={{
@@ -844,10 +1308,26 @@ This is a computer-generated statutory payroll document.
             <Users size={22} />
           </div>
           <div>
-            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
               EMPLOYEES
             </span>
-            <div style={{ fontSize: "22px", fontWeight: 800, color: "var(--text)", marginTop: "2px", fontFamily: "monospace" }}>
+            <div
+              style={{
+                fontSize: "22px",
+                fontWeight: 800,
+                color: "var(--text)",
+                marginTop: "2px",
+                fontFamily: "monospace",
+              }}
+            >
               {sortedRecords.length}
             </div>
           </div>
@@ -881,10 +1361,26 @@ This is a computer-generated statutory payroll document.
             <ArrowUpRight size={22} />
           </div>
           <div>
-            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
               TOTAL GROSS
             </span>
-            <div style={{ fontSize: "22px", fontWeight: 800, color: "var(--text)", marginTop: "2px", fontFamily: "monospace" }}>
+            <div
+              style={{
+                fontSize: "22px",
+                fontWeight: 800,
+                color: "var(--text)",
+                marginTop: "2px",
+                fontFamily: "monospace",
+              }}
+            >
               {fmtInr(totals.gross)}
             </div>
           </div>
@@ -918,10 +1414,26 @@ This is a computer-generated statutory payroll document.
             <ArrowDownRight size={22} />
           </div>
           <div>
-            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
               TOTAL DEDUCTIONS
             </span>
-            <div style={{ fontSize: "22px", fontWeight: 800, color: "#dc2626", marginTop: "2px", fontFamily: "monospace" }}>
+            <div
+              style={{
+                fontSize: "22px",
+                fontWeight: 800,
+                color: "#dc2626",
+                marginTop: "2px",
+                fontFamily: "monospace",
+              }}
+            >
               −{fmtInr(totals.deductions)}
             </div>
           </div>
@@ -955,17 +1467,33 @@ This is a computer-generated statutory payroll document.
             <Wallet size={22} />
           </div>
           <div>
-            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--subtext)",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
               TOTAL NET PAYOUT
             </span>
-            <div style={{ fontSize: "22px", fontWeight: 800, color: "#16a34a", marginTop: "2px", fontFamily: "monospace" }}>
+            <div
+              style={{
+                fontSize: "22px",
+                fontWeight: 800,
+                color: "#16a34a",
+                marginTop: "2px",
+                fontFamily: "monospace",
+              }}
+            >
               {fmtInr(totals.net)}
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── 20-Column Table ── */}
+      {/* ── Dynamic-Column Table ── */}
       <div
         style={{
           background: "var(--card)",
@@ -1011,11 +1539,28 @@ This is a computer-generated statutory payroll document.
             >
               <Play size={26} style={{ marginLeft: "2px" }} />
             </div>
-            <h3 style={{ fontSize: "17px", fontWeight: 700, color: "var(--text)", margin: "0 0 8px" }}>
+            <h3
+              style={{
+                fontSize: "17px",
+                fontWeight: 700,
+                color: "var(--text)",
+                margin: "0 0 8px",
+              }}
+            >
               Payroll Not Yet Generated for {MONTH_NAMES[month - 1]} {year}
             </h3>
-            <p style={{ fontSize: "13px", color: "var(--subtext)", maxWidth: "480px", margin: "0 0 20px", lineHeight: 1.5 }}>
-              Click <b>Run Payroll</b> to calculate verified attendance, wage rules, and statutory contributions, and automatically generate transaction payout details.
+            <p
+              style={{
+                fontSize: "13px",
+                color: "var(--subtext)",
+                maxWidth: "480px",
+                margin: "0 0 20px",
+                lineHeight: 1.5,
+              }}
+            >
+              Click <b>Run Payroll</b> to calculate verified attendance, wage
+              rules, and statutory contributions, and automatically generate
+              transaction payout details.
             </p>
             <button
               onClick={handleRunAllPayroll}
@@ -1035,7 +1580,8 @@ This is a computer-generated statutory payroll document.
                 boxShadow: "0 2px 6px rgba(16, 185, 129, 0.25)",
               }}
             >
-              {running ? <Spinner size={14} /> : <Play size={14} />} {running ? "Processing Payroll…" : "Run Payroll"}
+              {running ? <Spinner size={14} /> : <Play size={14} />}{" "}
+              {running ? "Processing Payroll…" : "Run Payroll"}
             </button>
           </div>
         ) : sortedRecords.length === 0 ? (
@@ -1044,8 +1590,23 @@ This is a computer-generated statutory payroll document.
             subtitle="Upload attendance punches or adjust month/year and state filters."
           />
         ) : (
-          <div style={{ overflowX: "auto", width: "100%", maxWidth: "100%", maxHeight: "680px", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
+          <div
+            style={{
+              overflowX: "auto",
+              width: "100%",
+              maxWidth: "100%",
+              maxHeight: "680px",
+              WebkitOverflowScrolling: "touch",
+            }}
+          >
+            <table
+              style={{
+                width: "max-content",
+                minWidth: "100%",
+                borderCollapse: "collapse",
+                fontSize: "12.5px",
+              }}
+            >
               <thead>
                 <tr
                   style={{
@@ -1064,48 +1625,96 @@ This is a computer-generated statutory payroll document.
                     { key: "gender", label: "GENDER", align: "center" },
                     { key: "doj", label: "DOJ", align: "left" },
                     { key: "days", label: "DAYS", align: "right" },
-                    { key: "basic", label: "BASIC", align: "right" },
-                    { key: "hra", label: "HRA", align: "right" },
-                    { key: "conv", label: "CONV", align: "right" },
-                    { key: "med", label: "MED", align: "right" },
-                    { key: "cca", label: "CCA", align: "right" },
-                    { key: "special", label: "SPECIAL", align: "right" },
-                    { key: "gross", label: "GROSS", align: "right" },
-                    { key: "pf", label: "PF", align: "right" },
-                    { key: "esic", label: "ESIC", align: "right" },
-                    { key: "pt", label: "PT", align: "right" },
-                    { key: "lwf", label: "LWF", align: "right" },
-                    { key: "deductions", label: "DEDUCTIONS", align: "right" },
+                    ...earningCols.map((c) => ({
+                      key: `earn:${c.key}`,
+                      label: String(c.label).toUpperCase(),
+                      align: "right",
+                      kind: "earning",
+                    })),
+                    ...deductionCols.map((c) => ({
+                      key: `ded:${c.key}`,
+                      label: String(c.label).toUpperCase(),
+                      align: "right",
+                      kind: "deduction",
+                    })),
+                    { key: "deductions", label: "DEDUCTIONS", align: "right", kind: "deductions" },
                     { key: "net", label: "NET", align: "right" },
-                    { key: "transactionId", label: "TRANSACTION ID", align: "center" },
+                    {
+                      key: "transactionId",
+                      label: "TRANSACTION ID",
+                      align: "center",
+                    },
                     { key: "action", label: "ACTION", align: "center" },
                   ].map((col) => (
                     <th
                       key={col.key}
-                      onClick={() => col.key !== "action" && col.key !== "transactionId" && handleSort(col.key)}
+                      onClick={() =>
+                        col.key !== "action" &&
+                        col.key !== "transactionId" &&
+                        handleSort(col.key)
+                      }
                       style={{
                         padding: "10px 12px",
                         textAlign: col.align,
                         fontSize: "11px",
                         fontWeight: 700,
-                        color: sortKey === col.key ? "var(--primary)" : "var(--subtext)",
+                        color:
+                          sortKey === col.key
+                            ? "var(--primary)"
+                            : col.kind === "earning"
+                              ? "#059669"
+                              : col.kind === "deduction" || col.kind === "deductions"
+                                ? "#dc2626"
+                                : "var(--subtext)",
                         textTransform: "uppercase",
                         letterSpacing: "0.5px",
                         whiteSpace: "nowrap",
-                        cursor: col.key !== "action" && col.key !== "transactionId" ? "pointer" : "default",
+                        cursor:
+                          col.key !== "action" && col.key !== "transactionId"
+                            ? "pointer"
+                            : "default",
                         userSelect: "none",
-                        background: "var(--background)",
+                        background:
+                          col.kind === "earning"
+                            ? "rgba(16,185,129,0.06)"
+                            : col.kind === "deduction"
+                              ? "rgba(220,38,38,0.06)"
+                              : col.kind === "deductions"
+                                ? "rgba(220,38,38,0.04)"
+                                : "var(--background)",
+                        borderLeft:
+                          col.kind === "earning" && earningCols[0]?.key && col.key === `earn:${earningCols[0].key}`
+                            ? "1px solid var(--border)"
+                            : col.kind === "deduction" && deductionCols[0]?.key && col.key === `ded:${deductionCols[0].key}`
+                              ? "1px solid var(--border)"
+                              : col.kind === "deductions" && deductionCols.length > 0
+                                ? "1px solid var(--border)"
+                                : undefined,
                       }}
+                      title={
+                        col.kind === "earning"
+                          ? `Earning: ${col.label} — from Earnings config`
+                          : col.kind === "deduction"
+                            ? `Deduction: ${col.label} — from Deductions config`
+                            : undefined
+                      }
                     >
                       <div
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
-                          justifyContent: col.align === "right" ? "flex-end" : col.align === "center" ? "center" : "flex-start",
+                          justifyContent:
+                            col.align === "right"
+                              ? "flex-end"
+                              : col.align === "center"
+                                ? "center"
+                                : "flex-start",
                         }}
                       >
                         {col.label}
-                        {col.key !== "action" && col.key !== "transactionId" && renderSortIndicator(col.key)}
+                        {col.key !== "action" &&
+                          col.key !== "transactionId" &&
+                          renderSortIndicator(col.key)}
                       </div>
                     </th>
                   ))}
@@ -1122,34 +1731,68 @@ This is a computer-generated statutory payroll document.
                       key={r.id}
                       style={{
                         borderBottom: "1px solid var(--border)",
-                        background: isEven ? "transparent" : "rgba(0,0,0,0.015)",
+                        background: isEven
+                          ? "transparent"
+                          : "rgba(0,0,0,0.015)",
                         transition: "background 0.1s ease",
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.background = "var(--background)";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = isEven ? "transparent" : "rgba(0,0,0,0.015)";
+                        e.currentTarget.style.background = isEven
+                          ? "transparent"
+                          : "rgba(0,0,0,0.015)";
                       }}
                     >
                       {/* 1. SR NO */}
-                      <td style={{ padding: "10px 12px", textAlign: "center", color: "var(--subtext)", fontWeight: 600 }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "center",
+                          color: "var(--subtext)",
+                          fontWeight: 600,
+                        }}
+                      >
                         {(safePage - 1) * PAGE_SIZE + idx + 1}
                       </td>
 
                       {/* 2. EMP ID */}
-                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontWeight: 700, color: "var(--primary)" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          fontFamily: "monospace",
+                          fontWeight: 700,
+                          color: "var(--primary)",
+                        }}
+                      >
                         {r.employeeId}
                       </td>
 
                       {/* 3. NAME */}
-                      <td style={{ padding: "10px 12px", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          fontWeight: 600,
+                          color: "var(--text)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {r.employeeName}
                       </td>
 
                       {/* 4. CATEGORY & PAY TYPE */}
-                      <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "3px", alignItems: "flex-start" }}>
+                      <td
+                        style={{ padding: "10px 12px", whiteSpace: "nowrap" }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "3px",
+                            alignItems: "flex-start",
+                          }}
+                        >
                           <span
                             style={{
                               fontSize: "11px",
@@ -1160,20 +1803,20 @@ This is a computer-generated statutory payroll document.
                                 r.category === "SKILLED"
                                   ? "#ecfdf5"
                                   : r.category === "SEMISKILLED"
-                                  ? "#eff6ff"
-                                  : "#fef3c7",
+                                    ? "#eff6ff"
+                                    : "#fef3c7",
                               color:
                                 r.category === "SKILLED"
                                   ? "#059669"
                                   : r.category === "SEMISKILLED"
-                                  ? "#2563eb"
-                                  : "#d97706",
+                                    ? "#2563eb"
+                                    : "#d97706",
                               border: `1px solid ${
                                 r.category === "SKILLED"
                                   ? "#a7f3d0"
                                   : r.category === "SEMISKILLED"
-                                  ? "#bfdbfe"
-                                  : "#fde68a"
+                                    ? "#bfdbfe"
+                                    : "#fde68a"
                               }`,
                             }}
                           >
@@ -1185,8 +1828,14 @@ This is a computer-generated statutory payroll document.
                               fontWeight: 700,
                               padding: "1px 6px",
                               borderRadius: "3px",
-                              background: r.salaryType === "Monthly" ? "#f5f3ff" : "#f0f9ff",
-                              color: r.salaryType === "Monthly" ? "#7c3aed" : "#0284c7",
+                              background:
+                                r.salaryType === "Monthly"
+                                  ? "#f5f3ff"
+                                  : "#f0f9ff",
+                              color:
+                                r.salaryType === "Monthly"
+                                  ? "#7c3aed"
+                                  : "#0284c7",
                               border: `1px solid ${r.salaryType === "Monthly" ? "#ddd6fe" : "#bae6fd"}`,
                               whiteSpace: "nowrap",
                             }}
@@ -1199,191 +1848,204 @@ This is a computer-generated statutory payroll document.
                       </td>
 
                       {/* 5. GENDER */}
-                      <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: "var(--label)" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "center",
+                          fontWeight: 600,
+                          color: "var(--label)",
+                        }}
+                      >
                         {r.gender}
                       </td>
 
                       {/* 6. DOJ */}
-                      <td style={{ padding: "10px 12px", color: "var(--subtext)", whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          color: "var(--subtext)",
+                          whiteSpace: "nowrap",
+                          fontFamily: "monospace",
+                        }}
+                      >
                         {r.doj}
                       </td>
 
                       {/* 7. DAYS */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: "var(--text)", fontFamily: "monospace" }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "right",
+                          fontWeight: 700,
+                          color: "var(--text)",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "flex-end",
+                          }}
+                        >
                           <span>{r.days}</span>
                           {r.lopDays > 0 && (
                             <span
-                              style={{ fontSize: "10px", color: "#dc2626", fontWeight: 700, whiteSpace: "nowrap" }}
+                              style={{
+                                fontSize: "10px",
+                                color: "#dc2626",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
                               title={`${r.lopDays} days LOP (Deduction: ₹${Math.round(r.lopDeduction).toLocaleString("en-IN")})`}
                             >
-                              {r.lopDays} LOP (−₹{Math.round(r.lopDeduction).toLocaleString("en-IN")})
+                              {r.lopDays} LOP (−₹
+                              {Math.round(r.lopDeduction).toLocaleString(
+                                "en-IN",
+                              )}
+                              )
                             </span>
                           )}
                           {r.overtimeHours > 0 && (
                             <span
-                              style={{ fontSize: "10px", color: "#ea580c", fontWeight: 700, whiteSpace: "nowrap" }}
-                              title={`${r.overtimeHours} hrs Overtime (+₹${Math.round(r.overtime).toLocaleString("en-IN")})`}
+                              style={{
+                                fontSize: "10px",
+                                color: "#ea580c",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
+                              title={`${r.overtimeHours} hrs Overtime`}
                             >
-                              +{r.overtimeHours}h OT (+₹{Math.round(r.overtime).toLocaleString("en-IN")})
+                              +{r.overtimeHours}h OT
                             </span>
                           )}
                           {r.nightShiftCount > 0 && (
                             <span
-                              style={{ fontSize: "10px", color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap" }}
-                              title={`${r.nightShiftCount} Night Shifts (+₹${Math.round(r.nightShiftAllowance).toLocaleString("en-IN")})`}
+                              style={{
+                                fontSize: "10px",
+                                color: "#7c3aed",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
+                              title={`${r.nightShiftCount} Night Shifts`}
                             >
-                              +{r.nightShiftCount} Nights (+₹{Math.round(r.nightShiftAllowance).toLocaleString("en-IN")})
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* 8. BASIC */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--text)" }}>
-                        {r.basic.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 9. HRA */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        {r.hra.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 10. CONV */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        {r.conv.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 11. MED */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        {r.med.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 12. CCA */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        {r.cca.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 13. SPECIAL */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--subtext)" }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                          <span>{r.special.toLocaleString("en-IN")}</span>
-                          {r.attendanceBonus > 0 && (
-                            <span
-                              style={{ fontSize: "10px", color: "#059669", fontWeight: 700, whiteSpace: "nowrap" }}
-                              title={`Attendance Bonus (+₹${Math.round(r.attendanceBonus).toLocaleString("en-IN")})`}
-                            >
-                              +₹{Math.round(r.attendanceBonus).toLocaleString("en-IN")} Bonus
+                              +{r.nightShiftCount} Nights
                             </span>
                           )}
                           {r.productionUnits > 0 && (
                             <span
-                              style={{ fontSize: "10px", color: "#2563eb", fontWeight: 700, whiteSpace: "nowrap" }}
-                              title={`Production Incentive: ${r.productionUnits} units (+₹${Math.round(r.productionIncentive).toLocaleString("en-IN")})`}
+                              style={{
+                                fontSize: "10px",
+                                color: "#2563eb",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
+                              title={`${r.productionUnits} Production Units`}
                             >
-                              +{r.productionUnits} Units (+₹{Math.round(r.productionIncentive).toLocaleString("en-IN")})
+                              +{r.productionUnits} Units
                             </span>
                           )}
                         </div>
                       </td>
 
-                      {/* 14. GROSS (Editable when payroll is inactive / not running) */}
+                      {/* Dynamic Earnings columns — directly from Earnings config */}
+                      {earningCols.map((c) => {
+                        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+                        const uniformBasic = isBasic ? getUniformBasicForRow(r) : null;
+                        const v = isBasic && uniformBasic != null ? uniformBasic : num(lookupByNorm(r.earningByKey, c.key));
+                        return (
+                          <td
+                            key={`earn-${c.key}`}
+                            style={{
+                              padding: "10px 12px",
+                              textAlign: "right",
+                              fontFamily: "monospace",
+                              fontWeight: v > 0 ? 600 : 400,
+                              color: v > 0 ? "var(--text)" : "var(--subtext)",
+                              whiteSpace: "nowrap",
+                              background: isBasic ? "rgba(99,102,241,0.04)" : "rgba(16,185,129,0.03)",
+                              borderLeft: c.key === earningCols[0]?.key ? "1px solid var(--border)" : undefined,
+                            }}
+                            title={
+                              isBasic && uniformBasic != null
+                                ? `${c.label}: ₹${Math.round(v).toLocaleString("en-IN")} — uniform for ${r.category} in ${stateFilter !== "All States (Default)" ? stateFilter : r.state} (Wage Rates daily×26)`
+                                : `${c.label}: ₹${Math.round(v).toLocaleString("en-IN")}`
+                            }
+                          >
+                            {v !== 0 ? `₹${Math.round(v).toLocaleString("en-IN")}` : <span style={{ opacity: 0.4 }}>—</span>}
+                          </td>
+                        );
+                      })}
+
+                      {/* Dynamic Deduction columns — directly from Deductions config */}
+                      {deductionCols.map((c) => {
+                        const v = num(lookupByNorm(r.deductionByKey, c.key));
+                        return (
+                          <td
+                            key={`ded-${c.key}`}
+                            style={{
+                              padding: "10px 12px",
+                              textAlign: "right",
+                              fontFamily: "monospace",
+                              fontWeight: v > 0 ? 600 : 400,
+                              color: v > 0 ? "#dc2626" : "var(--subtext)",
+                              whiteSpace: "nowrap",
+                              background: "rgba(220,38,38,0.03)",
+                              borderLeft: c.key === deductionCols[0]?.key ? "1px solid var(--border)" : undefined,
+                            }}
+                            title={`${c.label}: ₹${Math.round(v).toLocaleString("en-IN")}`}
+                          >
+                            {v !== 0 ? `₹${Math.round(v).toLocaleString("en-IN")}` : <span style={{ opacity: 0.4 }}>—</span>}
+                          </td>
+                        );
+                      })}
+
+                      {/* Deductions total */}
                       <td
                         style={{
                           padding: "10px 12px",
                           textAlign: "right",
                           fontWeight: 700,
                           fontFamily: "monospace",
-                          color: "var(--text)",
-                          cursor: !isPaid ? "pointer" : "default",
+                          color: "#dc2626",
+                          whiteSpace: "nowrap",
+                          background: "rgba(220,38,38,0.06)",
+                          borderLeft: deductionCols.length > 0 ? "1px solid var(--border)" : undefined,
                         }}
-                        title={!isPaid ? "Click to edit Gross Salary" : undefined}
+                        title={`Total deductions (₹${Math.round(num(r.deductions)).toLocaleString("en-IN")})`}
                       >
-                        {editingGrossEmpId === r.employeeId ? (
-                          <input
-                            type="number"
-                            autoFocus
-                            defaultValue={r.gross}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                handleUpdateGross(r.employeeId, e.target.value);
-                                setEditingGrossEmpId(null);
-                              } else if (e.key === "Escape") {
-                                setEditingGrossEmpId(null);
-                              }
-                            }}
-                            onBlur={(e) => {
-                              handleUpdateGross(r.employeeId, e.target.value);
-                              setEditingGrossEmpId(null);
-                            }}
-                            style={{
-                              width: "80px",
-                              height: "26px",
-                              padding: "2px 6px",
-                              border: "1px solid var(--primary)",
-                              borderRadius: "4px",
-                              fontSize: "12px",
-                              fontFamily: "monospace",
-                              fontWeight: 700,
-                              textAlign: "right",
-                              outline: "none",
-                              background: "var(--card)",
-                              color: "var(--text)",
-                            }}
-                          />
-                        ) : (
-                          <div
-                            onClick={() => {
-                              if (!isPaid) setEditingGrossEmpId(r.employeeId);
-                            }}
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: "4px",
-                              borderBottom: !isPaid ? "1px dashed var(--subtext)" : "none",
-                            }}
-                          >
-                            <span>{r.gross.toLocaleString("en-IN")}</span>
-                            {!isPaid && <Edit3 size={10} style={{ opacity: 0.5 }} />}
-                          </div>
-                        )}
+                        −₹{Math.round(num(r.deductions)).toLocaleString("en-IN")}
                       </td>
 
-                      {/* 15. PF */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--red)" }}>
-                        {r.pf.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 16. ESIC */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--red)" }}>
-                        {r.esic.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 17. PT */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--red)" }}>
-                        {r.pt.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 18. LWF */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "monospace", color: "var(--red)" }}>
-                        {r.lwf.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 19. DEDUCTIONS */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, fontFamily: "monospace", color: "var(--red)" }}>
-                        {r.deductions.toLocaleString("en-IN")}
-                      </td>
-
-                      {/* 20. NET */}
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontFamily: "monospace", color: "var(--green)" }}>
-                        {r.net.toLocaleString("en-IN")}
+                      {/* NET = Gross - Deductions */}
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "right",
+                          fontWeight: 800,
+                          fontFamily: "monospace",
+                          color: "var(--green)",
+                          borderLeft: "1px solid var(--border)",
+                        }}
+                      >
+                        ₹{Math.round(num(r.net)).toLocaleString("en-IN")}
                       </td>
 
                       {/* Transaction ID Column */}
-                      <td style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "center",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         <button
-                          onClick={() => handleCopyTxn(r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`)}
+                          onClick={() =>
+                            handleCopyTxn(
+                              r.transactionId ||
+                                `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`,
+                            )
+                          }
                           title="Click to copy Transaction ID"
                           style={{
                             fontFamily: "monospace",
@@ -1400,14 +2062,29 @@ This is a computer-generated statutory payroll document.
                             gap: "4px",
                           }}
                         >
-                          <span>{r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}</span>
+                          <span>
+                            {r.transactionId ||
+                              `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
+                          </span>
                           <Copy size={10} style={{ opacity: 0.6 }} />
                         </button>
                       </td>
 
                       {/* Actions */}
-                      <td style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap" }}>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          textAlign: "center",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                          }}
+                        >
                           {isAnnual ? (
                             <button
                               onClick={() => handleDownloadPayslip(r)}
@@ -1442,9 +2119,28 @@ This is a computer-generated statutory payroll document.
                             >
                               Paid
                             </span>
+                          ) : isProcessing ? (
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                color: "#c2410c",
+                                padding: "3px 8px",
+                                background: "#fff7ed",
+                                borderRadius: "4px",
+                                border: "1px solid #fed7aa",
+                              }}
+                            >
+                              Processing
+                            </span>
                           ) : (
                             <button
-                              onClick={() => handleRunIndividual(r.employeeId, r.employeeName)}
+                              onClick={() =>
+                                handleRunIndividual(
+                                  r.employeeId,
+                                  r.employeeName,
+                                )
+                              }
                               disabled={isRunningThis || isPaid}
                               title="Recalculate worker live payroll"
                               style={{
@@ -1455,18 +2151,28 @@ This is a computer-generated statutory payroll document.
                                 color: "var(--primary)",
                                 border: "1px solid var(--primary)",
                                 borderRadius: "var(--radius-sm)",
-                                cursor: isRunningThis || isPaid ? "not-allowed" : "pointer",
+                                cursor:
+                                  isRunningThis || isPaid
+                                    ? "not-allowed"
+                                    : "pointer",
                                 display: "inline-flex",
                                 alignItems: "center",
                                 gap: "4px",
                               }}
                             >
-                              {isRunningThis ? <Spinner size={10} /> : <Play size={10} />} Run
+                              {isRunningThis ? (
+                                <Spinner size={10} />
+                              ) : (
+                                <Play size={10} />
+                              )}{" "}
+                              Run
                             </button>
                           )}
 
                           <button
-                            onClick={() => setSelectedEmpForBreakdown(r.employeeId)}
+                            onClick={() =>
+                              setSelectedEmpForBreakdown(r.employeeId)
+                            }
                             title="View detailed payslip breakdown"
                             style={{
                               padding: "4px 6px",
@@ -1486,7 +2192,7 @@ This is a computer-generated statutory payroll document.
                 })}
               </tbody>
 
-              {/* ── Table Summary Footer Row ── */}
+              {/* ── Table Summary Footer Row — mirrors dynamic columns: DAYS | earnings | GROSS | deductions | DEDUCTIONS | NET ── */}
               <tfoot>
                 <tr
                   style={{
@@ -1500,50 +2206,56 @@ This is a computer-generated statutory payroll document.
                     zIndex: 10,
                   }}
                 >
-                  <td colSpan={6} style={{ padding: "12px 14px", textAlign: "left", letterSpacing: "1px", color: "var(--text)" }}>
+                  <td
+                    colSpan={6}
+                    style={{
+                      padding: "12px 14px",
+                      textAlign: "left",
+                      letterSpacing: "1px",
+                      color: "var(--text)",
+                    }}
+                  >
                     TOTAL ({sortedRecords.length} WORKERS)
                   </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--text)" }}>
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "right",
+                      color: "var(--text)",
+                    }}
+                  >
                     {totals.days}
                   </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--text)" }}>
-                    {totals.basic.toLocaleString("en-IN")}
+                  {earningCols.map((c) => {
+                    const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+                    const uniformTotal = isBasic
+                      ? sortedRecords.reduce((s, r) => s + (getUniformBasicForRow(r) ?? num(lookupByNorm(r.earningByKey, c.key))), 0)
+                      : null;
+                    const v = isBasic && uniformTotal != null ? uniformTotal : num(lookupByNorm(totals.earning, c.key));
+                    return (
+                      <td key={`tot-earn-${c.key}`} style={{ padding: "12px", textAlign: "right", color: "var(--text)", background: isBasic ? "rgba(99,102,241,0.04)" : "rgba(16,185,129,0.04)", borderLeft: c.key === earningCols[0]?.key ? "1px solid var(--border)" : undefined }}>
+                        ₹{Math.round(v).toLocaleString("en-IN")}
+                      </td>
+                    );
+                  })}
+                  {deductionCols.map((c) => (
+                    <td key={`tot-ded-${c.key}`} style={{ padding: "12px", textAlign: "right", color: "#dc2626", background: "rgba(220,38,38,0.04)", borderLeft: c.key === deductionCols[0]?.key ? "1px solid var(--border)" : undefined }}>
+                      ₹{Math.round(num(lookupByNorm(totals.deduction, c.key))).toLocaleString("en-IN")}
+                    </td>
+                  ))}
+                  <td style={{ padding: "12px", textAlign: "right", color: "#dc2626", background: "rgba(220,38,38,0.06)", borderLeft: deductionCols.length > 0 ? "1px solid var(--border)" : undefined }}>
+                    −₹{Math.round(num(totals.deductions)).toLocaleString("en-IN")}
                   </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--subtext)" }}>
-                    {totals.hra.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--subtext)" }}>
-                    {totals.conv.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--subtext)" }}>
-                    {totals.med.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--subtext)" }}>
-                    {totals.cca.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--subtext)" }}>
-                    {totals.special.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--text)" }}>
-                    {totals.gross.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--red)" }}>
-                    {totals.pf.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--red)" }}>
-                    {totals.esic.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--red)" }}>
-                    {totals.pt.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--red)" }}>
-                    {totals.lwf.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--red)" }}>
-                    {totals.deductions.toLocaleString("en-IN")}
-                  </td>
-                  <td style={{ padding: "12px", textAlign: "right", color: "var(--green)", fontSize: "13.5px" }}>
-                    {totals.net.toLocaleString("en-IN")}
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "right",
+                      color: "var(--green)",
+                      fontSize: "13.5px",
+                      borderLeft: "1px solid var(--border)",
+                    }}
+                  >
+                    ₹{Math.round(num(totals.net)).toLocaleString("en-IN")}
                   </td>
                   <td></td>
                   <td></td>
@@ -1577,7 +2289,8 @@ This is a computer-generated statutory payroll document.
               <b style={{ color: "var(--text)" }}>
                 {Math.min(sortedRecords.length, safePage * PAGE_SIZE)}
               </b>{" "}
-              of <b style={{ color: "var(--text)" }}>{sortedRecords.length}</b> workers
+              of <b style={{ color: "var(--text)" }}>{sortedRecords.length}</b>{" "}
+              workers
             </span>
 
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -1598,26 +2311,32 @@ This is a computer-generated statutory payroll document.
                 Previous
               </button>
 
-              {Array.from({ length: pageCount }, (_, i) => i + 1).map((pNum) => (
-                <button
-                  key={pNum}
-                  onClick={() => setPage(pNum)}
-                  style={{
-                    minWidth: "28px",
-                    height: "28px",
-                    padding: "0 6px",
-                    borderRadius: "var(--radius-sm)",
-                    border: pNum === safePage ? "1px solid var(--primary)" : "1px solid var(--border)",
-                    background: pNum === safePage ? "var(--primary)" : "var(--card)",
-                    color: pNum === safePage ? "#fff" : "var(--text)",
-                    fontSize: "12px",
-                    fontWeight: pNum === safePage ? 700 : 500,
-                    cursor: "pointer",
-                  }}
-                >
-                  {pNum}
-                </button>
-              ))}
+              {Array.from({ length: pageCount }, (_, i) => i + 1).map(
+                (pNum) => (
+                  <button
+                    key={pNum}
+                    onClick={() => setPage(pNum)}
+                    style={{
+                      minWidth: "28px",
+                      height: "28px",
+                      padding: "0 6px",
+                      borderRadius: "var(--radius-sm)",
+                      border:
+                        pNum === safePage
+                          ? "1px solid var(--primary)"
+                          : "1px solid var(--border)",
+                      background:
+                        pNum === safePage ? "var(--primary)" : "var(--card)",
+                      color: pNum === safePage ? "#fff" : "var(--text)",
+                      fontSize: "12px",
+                      fontWeight: pNum === safePage ? 700 : 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {pNum}
+                  </button>
+                ),
+              )}
 
               <button
                 onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
@@ -1626,8 +2345,10 @@ This is a computer-generated statutory payroll document.
                   padding: "5px 12px",
                   borderRadius: "var(--radius-sm)",
                   border: "1px solid var(--border)",
-                  background: safePage >= pageCount ? "transparent" : "var(--card)",
-                  color: safePage >= pageCount ? "var(--subtext)" : "var(--text)",
+                  background:
+                    safePage >= pageCount ? "transparent" : "var(--card)",
+                  color:
+                    safePage >= pageCount ? "var(--subtext)" : "var(--text)",
                   fontSize: "12px",
                   fontWeight: 600,
                   cursor: safePage >= pageCount ? "not-allowed" : "pointer",
@@ -1689,11 +2410,22 @@ This is a computer-generated statutory payroll document.
                     gap: "8px",
                   }}
                 >
-                  <CheckCircle2 size={20} style={{ color: "#16a34a" }} />
-                  Payroll Execution & Transaction Batch Details
+                  {isPaid ? (
+                    <CheckCircle2 size={20} style={{ color: "#16a34a" }} />
+                  ) : (
+                    <Upload size={20} style={{ color: "#c2410c" }} />
+                  )}
+                  Payroll Processing & Bank Transaction Details
                 </h3>
-                <p style={{ fontSize: "12.5px", color: "var(--subtext)", margin: "4px 0 0" }}>
-                  Cycle: {MONTH_NAMES[month - 1]} {year} — {records.length} Employees Processed
+                <p
+                  style={{
+                    fontSize: "12.5px",
+                    color: "var(--subtext)",
+                    margin: "4px 0 0",
+                  }}
+                >
+                  Cycle: {MONTH_NAMES[month - 1]} {year} — {records.length}{" "}
+                  Employees Processed
                 </p>
               </div>
               <button
@@ -1727,24 +2459,123 @@ This is a computer-generated statutory payroll document.
                 }}
               >
                 <div>
-                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--subtext)",
+                      display: "block",
+                    }}
+                  >
                     TOTAL RECIPIENTS
                   </span>
                   <b>{records.length} Workers</b>
                 </div>
                 <div>
-                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--subtext)",
+                      display: "block",
+                    }}
+                  >
                     TOTAL DISBURSED
                   </span>
-                  <b style={{ color: "#16a34a" }}>₹{Math.round(totals.net).toLocaleString("en-IN")}</b>
+                  <b style={{ color: "#16a34a" }}>
+                    ₹{Math.round(totals.net).toLocaleString("en-IN")}
+                  </b>
                 </div>
                 <div>
-                  <span style={{ fontSize: "11px", color: "var(--subtext)", display: "block" }}>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--subtext)",
+                      display: "block",
+                    }}
+                  >
                     PAYMENT STATUS
                   </span>
-                  <b style={{ color: "#16a34a" }}>PAID</b>
+                  <b style={{ color: isPaid ? "#16a34a" : "#c2410c" }}>
+                    {isPaid ? "PAID" : "PROCESSING"}
+                  </b>
                 </div>
               </div>
+            </div>
+
+            <div
+              style={{
+                background: isPaid ? "#f0fdf4" : "#fff7ed",
+                border: `1px solid ${isPaid ? "#bbf7d0" : "#fed7aa"}`,
+                borderRadius: "var(--radius-sm)",
+                padding: "14px 16px",
+                marginBottom: "16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "14px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    color: isPaid ? "#15803d" : "#c2410c",
+                  }}
+                >
+                  Bank transaction Excel
+                </div>
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "var(--subtext)",
+                    marginTop: "3px",
+                  }}
+                >
+                  {paymentUpload
+                    ? `${paymentUpload.name} (${paymentUpload.sizeKb} KB) uploaded at ${paymentUpload.uploadedAt}`
+                    : "Upload the bank transaction sheet to confirm payout and move payroll to Paid."}
+                </div>
+                {paymentUpload && (
+                  <div
+                    style={{
+                      fontSize: "11px",
+                      color: "#15803d",
+                      marginTop: "4px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Matched against {paymentUpload.rows} payroll rows.
+                  </div>
+                )}
+              </div>
+              <input
+                ref={paymentFileInputRef}
+                type="file"
+                accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                onChange={handlePaymentUpload}
+                style={{ display: "none" }}
+              />
+              <button
+                onClick={() => paymentFileInputRef.current?.click()}
+                disabled={isPaid}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "9px 14px",
+                  background: isPaid ? "#dcfce7" : "var(--primary)",
+                  color: isPaid ? "#15803d" : "#fff",
+                  border: isPaid ? "1px solid #bbf7d0" : "none",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "12.5px",
+                  fontWeight: 800,
+                  cursor: isPaid ? "not-allowed" : "pointer",
+                }}
+              >
+                {isPaid ? <CheckCircle2 size={14} /> : <Upload size={14} />}
+                {isPaid ? "Uploaded" : "Upload Excel"}
+              </button>
             </div>
 
             <div
@@ -1755,35 +2586,117 @@ This is a computer-generated statutory payroll document.
                 borderRadius: "var(--radius-sm)",
               }}
             >
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "12px",
+                }}
+              >
                 <thead>
-                  <tr style={{ background: "var(--background)", borderBottom: "1px solid var(--border)", position: "sticky", top: 0 }}>
-                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Employee ID</th>
-                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Name</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", color: "var(--subtext)" }}>Amount</th>
-                    <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--subtext)" }}>Transaction ID</th>
+                  <tr
+                    style={{
+                      background: "var(--background)",
+                      borderBottom: "1px solid var(--border)",
+                      position: "sticky",
+                      top: 0,
+                    }}
+                  >
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "left",
+                        color: "var(--subtext)",
+                      }}
+                    >
+                      Employee ID
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "left",
+                        color: "var(--subtext)",
+                      }}
+                    >
+                      Name
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "right",
+                        color: "var(--subtext)",
+                      }}
+                    >
+                      Amount
+                    </th>
+                    {isPaid && (
+                      <th
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "left",
+                          color: "var(--subtext)",
+                        }}
+                      >
+                        Transaction ID
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {records.map((r) => (
-                    <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td style={{ padding: "8px 12px", fontFamily: "monospace", fontWeight: 700 }}>
+                    <tr
+                      key={r.id}
+                      style={{ borderBottom: "1px solid var(--border)" }}
+                    >
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          fontFamily: "monospace",
+                          fontWeight: 700,
+                        }}
+                      >
                         {r.employeeId}
                       </td>
-                      <td style={{ padding: "8px 12px", fontWeight: 600 }}>{r.employeeName}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#16a34a", fontFamily: "monospace" }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 600 }}>
+                        {r.employeeName}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "right",
+                          fontWeight: 700,
+                          color: "#16a34a",
+                          fontFamily: "monospace",
+                        }}
+                      >
                         ₹{Math.round(r.net).toLocaleString("en-IN")}
                       </td>
-                      <td style={{ padding: "8px 12px", fontFamily: "monospace", color: "var(--primary)" }}>
-                        {r.transactionId || `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
-                      </td>
+                      {isPaid && (
+                        <td
+                          style={{
+                            padding: "8px 12px",
+                            fontFamily: "monospace",
+                            color: "var(--primary)",
+                          }}
+                        >
+                          {r.transactionId ||
+                            `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "18px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+                marginTop: "18px",
+              }}
+            >
               <button
                 onClick={() => setShowTxnModal(false)}
                 style={{
@@ -1832,8 +2745,22 @@ This is a computer-generated statutory payroll document.
               position: "relative",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "17px", fontWeight: 800, color: "var(--text)", margin: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "16px",
+              }}
+            >
+              <h3
+                style={{
+                  fontSize: "17px",
+                  fontWeight: 800,
+                  color: "var(--text)",
+                  margin: 0,
+                }}
+              >
                 Worker Attendance & Itemized Salary Slip
               </h3>
               <button

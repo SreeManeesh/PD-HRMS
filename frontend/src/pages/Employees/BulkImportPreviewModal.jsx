@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { CheckCircle2, AlertTriangle, AlertCircle, Search, FileSpreadsheet, ArrowRight, X } from "lucide-react";
+import { CheckCircle2, AlertTriangle, AlertCircle, Search, FileSpreadsheet, ArrowRight } from "lucide-react";
 import Modal from "../../components/shared/Modal.jsx";
 
 export default function BulkImportPreviewModal({

@@ -5,9 +5,9 @@
 
 import api from "./api.js";
 
-export const getEmployees = async ({ search = "", department = "", status = "", limit = 100 } = {}) => {
+export const getEmployees = async ({ search = "", department = "", status = "", skillType = "", limit = 100 } = {}) => {
   const res = await api.get("/employees", {
-    params: { search, department, status, limit },
+    params: { search, department, status, skillType, limit },
   });
   return res.data;
 };

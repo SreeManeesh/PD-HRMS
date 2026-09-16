@@ -1,0 +1,12 @@
+﻿
+### src/pages/PayslipDesigner/PayslipDesigner.jsx
+  L129:17 no-empty :: Empty block statement.
+      | } catch (_) {}
+  L135:19 no-empty :: Empty block statement.
+      | } catch (_) {}
+  L156:19 no-empty :: Empty block statement.
+      | } catch (_) {}
+  L332:19 no-empty :: Empty block statement.
+      | } catch (_) {}
+
+COUNT 4

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Admin/Management dashboard — org-wide KPIs, hiring funnel, payroll trends.
  */
 import MainLayout from "../../components/layout/MainLayout.jsx";
@@ -9,6 +9,7 @@ import HiringFunnelWidget from "../../components/dashboard/HiringFunnelWidget.js
 import PayrollCostTrendWidget from "../../components/dashboard/PayrollCostTrendWidget.jsx";
 import SatisfactionWidget from "../../components/dashboard/SatisfactionWidget.jsx";
 import ProductivityWidget from "../../components/dashboard/ProductivityWidget.jsx";
+import DemoBanner from "../../components/shared/DemoBanner.jsx";
 
 export default function AdminDashboard() {
   return (
@@ -16,6 +17,7 @@ export default function AdminDashboard() {
       <div style={{ maxWidth: "1480px", margin: "0 auto" }}>
         {/* Hero greeting banner */}
         <WelcomeCard />
+        <DemoBanner module="Admin Dashboard" />
 
         {/* Widget grid — responsive: 3 columns on desktop, 2 on tablet, 1 on mobile */}
         <div style={{

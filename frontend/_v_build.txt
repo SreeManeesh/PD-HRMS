@@ -1,0 +1,96 @@
+﻿node.exe : npm verbose cli C:\Program Files\nodejs\node.exe 
+C:\Users\himan\AppData\Roaming\npm\node_modules\npm\bin\npm-cli.js
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\himan\AppData\Roaming\ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm verbose cli...\bin\npm-cli.js:String) [], Remot 
+   eException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+npm info using npm@10.8.3
+npm info using node@v22.23.1
+npm verbose title npm run build
+npm verbose argv "run" "build"
+npm verbose logfile logs-max:10 
+dir:C:\Users\himan\AppData\Local\npm-cache\_logs\2026-09-15T04_32_56_944Z-
+npm verbose logfile 
+C:\Users\himan\AppData\Local\npm-cache\_logs\2026-09-15T04_32_56_944Z-debug-0.log
+
+> frontend@0.0.0 build
+> vite build
+
+[36mvite v8.1.5 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...Γ£ô 2597 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                          1.42 kB Γöé gzip:   0.61 kB
+dist/assets/pdf.worker.min-qwK7q_zL.mjs              1,046.21 kB
+dist/assets/CandidatePortal-u9a4Zcb3.css                 4.74 kB Γöé gzip:   1.48 kB
+dist/assets/Notifications-BYPg7Uvu.css                   5.50 kB Γöé gzip:   1.36 kB
+dist/assets/PayslipTemplate-Cycnc-Db.css                 5.60 kB Γöé gzip:   1.51 kB
+dist/assets/PayslipDesigner-PnPZtMz3.css                 7.03 kB Γöé gzip:   1.67 kB
+dist/assets/chunk-pdf-JrhppoYh.css                      10.23 kB Γöé gzip:   2.22 kB
+dist/assets/Leave-CbE1XvFn.css                          11.45 kB Γöé gzip:   2.29 kB
+dist/assets/index-DcYPIGkK.css                          18.98 kB Γöé gzip:   5.18 kB
+dist/assets/employees--tsa-Utz.js                        0.40 kB Γöé gzip:   0.27 kB
+dist/assets/attendanceService-Cwg5kYe9.js                0.56 kB Γöé gzip:   0.29 kB
+dist/assets/StatusBadge-BCKiIGkL.js                      0.61 kB Γöé gzip:   0.41 kB
+dist/assets/rolldown-runtime-QTnfLwEv.js                 0.69 kB Γöé gzip:   0.42 kB
+dist/assets/InitialsAvatar-DgnPvsTt.js                   0.78 kB Γöé gzip:   0.54 kB
+dist/assets/EmptyState-H3Br5YN5.js                       0.79 kB Γöé gzip:   0.43 kB
+dist/assets/employeeService-DJoLgs0f.js                  0.82 kB Γöé gzip:   0.35 kB
+dist/assets/payslipDesignerService-DvtKXoWt.js           1.13 kB Γöé gzip:   0.39 kB
+dist/assets/assetUrl-L35t0ZgH.js                         1.14 kB Γöé gzip:   0.62 kB
+dist/assets/candidateLifecycleService-Bf-URe-f.js        1.24 kB Γöé gzip:   0.50 kB
+dist/assets/Lmsservice-CZETjpmS.js                       1.77 kB Γöé gzip:   0.52 kB
+dist/assets/Orgmanagementservice-MiHtDnKm.js             1.82 kB Γöé gzip:   0.47 kB
+dist/assets/Modal-C5WcvVKt.js                            1.83 kB Γöé gzip:   0.90 kB
+dist/assets/CertificateVerificationPage-C-XiRN99.js      2.01 kB Γöé gzip:   0.88 kB
+dist/assets/PayslipPortal-CXPtS8Ol.js                    2.47 kB Γöé gzip:   0.97 kB
+dist/assets/payrollService-BUdg3E1V.js                   2.90 kB Γöé gzip:   0.84 kB
+dist/assets/ConfirmDialog-SldMzk0r.js                    3.01 kB Γöé gzip:   1.18 kB
+dist/assets/PageHeader-BBCDVyo6.js                       4.83 kB Γöé gzip:   1.90 kB
+dist/assets/PayslipTemplate-C_oTmpld.js                  6.75 kB Γöé gzip:   1.90 kB
+dist/assets/CandidatePortal-DkrQG-Hs.js                  7.33 kB Γöé gzip:   2.46 kB
+dist/assets/Reports-NgmuYhrp.js                          9.23 kB Γöé gzip:   3.05 kB
+dist/assets/Notifications-Bc6oFd9p.js                    9.52 kB Γöé gzip:   3.33 kB
+dist/assets/Onboarding-og5U34_q.js                       9.76 kB Γöé gzip:   2.85 kB
+dist/assets/PayrollSettings-D_K_IWJY.js                 10.16 kB Γöé gzip:   3.45 kB
+dist/assets/Compliance-DjDAFqEj.js                      14.63 kB Γöé gzip:   4.20 kB
+dist/assets/Expenses-d9tSdkm5.js                        17.62 kB Γöé gzip:   4.87 kB
+dist/assets/ESS-B3iJhZaT.js                             19.05 kB Γöé gzip:   5.41 kB
+dist/assets/Assets-DeEFUo3n.js                          19.76 kB Γöé gzip:   5.04 kB
+dist/assets/WorkflowEngine-iRUl76bT.js                  21.36 kB Γöé gzip:   5.69 kB
+dist/assets/Helpdesk-BkFCm2_t.js                        21.38 kB Γöé gzip:   5.23 kB
+dist/assets/Tasks-C8FXUipU.js                           21.77 kB Γöé gzip:   5.35 kB
+dist/assets/Attendance-B3QzoRVQ.js                      23.12 kB Γöé gzip:   5.69 kB
+dist/assets/Separation-Cu2r4Iif.js                      24.82 kB Γöé gzip:   6.50 kB
+dist/assets/PayslipDistribution-N0UCiDze.js             27.52 kB Γöé gzip:   6.52 kB
+dist/assets/Policies-DrkWLPLZ.js                        30.01 kB Γöé gzip:   6.98 kB
+dist/assets/OrgManagement-DZX4Lmr4.js                   30.50 kB Γöé gzip:   6.70 kB
+dist/assets/Travel-CZO5uDPU.js                          32.08 kB Γöé gzip:   6.85 kB
+dist/assets/Leave-CqA0PtiJ.js                           35.72 kB Γöé gzip:   8.52 kB
+dist/assets/Recruitment-ZQ4ATeCO.js                     38.17 kB Γöé gzip:   8.88 kB
+dist/assets/SecurityAdmin-Cl-sPf8K.js                   38.70 kB Γöé gzip:   9.70 kB
+dist/assets/EmployeeProfile-DFLLNeNH.js                 39.01 kB Γöé gzip:  10.13 kB
+dist/assets/Employees-CqbkkY3N.js                       43.43 kB Γöé gzip:   9.92 kB
+dist/assets/LMS-DLT3F5a8.js                             54.16 kB Γöé gzip:  12.54 kB
+dist/assets/PayslipBranding-DPlCHaIH.js                 54.60 kB Γöé gzip:  12.47 kB
+dist/assets/Performance-CkGVJKuX.js                     64.01 kB Γöé gzip:  13.32 kB
+dist/assets/PayslipDesigner-BAdktAZv.js                 84.07 kB Γöé gzip:  17.38 kB
+dist/assets/index-DsSI0dzT.js                           94.33 kB Γöé gzip:  22.52 kB
+dist/assets/vendor-D1iKCFfY.js                         121.08 kB Γöé gzip:  42.87 kB
+dist/assets/chunk-react-B35Lb7qY.js                    178.32 kB Γöé gzip:  56.34 kB
+dist/assets/Payroll-US1dOVaX.js                        269.82 kB Γöé gzip:  48.03 kB
+dist/assets/chunk-charts-kI5PtP2U.js                   375.10 kB Γöé gzip: 107.97 kB
+dist/assets/chunk-pdf-DpvZOLjW.js                      420.04 kB Γöé gzip: 124.25 kB
+
+[32mΓ£ô built in 1.23s[39m
+npm verbose cwd C:\Users\himan\OneDrive\Documents\projects\PD-hrms\PD-HRMS\frontend
+npm verbose os Windows_NT 10.0.26200
+npm verbose node v22.23.1
+npm verbose npm  v10.8.3
+npm verbose exit 0
+npm info ok
+BUILD EXIT: 0

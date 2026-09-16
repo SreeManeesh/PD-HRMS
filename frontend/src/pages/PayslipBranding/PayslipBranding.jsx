@@ -7,24 +7,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
-  Download,
   Printer,
   Eye,
   Trash2,
   Upload,
   X,
   Building,
-  Check,
-  Copy,
   FileText,
   ShieldCheck,
   Users,
-  Calendar,
-  CreditCard,
-  MapPin,
-  Clock,
   Sparkles,
-  Maximize2,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import PageHeader from "../../components/shared/PageHeader.jsx";
@@ -39,12 +31,14 @@ import {
   listPayslipTemplates,
   getPayslipTemplate,
   savePayslipDraft,
-  calculateBlueprint,
   createPayslipTemplate,
 } from "../../services/payslipDesignerService.js";
 import { getEmployees } from "../../services/employeeService.js";
+import { getWageRates } from "../../services/payrollService.js";
+import { basicMonthlyFor } from "../../utils/wageRates.js";
 import { assetUrl } from "../../utils/assetUrl.js";
 import { useToast } from "../../context/ToastContext.jsx";
+import ClassicTablePayslip from "../../components/payslip/ClassicTablePayslip.jsx";
 
 const inputStyle = {
   width: "100%",
@@ -396,9 +390,31 @@ export function PayslipBrandingPanel() {
 
   // Live Employee Selection for Dynamic Preview
   const [employees, setEmployees] = useState([]);
+  // Master wage rates (DB only) so the preview's Basic for daily-wage staff is
+  // the wage-rate/override figure — never a hardcoded default.
+  const [wageRates, setWageRates] = useState([]);
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [previewMonth, setPreviewMonth] = useState(new Date().getMonth() + 1);
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear());
+
+  // Payslip Builder & Custom Logo controls
+  const [templateFormat, setTemplateFormat] = useState("classic-table");
+  const [logoDisplaySize, setLogoDisplaySize] = useState(170);
+  const [payslipMonthText, setPayslipMonthText] = useState("July - 2026");
+  const [payslipTitleText, setPayslipTitleText] = useState("Payslip for the month of");
+  const [tableHeaderColor, setTableHeaderColor] = useState("#3478d4");
+  const [netPayColor, setNetPayColor] = useState("#1f7a32");
+  const [tableBorderColor, setTableBorderColor] = useState("#111111");
+  const [payslipVisibility, setPayslipVisibility] = useState({
+    info: true,
+    attendance: true,
+    salary: true,
+    leave: true,
+    net: true,
+    words: true,
+    note: true,
+  });
+  const logoUploadInputRef = useRef(null);
 
   useEffect(() => {
     getCompanyBranding()
@@ -438,6 +454,23 @@ export function PayslipBrandingPanel() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  // Wage rates (dynamic, DB-backed) — keeps the preview in sync when rates or
+  // overrides change in Wage Rates & Overrides / Earnings.
+  useEffect(() => {
+    const load = () =>
+      getWageRates()
+        .then((res) => setWageRates(res.data || []))
+        .catch(() => setWageRates([]));
+    load();
+    const onChanged = () => load();
+    window.addEventListener("hrms:wage-rates-changed", onChanged);
+    window.addEventListener("hrms:payroll-components-changed", onChanged);
+    return () => {
+      window.removeEventListener("hrms:wage-rates-changed", onChanged);
+      window.removeEventListener("hrms:payroll-components-changed", onChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -600,13 +633,14 @@ export function PayslipBrandingPanel() {
   }, [employees, selectedEmpId]);
 
   // Dynamically compute live payroll numbers for currentEmployee
+  // Guard against null/undefined employee during async loads.
   const computedSalary = useMemo(() => {
-    const emp = currentEmployee;
+    const emp = currentEmployee || {};
     const isDaily =
       emp.salaryType === "Daily" ||
       (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
     const monthlyGross = isDaily
-      ? Number(emp.dailyWageRate || 750) * 26
+      ? basicMonthlyFor(emp, wageRates).basicMonthly
       : Math.round((Number(emp.annualSalary) || 720000) / 12);
 
     const basic = Math.round(monthlyGross * 0.5);
@@ -664,7 +698,7 @@ export function PayslipBrandingPanel() {
       netPayWords,
       stateName,
     };
-  }, [currentEmployee]);
+  }, [currentEmployee, wageRates]);
 
   const handlePrint = () => {
     window.print();
@@ -914,6 +948,178 @@ export function PayslipBrandingPanel() {
           >
             {busy ? "Saving…" : "Save Company Identity"}
           </button>
+        </div>
+      </div>
+
+      {/* ── Payslip Builder & Table Controls ── */}
+      <div
+        style={{
+          background: "var(--card)",
+          borderRadius: "var(--radius-lg)",
+          border: "1px solid var(--border)",
+          padding: 22,
+          boxShadow: "var(--shadow-sm)",
+        }}
+      >
+        <input
+          type="file"
+          ref={logoUploadInputRef}
+          accept="image/png,image/jpeg,image/svg+xml"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleLogoUpload(f);
+          }}
+        />
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <Sparkles size={18} style={{ color: "var(--primary)" }} />
+          <p style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", margin: 0 }}>
+            Payslip Builder & Custom Logo Settings
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+          {/* Logo Display Size */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Logo Display Size on Payslip
+            <select
+              value={logoDisplaySize}
+              onChange={(e) => setLogoDisplaySize(Number(e.target.value))}
+              style={selectStyle}
+            >
+              <option value={140}>Small (140px)</option>
+              <option value={170}>Medium (170px — Standard)</option>
+              <option value={200}>Large (200px)</option>
+              <option value={230}>Extra Large (230px)</option>
+            </select>
+          </label>
+
+          {/* Payslip Month */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Payslip Month
+            <input
+              type="text"
+              value={payslipMonthText}
+              onChange={(e) => setPayslipMonthText(e.target.value)}
+              style={inputStyle}
+              placeholder="e.g. July - 2026"
+            />
+          </label>
+
+          {/* Title Text */}
+          <label style={{ fontSize: 12.5, color: "var(--label)", display: "flex", flexDirection: "column", gap: 6 }}>
+            Payslip Title Prefix
+            <input
+              type="text"
+              value={payslipTitleText}
+              onChange={(e) => setPayslipTitleText(e.target.value)}
+              style={inputStyle}
+              placeholder="Payslip for the month of"
+            />
+          </label>
+        </div>
+
+        {/* Color Theme */}
+        <div style={{ marginTop: 18 }}>
+          <p style={{ fontSize: 12.5, fontWeight: 700, color: "var(--label)", marginBottom: 8 }}>
+            Color Theme
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Table Header Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={tableHeaderColor}
+                  onChange={(e) => setTableHeaderColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={tableHeaderColor}
+                  onChange={(e) => setTableHeaderColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Net Pay Highlight Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={netPayColor}
+                  onChange={(e) => setNetPayColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={netPayColor}
+                  onChange={(e) => setNetPayColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+
+            <label style={{ fontSize: 12, color: "var(--subtext)", display: "flex", flexDirection: "column", gap: 6 }}>
+              Table Border Color
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={tableBorderColor}
+                  onChange={(e) => setTableBorderColor(e.target.value)}
+                  style={{ width: 38, height: 38, border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}
+                />
+                <input
+                  type="text"
+                  value={tableBorderColor}
+                  onChange={(e) => setTableBorderColor(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Section Visibility */}
+        <div style={{ marginTop: 18 }}>
+          <p style={{ fontSize: 12.5, fontWeight: 700, color: "var(--label)", marginBottom: 8 }}>
+            Section Visibility
+          </p>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {[
+              { key: "info", label: "Employee / Bank Details" },
+              { key: "attendance", label: "Attendance Details" },
+              { key: "salary", label: "Earnings & Deductions" },
+              { key: "leave", label: "Leave Balance" },
+              { key: "net", label: "Net Pay" },
+              { key: "words", label: "Amount in Words" },
+              { key: "note", label: "Generated Note" },
+            ].map(({ key, label }) => (
+              <label
+                key={key}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={payslipVisibility[key]}
+                  onChange={(e) =>
+                    setPayslipVisibility((prev) => ({ ...prev, [key]: e.target.checked }))
+                  }
+                  style={{ accentColor: "var(--primary)" }}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1324,6 +1530,30 @@ export function PayslipBrandingPanel() {
               </select>
             </div>
 
+            {/* Template Format Selector */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <select
+                id="template-format-selector"
+                value={templateFormat}
+                onChange={(e) => setTemplateFormat(e.target.value)}
+                style={{
+                  height: 34,
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                }}
+              >
+                <option value="classic-table">Classic Table (Client Focus Style)</option>
+                <option value="corporate">Corporate Classic</option>
+                <option value="executive">Executive Formal</option>
+                <option value="modern-cards">Modern Cards</option>
+              </select>
+            </div>
+
             {/* Print / Save PDF Button */}
             <button
               onClick={handlePrint}
@@ -1346,21 +1576,74 @@ export function PayslipBrandingPanel() {
           </div>
         </div>
 
-        {/* ── PREMIUM DARK PAYSLIP TEMPLATE CONTAINER ── */}
-        <div
-          id="printable-payslip-voucher"
-          style={{
-            background: "#0f172a", // Dark Slate
-            color: "#f8fafc",
-            borderRadius: "16px",
-            border: "1px solid #334155",
-            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3)",
-            padding: "28px 32px",
-            fontFamily: theme.font || "Inter, sans-serif",
-            maxWidth: 820,
-            margin: "0 auto",
-          }}
-        >
+        {/* ── PAYSLIP TEMPLATE DISPLAY ── */}
+        {templateFormat !== "modern-cards" ? (
+          <div
+            id="printable-classic-payslip"
+            style={{
+              overflowX: "auto",
+              paddingBottom: 24,
+            }}
+          >
+            <ClassicTablePayslip
+              company={{
+                name: form?.companyName,
+                address: form?.address,
+                logoUrl: logoUrl,
+              }}
+              logoSize={logoDisplaySize}
+              employee={currentEmployee}
+              payroll={{
+                month:
+                  payslipMonthText ||
+                  `${[
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                  ][previewMonth - 1]} - ${previewYear}`,
+                title: payslipTitleText || "Payslip for the month of",
+                workingDays: 31,
+                presentDays: 22,
+                lopDays: 0,
+                netPaidDays: 31,
+                earnings: [
+                  { name: "BASIC", amount: Math.round(computedSalary?.basic || 0) },
+                  { name: "HRA", amount: Math.round(computedSalary?.hra || 0) },
+                  { name: "SPECIAL ALLOWANCE", amount: Math.round(computedSalary?.specialAllowance || 0) },
+                  { name: "OTHER ALLOWANCE", amount: Math.round((computedSalary?.conveyance || 0) + (computedSalary?.medical || 0)) },
+                ],
+                deductions: [
+                  { name: "PF", amount: Math.round(computedSalary?.epf || 0) },
+                  { name: "PROF TAX", amount: Math.round(computedSalary?.pt || 0) },
+                  { name: "TDS / TAX", amount: Math.round(computedSalary?.tds || 0) },
+                ],
+                netPay: Math.round(computedSalary?.netPay || 0),
+                netPayInWords: computedSalary?.netPayWords || "",
+                leaveBalance: "03",
+              }}
+              theme={{
+                primaryColor: tableHeaderColor,
+                accentColor: netPayColor,
+                tableBorderColor: tableBorderColor,
+              }}
+              visibility={payslipVisibility}
+              onLogoClick={() => logoUploadInputRef.current?.click()}
+            />
+          </div>
+        ) : (
+          <div
+            id="printable-payslip-voucher"
+            style={{
+              background: "#ffffff", // Printable light theme
+              color: "#0f172a",
+              borderRadius: "14px",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 8px 18px rgba(15, 23, 42, 0.06)",
+              padding: "20px 24px",
+              fontFamily: theme.font || "Inter, sans-serif",
+              maxWidth: 820,
+              margin: "0 auto",
+            }}
+          >
           {/* Header Bar */}
           <div
             style={{
@@ -1368,24 +1651,24 @@ export function PayslipBrandingPanel() {
               justifyContent: "space-between",
               alignItems: "flex-start",
               flexWrap: "wrap",
-              gap: 16,
-              paddingBottom: 20,
-              borderBottom: "1px solid #334155",
+              gap: 12,
+              paddingBottom: 14,
+              borderBottom: "1px solid #e2e8f0",
             }}
           >
-            <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               {logoUrl || themeLogoShown ? (
                 <div
                   style={{
-                    width: 56,
-                    height: 56,
+                    width: 48,
+                    height: 48,
                     background: "#ffffff",
                     borderRadius: 10,
-                    padding: 6,
+                    padding: 5,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    border: "1px solid #475569",
+                    border: "1px solid #e2e8f0",
                   }}
                 >
                   <img
@@ -1397,8 +1680,8 @@ export function PayslipBrandingPanel() {
               ) : (
                 <div
                   style={{
-                    width: 56,
-                    height: 56,
+                    width: 48,
+                    height: 48,
                     background: "linear-gradient(135deg, #0d9488, #0f766e)",
                     borderRadius: 10,
                     display: "flex",
@@ -1406,7 +1689,7 @@ export function PayslipBrandingPanel() {
                     justifyContent: "center",
                     color: "#fff",
                     fontWeight: 800,
-                    fontSize: 20,
+                    fontSize: 18,
                     letterSpacing: 1,
                   }}
                 >
@@ -1418,9 +1701,9 @@ export function PayslipBrandingPanel() {
                 <h2
                   style={{
                     margin: 0,
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: 800,
-                    color: "#ffffff",
+                    color: "#0f172a",
                     letterSpacing: "0.2px",
                   }}
                 >
@@ -1428,9 +1711,9 @@ export function PayslipBrandingPanel() {
                 </h2>
                 <div
                   style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "#14b8a6", // Teal accent
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: "#0f766e", // Teal accent
                     marginTop: 2,
                   }}
                 >
@@ -1438,8 +1721,8 @@ export function PayslipBrandingPanel() {
                 </div>
                 <div
                   style={{
-                    fontSize: 11,
-                    color: "#94a3b8",
+                    fontSize: 10.5,
+                    color: "#64748b",
                     marginTop: 2,
                     maxWidth: 420,
                     lineHeight: 1.3,
@@ -1454,16 +1737,16 @@ export function PayslipBrandingPanel() {
             <div style={{ textAlign: "right" }}>
               <div
                 style={{
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: 800,
-                  color: "#ffffff",
+                  color: "#0f172a",
                   letterSpacing: 0.5,
                   textTransform: "uppercase",
                 }}
               >
                 Salary Payslip
               </div>
-              <div style={{ fontSize: 13, color: "#cbd5e1", fontWeight: 600, marginTop: 2 }}>
+              <div style={{ fontSize: 12.5, color: "#334155", fontWeight: 600, marginTop: 2 }}>
                 {[
                   "January", "February", "March", "April", "May", "June",
                   "July", "August", "September", "October", "November", "December",
@@ -1472,8 +1755,8 @@ export function PayslipBrandingPanel() {
               </div>
               <div
                 style={{
-                  fontSize: 11,
-                  color: "#94a3b8",
+                  fontSize: 10.5,
+                  color: "#64748b",
                   fontFamily: "monospace",
                   marginTop: 4,
                 }}
@@ -1489,10 +1772,10 @@ export function PayslipBrandingPanel() {
                     gap: 4,
                     padding: "3px 10px",
                     borderRadius: 99,
-                    background: "rgba(16, 185, 129, 0.15)",
-                    border: "1px solid rgba(16, 185, 129, 0.4)",
-                    color: "#34d399",
-                    fontSize: 11,
+                    background: "rgba(16, 185, 129, 0.12)",
+                    border: "1px solid rgba(16, 185, 129, 0.35)",
+                    color: "#047857",
+                    fontSize: 10.5,
                     fontWeight: 700,
                     textTransform: "uppercase",
                     letterSpacing: 0.5,
@@ -1508,125 +1791,125 @@ export function PayslipBrandingPanel() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 12,
-              marginTop: 20,
-              marginBottom: 20,
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: 10,
+              marginTop: 14,
+              marginBottom: 14,
             }}
           >
             {/* Card 1: Identification */}
             <div
               style={{
-                background: "#1e293b",
+                background: "#f8fafc",
                 borderRadius: 10,
-                border: "1px solid #334155",
-                padding: "14px 16px",
+                border: "1px solid #e2e8f0",
+                padding: "12px 14px",
               }}
             >
               <div
                 style={{
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: 700,
-                  color: "#14b8a6",
+                  color: "#0f766e",
                   textTransform: "uppercase",
                   letterSpacing: 0.5,
-                  marginBottom: 8,
+                  marginBottom: 6,
                 }}
               >
                 Employee Identification
               </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#ffffff" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a" }}>
                 {currentEmployee.firstName} {currentEmployee.lastName}
               </div>
               <div
                 style={{
-                  fontSize: 12,
-                  color: "#94a3b8",
+                  fontSize: 11.5,
+                  color: "#64748b",
                   fontFamily: "monospace",
                   marginTop: 2,
                 }}
               >
                 ID: {currentEmployee.employeeCode || currentEmployee.id}
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1", marginTop: 6 }}>
-                PAN: <strong style={{ color: "#ffffff" }}>{currentEmployee.panNumber || "ABCDE1234F"}</strong>
+              <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
+                PAN: <strong style={{ color: "#0f172a" }}>{currentEmployee.panNumber || "ABCDE1234F"}</strong>
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1" }}>
-                UAN: <strong style={{ color: "#ffffff" }}>{currentEmployee.uanNumber || "101298457890"}</strong>
+              <div style={{ fontSize: 11, color: "#475569" }}>
+                UAN: <strong style={{ color: "#0f172a" }}>{currentEmployee.uanNumber || "101298457890"}</strong>
               </div>
             </div>
 
             {/* Card 2: Role & Department */}
             <div
               style={{
-                background: "#1e293b",
+                background: "#f8fafc",
                 borderRadius: 10,
-                border: "1px solid #334155",
-                padding: "14px 16px",
+                border: "1px solid #e2e8f0",
+                padding: "12px 14px",
               }}
             >
               <div
                 style={{
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: 700,
-                  color: "#14b8a6",
+                  color: "#0f766e",
                   textTransform: "uppercase",
                   letterSpacing: 0.5,
-                  marginBottom: 8,
+                  marginBottom: 6,
                 }}
               >
-                Position & Division
+                Position &amp; Division
               </div>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#ffffff" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
                 {currentEmployee.designation?.title ||
                   currentEmployee.designation ||
                   "Senior Engineer"}
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+              <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>
                 {currentEmployee.department?.name ||
                   currentEmployee.department ||
                   "Engineering"}
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1", marginTop: 6 }}>
-                Tier: <strong style={{ color: "#ffffff" }}>{currentEmployee.skillType || "Skilled"}</strong>
+              <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
+                Tier: <strong style={{ color: "#0f172a" }}>{currentEmployee.skillType || "Skilled"}</strong>
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1" }}>
-                Location: <strong style={{ color: "#ffffff" }}>{currentEmployee.location?.name || computedSalary.stateName}</strong>
+              <div style={{ fontSize: 11, color: "#475569" }}>
+                Location: <strong style={{ color: "#0f172a" }}>{currentEmployee.location?.name || computedSalary.stateName}</strong>
               </div>
             </div>
 
             {/* Card 3: Bank & Attendance */}
             <div
               style={{
-                background: "#1e293b",
+                background: "#f8fafc",
                 borderRadius: 10,
-                border: "1px solid #334155",
-                padding: "14px 16px",
+                border: "1px solid #e2e8f0",
+                padding: "12px 14px",
               }}
             >
               <div
                 style={{
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: 700,
-                  color: "#14b8a6",
+                  color: "#0f766e",
                   textTransform: "uppercase",
                   letterSpacing: 0.5,
-                  marginBottom: 8,
+                  marginBottom: 6,
                 }}
               >
-                Payment & Attendance
+                Payment &amp; Attendance
               </div>
-              <div style={{ fontSize: 12.5, color: "#cbd5e1" }}>
-                Mode: <strong style={{ color: "#ffffff" }}>Direct Bank Transfer</strong>
+              <div style={{ fontSize: 12, color: "#475569" }}>
+                Mode: <strong style={{ color: "#0f172a" }}>Direct Bank Transfer</strong>
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>
+              <div style={{ fontSize: 11.5, color: "#64748b", fontFamily: "monospace", marginTop: 2 }}>
                 A/C: {currentEmployee.bankAccount ? `•••• •••• ${currentEmployee.bankAccount.slice(-4)}` : "•••• •••• 8842"}
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1", marginTop: 6 }}>
-                Working Days: <strong style={{ color: "#ffffff" }}>26</strong> | Present: <strong style={{ color: "#34d399" }}>25</strong>
+              <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
+                Working Days: <strong style={{ color: "#0f172a" }}>26</strong> | Present: <strong style={{ color: "#047857" }}>25</strong>
               </div>
-              <div style={{ fontSize: 11.5, color: "#cbd5e1" }}>
-                Paid Leave: <strong style={{ color: "#38bdf8" }}>1 Day</strong> | LOP: <strong style={{ color: "#94a3b8" }}>0</strong>
+              <div style={{ fontSize: 11, color: "#475569" }}>
+                Paid Leave: <strong style={{ color: "#0369a1" }}>1 Day</strong> | LOP: <strong style={{ color: "#64748b" }}>0</strong>
               </div>
             </div>
           </div>
@@ -1636,17 +1919,17 @@ export function PayslipBrandingPanel() {
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
-              gap: 16,
-              marginBottom: 20,
+              gap: 12,
+              marginBottom: 14,
             }}
           >
             {/* Left Card: EARNINGS */}
             <div
               style={{
-                background: "#1e293b",
-                borderRadius: 12,
-                border: "1px solid #334155",
-                padding: 18,
+                background: "#f8fafc",
+                borderRadius: 10,
+                border: "1px solid #e2e8f0",
+                padding: 14,
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
@@ -1655,14 +1938,14 @@ export function PayslipBrandingPanel() {
               <div>
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: 800,
-                    color: "#38bdf8",
+                    color: "#0369a1",
                     textTransform: "uppercase",
                     letterSpacing: 0.5,
-                    borderBottom: "1px solid #334155",
-                    paddingBottom: 8,
-                    marginBottom: 12,
+                    borderBottom: "1px solid #e2e8f0",
+                    paddingBottom: 6,
+                    marginBottom: 10,
                     display: "flex",
                     justifyContent: "space-between",
                   }}
@@ -1672,65 +1955,65 @@ export function PayslipBrandingPanel() {
                 </div>
 
                 {/* Fixed Pay Group */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", marginBottom: 6 }}>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 5 }}>
                     Fixed Pay
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>Basic Salary</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.basic.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>Basic Salary</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.basic || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>House Rent Allowance (HRA)</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.hra.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>House Rent Allowance (HRA)</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.hra || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>Conveyance Allowance</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.conveyance.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>Conveyance Allowance</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.conveyance || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>Special Allowance</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.specialAllowance.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>Special Allowance</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.specialAllowance || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
                 </div>
 
                 {/* Benefits & Reimbursements */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", marginBottom: 6 }}>
-                    Benefits & Reimbursements
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 5 }}>
+                    Benefits &amp; Reimbursements
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>Medical Allowance</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.medical.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>Medical Allowance</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.medical || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
                 </div>
 
                 {/* Variable Pay */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", marginBottom: 6 }}>
-                    Variable & Production
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 5 }}>
+                    Variable &amp; Production
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                    <span style={{ color: "#e2e8f0" }}>Weekly Off Pay</span>
-                    <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                      ₹{computedSalary.weeklyOffPay.toLocaleString("en-IN")}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                    <span style={{ color: "#334155" }}>Weekly Off Pay</span>
+                    <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                      ₹{(computedSalary?.weeklyOffPay || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
-                  {computedSalary.overtime > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
-                      <span style={{ color: "#e2e8f0" }}>Overtime / Shift Incentive</span>
-                      <span style={{ color: "#34d399", fontWeight: 700, fontFamily: "monospace" }}>
-                        ₹{computedSalary.overtime.toLocaleString("en-IN")}
+                  {(computedSalary?.overtime || 0) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 12 }}>
+                      <span style={{ color: "#334155" }}>Overtime / Shift Incentive</span>
+                      <span style={{ color: "#047857", fontWeight: 700, fontFamily: "monospace" }}>
+                        ₹{(computedSalary?.overtime || 0).toLocaleString("en-IN")}
                       </span>
                     </div>
                   )}
@@ -1743,18 +2026,18 @@ export function PayslipBrandingPanel() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  padding: "10px 14px",
-                  background: "rgba(16, 185, 129, 0.12)",
-                  border: "1px solid rgba(16, 185, 129, 0.3)",
+                  padding: "8px 12px",
+                  background: "rgba(16, 185, 129, 0.08)",
+                  border: "1px solid rgba(16, 185, 129, 0.25)",
                   borderRadius: 8,
-                  marginTop: 10,
+                  marginTop: 8,
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#ffffff" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a" }}>
                   Total Gross Earnings
                 </span>
-                <span style={{ fontSize: 15, fontWeight: 800, color: "#34d399", fontFamily: "monospace" }}>
-                  ₹{computedSalary.totalGrossEarnings.toLocaleString("en-IN")}
+                <span style={{ fontSize: 14, fontWeight: 800, color: "#047857", fontFamily: "monospace" }}>
+                  ₹{(computedSalary?.totalGrossEarnings || 0).toLocaleString("en-IN")}
                 </span>
               </div>
             </div>
@@ -1798,21 +2081,21 @@ export function PayslipBrandingPanel() {
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
                     <span style={{ color: "#e2e8f0" }}>Provident Fund (EPF)</span>
                     <span style={{ color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>
-                      −₹{computedSalary.epf.toLocaleString("en-IN")}
+                      −₹{(computedSalary?.epf || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
                     <span style={{ color: "#e2e8f0" }}>
-                      Professional Tax ({computedSalary.stateName})
+                      Professional Tax ({computedSalary?.stateName || ""})
                     </span>
                     <span style={{ color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>
-                      {computedSalary.pt > 0 ? `−₹${computedSalary.pt.toLocaleString("en-IN")}` : "₹0 (Exempt)"}
+                      {(computedSalary?.pt || 0) > 0 ? `−₹${(computedSalary?.pt || 0).toLocaleString("en-IN")}` : "₹0 (Exempt)"}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
                     <span style={{ color: "#e2e8f0" }}>Income Tax (TDS)</span>
                     <span style={{ color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>
-                      −₹{computedSalary.tds.toLocaleString("en-IN")}
+                      −₹{(computedSalary?.tds || 0).toLocaleString("en-IN")}
                     </span>
                   </div>
                 </div>
@@ -1825,7 +2108,7 @@ export function PayslipBrandingPanel() {
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
                     <span style={{ color: "#e2e8f0" }}>ESI (Employee State Insurance)</span>
                     <span style={{ color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>
-                      {computedSalary.esi > 0 ? `−₹${computedSalary.esi.toLocaleString("en-IN")}` : "₹0 (Exempt)"}
+                      {(computedSalary?.esi || 0) > 0 ? `−₹${(computedSalary?.esi || 0).toLocaleString("en-IN")}` : "₹0 (Exempt)"}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
@@ -1833,7 +2116,7 @@ export function PayslipBrandingPanel() {
                       Labour Welfare Fund (LWF)
                     </span>
                     <span style={{ color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>
-                      −₹{computedSalary.lwf}
+                      −₹{computedSalary?.lwf ?? 0}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5 }}>
@@ -1862,7 +2145,7 @@ export function PayslipBrandingPanel() {
                   Total Deductions
                 </span>
                 <span style={{ fontSize: 15, fontWeight: 800, color: "#f87171", fontFamily: "monospace" }}>
-                  −₹{computedSalary.totalDeductions.toLocaleString("en-IN")}
+                  −₹{(computedSalary?.totalDeductions || 0).toLocaleString("en-IN")}
                 </span>
               </div>
             </div>
@@ -1902,7 +2185,7 @@ export function PayslipBrandingPanel() {
                   marginTop: 3,
                 }}
               >
-                {computedSalary.netPayWords}
+                {computedSalary?.netPayWords || ""}
               </div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2 }}>
                 Directly disbursed into employee's designated salary account
@@ -1919,7 +2202,7 @@ export function PayslipBrandingPanel() {
                   letterSpacing: "0.5px",
                 }}
               >
-                ₹{computedSalary.netPay.toLocaleString("en-IN")}
+                ₹{(computedSalary?.netPay || 0).toLocaleString("en-IN")}
               </div>
             </div>
           </div>
@@ -1959,21 +2242,36 @@ export function PayslipBrandingPanel() {
             </div>
           </div>
         </div>
+      )}
       </div>
 
       {/* Embedded print stylesheet */}
       <style>{`
         @media print {
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
+          .classic-payslip-paper, .classic-payslip-paper *,
           #printable-payslip-voucher, #printable-payslip-voucher * {
-            visibility: visible;
+            visibility: visible !important;
+          }
+          .classic-payslip-paper {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 30px !important;
+            box-shadow: none !important;
+            border: none !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           #printable-payslip-voucher {
-            position: absolute;
-            left: 0;
-            top: 0;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;

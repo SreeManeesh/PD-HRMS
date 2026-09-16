@@ -30,12 +30,12 @@ import "./PayslipDesigner.css";
 
 const DEFAULT_THEME = {
   primaryColor: "#0f766e",
-  secondaryColor: "#0d1b2a",
+  secondaryColor: "#cbd5e1",
   accentColor: "#0891b2",
   font: "Helvetica",
   pageSize: "A4",
   orientation: "portrait",
-  margins: { top: 40, right: 40, bottom: 40, left: 40 },
+  margins: { top: 30, right: 35, bottom: 30, left: 35 },
 };
 
 const pdInputStyle = {
@@ -126,13 +126,13 @@ export function PayslipDesignerPanel() {
     if (!tid || !bp) return;
     try {
       localStorage.setItem(`pd_blueprint_draft_${tid}`, JSON.stringify(bp));
-    } catch (_) {}
+    } catch { /* ignore storage error */ }
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
         await savePayslipDraft(tid, bp, "Auto-saved working draft");
-      } catch (_) {}
+      } catch { /* ignore autosave error */ }
     }, 1500);
   }, []);
 
@@ -153,7 +153,7 @@ export function PayslipDesignerPanel() {
             bp0 = localParsed;
           }
         }
-      } catch (_) {}
+      } catch { /* ignore parse error */ }
 
       if (!bp0) {
         bp0 = {
@@ -329,7 +329,7 @@ export function PayslipDesignerPanel() {
       const p = await publishPayslipTemplate(templateId);
       try {
         localStorage.removeItem(`pd_blueprint_draft_${templateId}`);
-      } catch (_) {}
+      } catch { /* ignore */ }
       setNotice(`Validated, saved as v${s.data?.version ?? "?"} and published — active v${p.data?.version ?? "?"}`);
       toast("Nesting template saved & published");
       load(templateId);
@@ -982,8 +982,8 @@ export function PayslipDesignerPanel() {
             <button className="pd-btn" onClick={runTaxCompare} style={{ marginBottom: 12 }}><Calculator size={15} /> Recompute</button>
             {taxCompare && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 14, marginBottom: 14 }}>
-                <TaxCard title="Old Regime" breakdown={taxCompare.old} accent="#0f766e" />
-                <TaxCard title="New Regime" breakdown={taxCompare.newTax} accent="#0891b2" />
+                <TaxCard title="Old Regime" taxData={taxCompare.old} accent="#0f766e" />
+                <TaxCard title="New Regime" taxData={taxCompare.newTax} accent="#0891b2" />
               </div>
             )}
             {calcResult && (
@@ -1495,18 +1495,22 @@ function NestThresholdEditor({ comp, onUpdateComp }) {
   );
 }
 
-function TaxCard({ title, breakdown, accent }) {
+function TaxCard({ title, taxData = {}, accent }) {
+  // Defensive: taxData may be null/undefined from async loads — always coerce to object.
+  // NOTE: previously referenced an out-of-scope `breakdown` var which crashed the
+  // Payslip tabs with "breakdown is not defined". All rows now read from safeTax.
+  const safeTax = taxData ?? {};
   const rows = [
-    ["Gross Income", inr(breakdown.grossIncome)],
-    ["Exemptions", inr(breakdown.exemptions)],
-    ["Deductions", inr(breakdown.deductions)],
-    ["Taxable Income", inr(breakdown.taxableIncome)],
-    ["Tax Before Rebate", inr(breakdown.taxBeforeRebate)],
-    ["Rebate", inr(breakdown.rebate)],
-    ["Cess", inr(breakdown.cess)],
-    ["Surcharge", inr(breakdown.surcharge)],
-    ["Annual Tax", inr(breakdown.annualTax)],
-    ["Monthly Tax", inr(breakdown.monthlyTax)],
+    ["Gross Income", inr(safeTax.grossIncome ?? 0)],
+    ["Exemptions", inr(safeTax.exemptions ?? 0)],
+    ["Deductions", inr(safeTax.deductions ?? 0)],
+    ["Taxable Income", inr(safeTax.taxableIncome ?? 0)],
+    ["Tax Before Rebate", inr(safeTax.taxBeforeRebate ?? 0)],
+    ["Rebate", inr(safeTax.rebate ?? 0)],
+    ["Cess", inr(safeTax.cess ?? 0)],
+    ["Surcharge", inr(safeTax.surcharge ?? 0)],
+    ["Annual Tax", inr(safeTax.annualTax ?? 0)],
+    ["Monthly Tax", inr(safeTax.monthlyTax ?? 0)],
   ];
   return (
     <div style={{ border: `1px solid ${accent}33`, borderRadius: "var(--radius)", padding: 14 }}>

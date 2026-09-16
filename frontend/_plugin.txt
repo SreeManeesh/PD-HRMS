@@ -1,0 +1,21 @@
+version 7.1.1
+configs: recommended, recommended-latest, flat
+flat: recommended-latest, recommended
+recommended rules: {
+ "react-hooks/rules-of-hooks": "error",
+ "react-hooks/exhaustive-deps": "warn",
+ "react-hooks/static-components": "error",
+ "react-hooks/use-memo": "error",
+ "react-hooks/preserve-manual-memoization": "error",
+ "react-hooks/incompatible-library": "warn",
+ "react-hooks/immutability": "error",
+ "react-hooks/globals": "error",
+ "react-hooks/refs": "error",
+ "react-hooks/set-state-in-effect": "error",
+ "react-hooks/error-boundaries": "error",
+ "react-hooks/purity": "error",
+ "react-hooks/set-state-in-render": "error",
+ "react-hooks/unsupported-syntax": "warn",
+ "react-hooks/config": "error",
+ "react-hooks/gating": "error"
+}

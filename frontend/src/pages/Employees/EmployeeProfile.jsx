@@ -14,7 +14,7 @@ import {
   ArrowLeft, Pencil, Save, X, Plus, Trash2,
   Mail, Phone, MapPin, Calendar, Building2, Briefcase,
   ShieldCheck, WalletCards, GraduationCap, Users, LockKeyhole,
-  UserRound, ClipboardCheck, CircleCheck, Factory,
+  UserRound, ClipboardCheck, CircleCheck, Factory, AlertTriangle,
 } from "lucide-react";
 import MainLayout from "../../components/layout/MainLayout.jsx";
 import StatusBadge from "../../components/shared/StatusBadge.jsx";
@@ -22,7 +22,8 @@ import Spinner from "../../components/shared/Spinner.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { getEmployee, updateEmployee } from "../../services/employeeService.js";
 import { createConsentPolicy } from "../../services/consentService.js";
-import { createProductionRecord } from "../../services/payrollService.js";
+import { createProductionRecord, getPayrollComponentConfigs, getWageRates, getEmployeeWages } from "../../services/payrollService.js";
+import { basicMonthlyFor } from "../../utils/wageRates.js";
 import InitialsAvatar from "../../components/shared/InitialsAvatar.jsx";
 
 const EMPLOYEE_STATUS_META = {
@@ -61,7 +62,7 @@ const LOC_TYPES = ["OFFICE", "REMOTE", "HYBRID", "CLIENT_SITE"];
 const REGIMES = ["OLD", "NEW"];
 const WAGE_RATES = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "ANNUAL"];
 const CONTRACTORS = ["M/s Sharma Constructions", "Green Leaf Facility Services", "Bright Logistics", "KK Electrical Works", "Sai Textiles India"];
-const EARNINGS = ["BASIC", "HRA", "SPECIAL_ALLOWANCE", "TRANSPORT_ALLOWANCE", "MEDICAL_ALLOWANCE", "LEAVE_TRAVEL_ALLOWANCE", "PERFORMANCE_BONUS", "INCENTIVE", "OVERTIME", "OTHER"];
+// EARNINGS and DEDUCTIONS are now fetched dynamically from the API — see state below
 
 const WZ_DEFAULTS = {
   employeeCode: "", firstName: "", middleName: "", lastName: "", dateOfBirth: "",
@@ -87,7 +88,7 @@ const WZ_DEFAULTS = {
     bankName: "", accountNumber: "", ifscCode: "", bankBranch: "",
     accountHolderName: "", accountType: "", salaryPaymentMode: "", upiId: "",
   },
-  payRules: { wageRate: "", salaryAdvance: false, productionTarget: "", contractor: "", earnings: [] },
+  payRules: { wageRate: "", salaryAdvance: false, productionTarget: "", contractor: "", earnings: [], deductions: [] },
   annualSalary: "", monthlyGross: "",
   family: [], education: [], skills: [], certifications: [], languages: [], experience: [],
   consents: [], role: "EMPLOYEE",
@@ -210,7 +211,7 @@ function Toggle({ label, value, onChange }) {
 
 const fmtEarning = (o) => String(o).replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-function MultiSelect({ label, value, onChange, options }) {
+function MultiSelect({ label, value, onChange, options = [], labelMap = {}, loading = false, emptyText }) {
   const editing = useContext(EditCtx);
   const vals = Array.isArray(value) ? value : [];
   const [open, setOpen] = useState(false);
@@ -220,8 +221,17 @@ function MultiSelect({ label, value, onChange, options }) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+  // Normalize options to [{ value, label }] — supports legacy string arrays too.
+  const normOptions = (options || []).map((o) =>
+    typeof o === "string" ? { value: o, label: labelMap[o] ?? labelMap[String(o).toLowerCase()] ?? fmtEarning(o) } : o
+  );
+  const labelFor = (v) => labelMap[v] ?? labelMap[String(v).toLowerCase()] ?? fmtEarning(v);
+  // Values that were saved before but no longer exist in payroll (deleted/renamed code).
+  // Keep them visible so the user can deselect them; they are not offered as new options.
+  const optionValues = new Set(normOptions.map((o) => String(o.value).toLowerCase()));
+  const staleVals = vals.filter((v) => !optionValues.has(String(v).toLowerCase()));
   if (!editing) {
-    const text = vals.map(fmtEarning).join(", ");
+    const text = vals.map(labelFor).join(", ");
     return (
       <label className="ep-field">
         <span>{label}</span>
@@ -229,12 +239,30 @@ function MultiSelect({ label, value, onChange, options }) {
       </label>
     );
   }
-  const toggle = (o) => onChange(vals.includes(o) ? vals.filter((x) => x !== o) : [...vals, o]);
+  const toggle = (o) => {
+    const exists = vals.some((x) => String(x).toLowerCase() === String(o).toLowerCase());
+    onChange(exists ? vals.filter((x) => String(x).toLowerCase() !== String(o).toLowerCase()) : [...vals, o]);
+  };
+  const isSel = (o) => vals.some((x) => String(x).toLowerCase() === String(o).toLowerCase());
+  const renderRow = (optValue, optLabel, stale = false) => {
+    const sel = isSel(optValue);
+    return (
+      <label
+        key={optValue}
+        onClick={(e) => { e.preventDefault(); toggle(optValue); }}
+        style={{ display: "flex", alignItems: "center", gap: "9px", padding: "8px 10px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", color: sel ? "var(--primary)" : stale ? "var(--red)" : "var(--text)", fontWeight: sel ? 700 : 500 }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "17px", height: "17px", border: `1px solid ${sel ? "var(--primary)" : "#c9d3dd"}`, borderRadius: "5px", background: sel ? "var(--primary)" : "#fff", color: "#fff", flexShrink: 0, fontSize: "11px" }}>{sel ? "✓" : ""}</span>
+        <span>{optLabel}{stale ? " (removed)" : ""}</span>
+      </label>
+    );
+  };
   return (
     <div className="ep-field" ref={ref} style={{ position: "relative" }}>
       <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
         {label}
         {vals.length > 0 && <em style={{ fontStyle: "normal", fontSize: "11px", color: "var(--primary)", fontWeight: 700 }}>{vals.length} selected</em>}
+        {loading && <em style={{ fontStyle: "normal", fontSize: "11px", color: "var(--subtext)" }}>loading…</em>}
       </span>
       <button
         type="button"
@@ -242,25 +270,23 @@ function MultiSelect({ label, value, onChange, options }) {
         style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", width: "100%", padding: "9px 12px", border: `1px solid ${open ? "var(--primary)" : "var(--border)"}`, borderRadius: "10px", background: "#fff", fontSize: "13px", color: "var(--text)", cursor: "pointer", textAlign: "left" }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: vals.length ? "var(--text)" : "var(--subtext)" }}>
-          {vals.length ? vals.map(fmtEarning).join(", ") : "None selected"}
+          {vals.length ? vals.map(labelFor).join(", ") : loading ? "Loading…" : "None selected"}
         </span>
         <span style={{ fontSize: "10px", color: "var(--subtext)", flexShrink: 0 }}>{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 60, background: "#fff", border: "1px solid var(--border)", borderRadius: "12px", boxShadow: "0 12px 32px rgba(15,23,42,.14)", maxHeight: "240px", overflowY: "auto", padding: "6px" }}>
-          {options.map((o) => {
-            const sel = vals.includes(o);
-            return (
-              <label
-                key={o}
-                onClick={(e) => { e.preventDefault(); toggle(o); }}
-                style={{ display: "flex", alignItems: "center", gap: "9px", padding: "8px 10px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", color: sel ? "var(--primary)" : "var(--text)", fontWeight: sel ? 700 : 500 }}
-              >
-                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "17px", height: "17px", border: `1px solid ${sel ? "var(--primary)" : "#c9d3dd"}`, borderRadius: "5px", background: sel ? "var(--primary)" : "#fff", color: "#fff", flexShrink: 0, fontSize: "11px" }}>{sel ? "✓" : ""}</span>
-                <span>{fmtEarning(o)}</span>
-              </label>
-            );
-          })}
+          {loading && <p style={{ padding: "10px", fontSize: "12.5px", color: "var(--subtext)" }}>Loading payroll components…</p>}
+          {!loading && normOptions.length === 0 && !staleVals.length && (
+            <p style={{ padding: "10px", fontSize: "12.5px", color: "var(--subtext)" }}>{emptyText || "No components configured — add them under Payroll."}</p>
+          )}
+          {normOptions.map((o) => renderRow(o.value, o.label))}
+          {staleVals.length > 0 && (
+            <>
+              <p style={{ fontSize: "10.5px", fontWeight: 700, color: "var(--subtext)", textTransform: "uppercase", letterSpacing: "0.4px", padding: "8px 10px 2px" }}>Previously selected (no longer in payroll)</p>
+              {staleVals.map((v) => renderRow(v, labelFor(v), true))}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -328,7 +354,111 @@ export default function EmployeeProfile() {
   const [saved, setSaved] = useState("");
   const [errMsg, setErrMsg] = useState("");
   const [addConsentOpen, setAddConsentOpen] = useState(false);
-  const [addConsent, setAddConsent] = useState({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT" });
+  const [consentDraft, setConsentDraft] = useState({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT", isStatutory: false });
+  const [creatingConsent, setCreatingConsent] = useState(false);
+  // Dynamic payroll components (earnings + deductions) fetched from /payroll/components.
+  // The dropdowns below render ONLY these — no static items — so add/rename/delete
+  // in Payroll is reflected here automatically.
+  const [payrollComponents, setPayrollComponents] = useState([]);
+  const [payrollCompLoading, setPayrollCompLoading] = useState(true);
+  const [wageRates, setWageRates] = useState([]);
+  const [employeeWages, setEmployeeWages] = useState([]);
+
+  const loadPayrollComponents = async () => {
+    setPayrollCompLoading(true);
+    try {
+      const res = await getPayrollComponentConfigs();
+      setPayrollComponents(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setPayrollComponents([]);
+    } finally {
+      setPayrollCompLoading(false);
+    }
+  };
+
+  const loadWageData = async () => {
+    try {
+      const [wr, ew] = await Promise.all([
+        getWageRates().catch(() => ({ data: [] })),
+        getEmployeeWages().catch(() => ({ data: [] })),
+      ]);
+      setWageRates(Array.isArray(wr.data) ? wr.data : []);
+      setEmployeeWages(Array.isArray(ew.data) ? ew.data : []);
+    } catch {
+      /* non-blocking */
+    }
+  };
+
+  // Fetch once on mount…
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPayrollComponents();
+    loadWageData();
+  }, []);
+
+  // …and refresh whenever the Payroll tab is opened or edit mode starts,
+  // so renames/adds/deletes in Payroll show up without a page reload.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (activeTab === "statutory") { loadPayrollComponents(); loadWageData(); }
+  }, [activeTab]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (editing) { loadPayrollComponents(); loadWageData(); }
+  }, [editing]);
+
+  // Split live components by kind (case-insensitive). Backend returns only
+  // isActive items, but guard anyway so deactivated rules never appear.
+  const liveComponents = (payrollComponents || []).filter((c) => c && c.isActive !== false && (c.code || c.name));
+  const toOption = (c) => ({ value: c.code || c.name, label: c.name || c.code });
+  const byName = (a, b) => String(a.label).localeCompare(String(b.label));
+  const earningsOptions = liveComponents
+    .filter((c) => String(c.kind || "").toLowerCase() !== "deduction")
+    .map(toOption)
+    .sort(byName);
+  const deductionsOptions = liveComponents
+    .filter((c) => String(c.kind || "").toLowerCase() === "deduction")
+    .map(toOption)
+    .sort(byName);
+  // Code → display-name lookup (case-insensitive for legacy UPPER-case savings).
+  const componentLabelMap = {};
+  for (const c of liveComponents) {
+    const label = c.name || c.code;
+    if (c.code) { componentLabelMap[c.code] = label; componentLabelMap[String(c.code).toLowerCase()] = label; }
+    if (c.name) { componentLabelMap[c.name] = label; }
+  }
+
+  // ── Warning if monthly gross < basic wage (from wage rates + overrides) ──
+  // Basic wage = wage-rate daily*26 for this employee's skill/state (same logic as BlueCollar uniform basic).
+  const monthlyGrossForWarning = useMemo(() => {
+    const mg = Number(local?.monthlyGross);
+    if (mg > 0) return Math.round(mg);
+    const ann = Number(local?.annualSalary);
+    if (ann > 0) return Math.round(ann / 12);
+    return null;
+  }, [local?.monthlyGross, local?.annualSalary]);
+
+  const basicWageForWarning = useMemo(() => {
+    if (!wageRates.length || !employee) return null;
+    // Prefer server-joined basic (most accurate, includes overrides) if available
+    const joined = employeeWages.find((w) => w.employeeCode === employee.employeeCode || w.employeeId === employee.id);
+    if (joined && Number(joined.basicMonthly) > 0) return Math.round(Number(joined.basicMonthly));
+    // Fallback to local wage-rate lookup
+    try {
+      const empForWage = {
+        skillType: local?.job?.skillType || employee?.skillType || "Skilled",
+        state: employee?.state || local?.currentAddress?.stateCode || local?.state || employee?.location || "",
+        locationId: employee?.locationId || null,
+        contractorId: employee?.contractorId || null,
+        dailyWageRate: employee?.dailyWageRate || local?.dailyWageRate || 0,
+        location: employee?.location ? (typeof employee.location === "string" ? { name: employee.location } : employee.location) : null,
+      };
+      const r = basicMonthlyFor(empForWage, wageRates);
+      return r.basicMonthly > 0 ? r.basicMonthly : null;
+    } catch { return null; }
+  }, [wageRates, employeeWages, employee, local]);
+
+  const showGrossWarning = monthlyGrossForWarning != null && basicWageForWarning != null && monthlyGrossForWarning < basicWageForWarning;
 
   useEffect(() => {
     getEmployee(id)
@@ -354,9 +484,14 @@ export default function EmployeeProfile() {
       if (local.job.designationTitle && local.job.designationTitle !== (employee.designation || "")) flat.designation = local.job.designationTitle;
       if (local.job.departmentTitle && local.job.departmentTitle !== (employee.department || "")) flat.department = local.job.departmentTitle;
       if (local.job.status && local.job.status !== (employee.status || "")) flat.status = local.job.status;
+      // Sync flat payroll columns so the employee table + all payroll panels
+      // reflect skill/type edits immediately (backend also backfills from wizardData).
+      if (local.job.skillType && local.job.skillType !== (employee.skillType || "")) flat.skillType = local.job.skillType;
+      if (local.job.employmentType && local.job.employmentType !== (employee.employmentType || "")) flat.employmentType = local.job.employmentType;
       if (local.annualSalary !== "" && local.annualSalary != null) flat.annualSalary = Math.round(Number(local.annualSalary));
       const payload = { ...flat, wizardData: local };
       await updateEmployee(id, payload);
+      try { window.dispatchEvent(new CustomEvent("hrms:employees-changed", { detail: { id } })); } catch { /* non-browser */ }
 
       // Dynamically sync production target with payroll production engine
       if (local.payRules?.productionTarget && id) {
@@ -385,6 +520,44 @@ export default function EmployeeProfile() {
       setErrMsg(e.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const submitConsentDraft = async () => {
+    if (!consentDraft.code.trim() || !consentDraft.title.trim()) return;
+    setCreatingConsent(true);
+    setErrMsg("");
+    try {
+      const payload = {
+        code: consentDraft.code.trim().toUpperCase(),
+        title: consentDraft.title.trim(),
+        purposeText: consentDraft.purposeText?.trim() || "",
+        legalBasis: consentDraft.legalBasis || "CONTRACT",
+        isStatutory: !!consentDraft.isStatutory,
+        blocking: !!consentDraft.isStatutory,
+        withdrawable: !consentDraft.isStatutory,
+        requiredOnOnboarding: false,
+        useCase: "EMPLOYEE_PROFILE",
+        dataFields: [],
+        validityPeriodDays: null,
+      };
+      await createConsentPolicy(payload);
+      // Reflect the newly registered consent type in the register immediately.
+      setLocal((p) => ({
+        ...p,
+        consents: [
+          ...(p?.consents || []),
+          { code: payload.code, method: "HR_ADMIN", status: "GRANTED" },
+        ],
+      }));
+      setConsentDraft({ code: "", title: "", purposeText: "", legalBasis: "CONTRACT", isStatutory: false });
+      setAddConsentOpen(false);
+      setSaved("Consent type added");
+      setTimeout(() => setSaved(""), 2500);
+    } catch (e) {
+      setErrMsg(e?.response?.data?.message || e?.message || "Could not add consent type");
+    } finally {
+      setCreatingConsent(false);
     }
   };
 
@@ -585,6 +758,14 @@ export default function EmployeeProfile() {
                   <Input label="Yearly salary package (₹)" type="number" value={local.annualSalary || ""} onChange={(v) => { const n = v === "" ? "" : Math.round(Number(v)); setL("annualSalary", n); setL("statutory.annualSalary", n === "" ? "" : Number(n)); setL("monthlyGross", n === "" ? "" : Math.round(Number(n) / 12)); }} />
                   <Input label="Monthly gross (₹)" type="number" value={local.monthlyGross || ""} onChange={(v) => { const n = v === "" ? "" : Math.round(Number(v)); setL("monthlyGross", n); const y = n === "" ? "" : n * 12; setL("annualSalary", y); setL("statutory.annualSalary", y === "" ? "" : y); }} />
                 </Grid>
+                {showGrossWarning && (
+                  <div style={{ marginTop: "12px", display: "flex", gap: "10px", alignItems: "flex-start", padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "10px", color: "#dc2626" }}>
+                    <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: "1px" }} />
+                    <div style={{ fontSize: "12.5px", lineHeight: 1.5 }}>
+                      <strong>Monthly gross is below Basic wage</strong> — Monthly gross (₹{Number(monthlyGrossForWarning).toLocaleString("en-IN")}) is less than the statutory Basic wage (₹{Number(basicWageForWarning).toLocaleString("en-IN")}) for <strong>{local?.job?.skillType || employee?.skillType || "this skill"}</strong> as per Wage Rates & Overrides. Monthly gross should always be ≥ Basic wage.
+                    </div>
+                  </div>
+                )}
               </Section>
               <Section title="Bank & payment">
                 <Grid editing={editing}>
@@ -604,7 +785,8 @@ export default function EmployeeProfile() {
                   <SelectInput label="Assigned contractor / vendor" value={local.payRules.contractor} onChange={(v) => setL("payRules.contractor", v)} options={["Direct Company Worker", ...CONTRACTORS]} />
                   <SelectInput label="Wage rate mode" value={local.payRules.wageRate} onChange={(v) => setL("payRules.wageRate", v)} options={WAGE_RATES} />
                   <Toggle label="Salary advance eligible" value={local.payRules.salaryAdvance} onChange={(v) => setL("payRules.salaryAdvance", v)} />
-                  <MultiSelect label="Applicable earning allowances" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={EARNINGS} />
+                  <MultiSelect label="Applicable earning allowances" value={local.payRules.earnings} onChange={(v) => setL("payRules.earnings", v)} options={earningsOptions} labelMap={componentLabelMap} loading={payrollCompLoading} emptyText="No earning components in Payroll — add them under Payroll → Allowance & Incentive Rules." />
+                  <MultiSelect label="Applicable deductions" value={local.payRules.deductions} onChange={(v) => setL("payRules.deductions", v)} options={deductionsOptions} labelMap={componentLabelMap} loading={payrollCompLoading} emptyText="No deduction components in Payroll — add them under Payroll → Deductions." />
                 </Grid>
               </Section>
             </>

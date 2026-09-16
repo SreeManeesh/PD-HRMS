@@ -26,9 +26,11 @@ import calendarRoutes from "../modules/calendar/calendar.routes";
 import companyBrandingRoutes from "../modules/companyBranding/companyBranding.routes";
 import companyConfigRoutes from "../modules/companyConfig/companyConfig.routes";
 import wizardRoutes from "../modules/wizard/wizard.routes";
-
+import docsRoutes from "./docs.routes";
 
 const router = Router();
+
+router.use("/docs", docsRoutes);
 
 const serviceName = process.env.SERVICE_NAME;
 

@@ -1,4 +1,4 @@
-﻿import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Users } from "lucide-react";
 import DashboardWidgetCard from "./DashboardWidgetCard.jsx";
 import { useDashboardWidget } from "../../hooks/useDashboardWidget.js";
@@ -35,7 +35,7 @@ export default function PeopleCard() {
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--primary-light)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "var(--background)")}
               >
-                <img src={person.img} alt={person.name} style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)", flexShrink: 0 }} />
+                <img loading="lazy" src={person.img} alt={person.name} style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)", flexShrink: 0 }} />
                 <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {person.name}
                 </p>

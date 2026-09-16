@@ -14,8 +14,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force",
-    "test": "tsx src/modules/payslip/tests/payslip.test.ts"
+    "test:auth": "tsx src/modules/auth/tests/auth.smoke.test.ts",
+    "test:payslip": "tsx src/modules/payslip/tests/payslip.test.ts",
+    "test:payroll": "tsx src/modules/payroll/tests/payrollScenarios.test.ts",
+    "test": "tsx src/modules/auth/tests/auth.smoke.test.ts && tsx src/modules/payslip/tests/payslip.test.ts && tsx src/modules/payroll/tests/payrollScenarios.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -23,6 +25,7 @@
   "dependencies": {
     "@prisma/client": "^6.10.0",
     "bcryptjs": "^2.4.3",
+    "compression": "^1.8.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
@@ -43,6 +46,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.7",

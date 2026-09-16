@@ -144,6 +144,8 @@ router.get("/distribution/history", authenticate, requirePermission("payroll:rea
 
 // ── Wage Rates (Category / Location / Contractor) ──────────────────────────
 router.get("/wage-rates", authenticate, requirePermission("payroll:read"), wageRateController.listWageRates);
+// Joined per-employee Basic + monthly gross (wage rates + overrides + earnings).
+router.get("/employee-wages", authenticate, requirePermission("payroll:read"), wageRateController.getEmployeeWages);
 router.post("/wage-rates", authenticate, requirePermission("payroll:write"), wageRateController.createWageRate);
 router.put("/wage-rates/:id", authenticate, requirePermission("payroll:write"), wageRateController.updateWageRate);
 router.delete("/wage-rates/:id", authenticate, requirePermission("payroll:write"), wageRateController.deleteWageRate);
