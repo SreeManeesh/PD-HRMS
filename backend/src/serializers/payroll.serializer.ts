@@ -44,15 +44,29 @@ type SlipWithRelations = Payslip & {
   payrollRun?: PayrollRun | null;
 };
 
-/** Payslip DTO — matches mock/payroll.js (`id` is PS-YYYY-MM-EMPCODE). */
+/** Payslip DTO — matches mock/payroll.js (`id` is PS-YYYY-MM-EMPCODE).
+ *  gross === stored earnings.total (already net of leave/LOP). leaveDeduction
+ *  is reported separately from attendanceSummary and is NOT part of
+ *  deductions.total — clients must not add them together. */
 export function serializePayslip(slip: SlipWithRelations) {
   const earnings = (slip.earnings ?? {}) as Record<string, unknown>;
   const deductions = (slip.deductions ?? {}) as Record<string, unknown>;
+  const attendance = (slip.attendanceSummary ?? {}) as Record<string, unknown>;
 
   const earnedTotal = toNumber(earnings.total);
-  const annual = toNumber(slip.employee?.annualSalary);
-  const gross = annual > 0 ? Math.round(annual / 12) : earnedTotal;
-  const leaveDeduction = Math.max(gross - earnedTotal, 0);
+  const gross = earnedTotal;
+  const leaveDeduction = toNumber(
+    (attendance as Record<string, unknown>).lopDeduction ??
+      (attendance as Record<string, unknown>).leaveDeduction ??
+      0,
+  );
+
+  // Dynamic pass-through: every stored earning/deduction key is exposed so
+  // custom payroll components are never dropped from stored-slip views.
+  const dynamicEarnings: Record<string, number> = {};
+  for (const [k, v] of Object.entries(earnings)) dynamicEarnings[k] = toNumber(v);
+  const dynamicDeductions: Record<string, number> = {};
+  for (const [k, v] of Object.entries(deductions)) dynamicDeductions[k] = toNumber(v);
 
   return {
     id: `PS-${slip.payrollRun?.year ?? 0}-${String(slip.payrollRun?.month ?? 0).padStart(2, "0")}-${slip.employee?.employeeCode ?? ""}`,
@@ -71,6 +85,7 @@ export function serializePayslip(slip: SlipWithRelations) {
       otherAllowances: toNumber(earnings.otherAllowances),
       overtime: toNumber(earnings.overtime),
       total: earnedTotal,
+      ...dynamicEarnings,
     },
     deductions: {
       providentFund: toNumber(deductions.providentFund),
@@ -78,8 +93,9 @@ export function serializePayslip(slip: SlipWithRelations) {
       incomeTax: toNumber(deductions.incomeTax),
       healthInsurance: toNumber(deductions.healthInsurance),
       total: toNumber(deductions.total),
+      ...dynamicDeductions,
     },
-    attendance: (slip.attendanceSummary ?? {}) as Record<string, unknown>,
+    attendance,
     employerContributions: (slip.employerContributions ?? {}) as Record<string, number>,
     netPay: toNumber(slip.netPay),
     status: slip.status,

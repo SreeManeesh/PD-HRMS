@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import { toNumber, round2 } from "../../serializers/helpers";
+import { resolveEmployeeWageRate } from "./payroll.service";
 
 export async function listContractors(req: Request, res: Response, next: NextFunction) {
   try {
@@ -142,11 +143,19 @@ export async function getContractorPayrollReport(req: Request, res: Response, ne
         firstName: true,
         lastName: true,
         skillType: true,
+        salaryType: true,
+        state: true,
+        locationId: true,
         dailyWageRate: true,
         annualSalary: true,
         contractorId: true,
       },
     });
+
+    // Wage rates come from the DB only (no static/hardcoded fallback) — the
+    // same state/skill/location/contractor resolution payroll uses, so the
+    // contractor preview matches the eventual payslip.
+    const wageRates = await prisma.wageRate.findMany({ where: { isActive: true } });
 
     const report = contractors.map((c) => {
       const contractorSlips = (run?.payslips ?? []).filter((s) => s.employee.contractorId === c.id);
@@ -183,8 +192,13 @@ export async function getContractorPayrollReport(req: Request, res: Response, ne
       } else {
         const assignedEmps = activeContractorEmps.filter((e) => e.contractorId === c.id);
         for (const emp of assignedEmps) {
-          const daily = toNumber(emp.dailyWageRate) || 750;
-          const monthly = toNumber(emp.annualSalary) ? round2(toNumber(emp.annualSalary) / 12) : round2(daily * 26);
+          // Dynamic only: the employee's own wage (override, else the fetched
+          // wage-rate table for their skill/state/location/contractor). No
+          // static fallback — an unconfigured rate yields 0 and shows as such.
+          const wageDailyRate = resolveEmployeeWageRate(emp, wageRates).dailyRate;
+          const monthly = toNumber(emp.annualSalary)
+            ? round2(toNumber(emp.annualSalary) / 12)
+            : round2(wageDailyRate * 26);
           const ded = round2(monthly * 0.12);
           const net = round2(monthly - ded);
           totalGross += monthly;

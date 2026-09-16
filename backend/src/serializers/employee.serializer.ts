@@ -15,6 +15,8 @@ type EmployeeWithRelations = Employee & {
   user?: { email: string | null } | null;
   reportingManager?: { employeeCode: string; firstName: string; lastName: string } | null;
   salaryStructures?: SalaryStructure[];
+  locationId?: string | null;
+  contractorId?: string | null;
 };
 
 export interface SerializationContext {
@@ -111,6 +113,13 @@ export function serializeEmployee(emp: EmployeeWithRelations, context?: Serializ
     managerId: emp.reportingManager?.employeeCode ?? null,
     gender: emp.gender ?? "",
     skillType: emp.skillType ?? "",
+    // Pay-basis fields needed by wage-driven UIs (Earnings / Deductions /
+    // Employees gross). Kept flat so the frontend can resolve
+    // Basic (dailyRate × 26) + monthly gross without extra round-trips.
+    salaryType: (emp as { salaryType?: string | null }).salaryType ?? "Monthly",
+    dailyWageRate: toNumber((emp as { dailyWageRate?: unknown }).dailyWageRate),
+    locationId: (emp as { locationId?: string | null }).locationId ?? null,
+    contractorId: (emp as { contractorId?: string | null }).contractorId ?? null,
     dob: emp.dateOfBirth ? formatDate(emp.dateOfBirth) : null,
     wizardData: sanitizeWizardData((emp as any).wizardData, context),
   };

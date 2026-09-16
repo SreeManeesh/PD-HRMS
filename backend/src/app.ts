@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import compression from "compression";
 import { pinoHttp } from "pino-http";
 import crypto from "crypto";
 import { env, corsOrigins } from "./config/env";
@@ -21,6 +22,8 @@ app.set("trust proxy", 1);
 const assetOrigins: string[] = [env.APP_URL, env.ASSET_HOST].filter(
   (origin): origin is string => Boolean(origin)
 );
+
+app.use(compression());
 
 app.use(
   helmet({

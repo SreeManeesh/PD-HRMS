@@ -34,6 +34,8 @@ import {
   createPayslipTemplate,
 } from "../../services/payslipDesignerService.js";
 import { getEmployees } from "../../services/employeeService.js";
+import { getWageRates } from "../../services/payrollService.js";
+import { basicMonthlyFor } from "../../utils/wageRates.js";
 import { assetUrl } from "../../utils/assetUrl.js";
 import { useToast } from "../../context/ToastContext.jsx";
 import ClassicTablePayslip from "../../components/payslip/ClassicTablePayslip.jsx";
@@ -388,6 +390,9 @@ export function PayslipBrandingPanel() {
 
   // Live Employee Selection for Dynamic Preview
   const [employees, setEmployees] = useState([]);
+  // Master wage rates (DB only) so the preview's Basic for daily-wage staff is
+  // the wage-rate/override figure — never a hardcoded default.
+  const [wageRates, setWageRates] = useState([]);
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [previewMonth, setPreviewMonth] = useState(new Date().getMonth() + 1);
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear());
@@ -449,6 +454,23 @@ export function PayslipBrandingPanel() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  // Wage rates (dynamic, DB-backed) — keeps the preview in sync when rates or
+  // overrides change in Wage Rates & Overrides / Earnings.
+  useEffect(() => {
+    const load = () =>
+      getWageRates()
+        .then((res) => setWageRates(res.data || []))
+        .catch(() => setWageRates([]));
+    load();
+    const onChanged = () => load();
+    window.addEventListener("hrms:wage-rates-changed", onChanged);
+    window.addEventListener("hrms:payroll-components-changed", onChanged);
+    return () => {
+      window.removeEventListener("hrms:wage-rates-changed", onChanged);
+      window.removeEventListener("hrms:payroll-components-changed", onChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -618,7 +640,7 @@ export function PayslipBrandingPanel() {
       emp.salaryType === "Daily" ||
       (Number(emp.dailyWageRate) > 0 && !emp.annualSalary);
     const monthlyGross = isDaily
-      ? Number(emp.dailyWageRate || 750) * 26
+      ? basicMonthlyFor(emp, wageRates).basicMonthly
       : Math.round((Number(emp.annualSalary) || 720000) / 12);
 
     const basic = Math.round(monthlyGross * 0.5);
@@ -676,7 +698,7 @@ export function PayslipBrandingPanel() {
       netPayWords,
       stateName,
     };
-  }, [currentEmployee]);
+  }, [currentEmployee, wageRates]);
 
   const handlePrint = () => {
     window.print();

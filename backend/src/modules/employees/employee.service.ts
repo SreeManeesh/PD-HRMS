@@ -25,8 +25,22 @@ export interface EmployeeFilters {
   search?: string;
   department?: string;
   status?: string;
+  skillType?: string;
   page?: number;
   limit?: number;
+}
+
+/** Normalize skill labels so profile edits match table/payroll filters. */
+function normalizeSkillKey(s?: string | null): string {
+  return String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function skillTypeVariants(canonical: string): string[] {
+  const n = normalizeSkillKey(canonical);
+  if (n === "semiskilled") return ["Semi Skilled", "Semi-Skilled", "SEMISKILLED", "SemiSkilled"];
+  if (n === "unskilled") return ["Unskilled", "UNSKILLED"];
+  if (n === "skilled") return ["Skilled", "SKILLED"];
+  return [canonical];
 }
 
 export async function listEmployees(filters: EmployeeFilters, context?: SerializationContext) {
@@ -41,17 +55,25 @@ export async function listEmployees(filters: EmployeeFilters, context?: Serializ
   if (filters.department) {
     where.department = { name: filters.department };
   }
+  const andClauses: Prisma.EmployeeWhereInput[] = [];
+  if (filters.skillType) {
+    const variants = skillTypeVariants(filters.skillType);
+    andClauses.push({ OR: variants.map((v) => ({ skillType: { equals: v, mode: "insensitive" as const } })) });
+  }
   if (filters.search) {
     const q = filters.search.trim();
-    where.OR = [
-      { firstName: { contains: q, mode: "insensitive" } },
-      { lastName: { contains: q, mode: "insensitive" } },
-      { employeeCode: { contains: q, mode: "insensitive" } },
-      { personalEmail: { contains: q, mode: "insensitive" } },
-      { designation: { title: { contains: q, mode: "insensitive" } } },
-      { user: { email: { contains: q, mode: "insensitive" } } },
-    ];
+    andClauses.push({
+      OR: [
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { employeeCode: { contains: q, mode: "insensitive" } },
+        { personalEmail: { contains: q, mode: "insensitive" } },
+        { designation: { title: { contains: q, mode: "insensitive" } } },
+        { user: { email: { contains: q, mode: "insensitive" } } },
+      ],
+    });
   }
+  if (andClauses.length) where.AND = andClauses;
 
   const [rows, total] = await Promise.all([
     prisma.employee.findMany({ where, include: EMPLOYEE_INCLUDE, orderBy: { employeeCode: "asc" }, skip, take: limit }),
@@ -761,6 +783,19 @@ export async function updateEmployee(id: string, input: Partial<CreateEmployeeIn
 
   const parsedAnnualSalary = parseAnnualSalaryInput(input.annualSalary);
 
+  // Keep the flat payroll columns in sync when callers only send wizardData
+  // (EmployeeProfile saves job.skillType / employmentType inside wizardData).
+  // Without this, the table + payroll keep showing the stale flat value.
+  const wizJob = (input.wizardData as unknown as { job?: Record<string, unknown> } | undefined)?.job;
+  const wizSkill = wizJob ? String((wizJob as Record<string, unknown>).skillType ?? "").trim() : "";
+  const wizEmpType = wizJob ? String((wizJob as Record<string, unknown>).employmentType ?? "").trim() : "";
+  const wizEmpCat = wizJob ? String((wizJob as Record<string, unknown>).employeeCategory ?? "").trim() : "";
+  const effectiveSkillType = input.skillType !== undefined ? input.skillType : (wizSkill || undefined);
+  const effectiveEmploymentType = (input as Record<string, unknown>).employmentType !== undefined
+    ? (input as Record<string, unknown>).employmentType as string
+    : (wizEmpType || undefined);
+  void wizEmpCat;
+
 let finalUserId = existing.userId;
   if (email !== undefined && email !== null) {
     if (!existing.userId) {
@@ -787,13 +822,13 @@ let finalUserId = existing.userId;
       personalMobile: input.phone !== undefined ? input.phone || null : undefined,
       dateOfBirth: input.dob !== undefined ? toOptionalDate(input.dob) : undefined,
       gender: input.gender !== undefined ? input.gender || null : undefined,
-      skillType: input.skillType !== undefined ? input.skillType || null : undefined,
+      skillType: effectiveSkillType !== undefined ? effectiveSkillType || null : undefined,
       designationId: designationId !== undefined ? designationId : undefined,
       departmentId: departmentId !== undefined ? departmentId : undefined,
       locationId: locationId !== undefined ? locationId : undefined,
       reportingManagerId: input.managerId !== undefined ? input.managerId || null : undefined,
       dateOfJoining: input.dateOfJoining ? new Date(input.dateOfJoining) : undefined,
-      employmentType: input.employmentType ?? undefined,
+      employmentType: (effectiveEmploymentType as string | undefined) ?? undefined,
       status: input.status ?? undefined,
       state: input.state !== undefined ? input.state || null : undefined,
       country: input.country !== undefined ? input.country || null : undefined,

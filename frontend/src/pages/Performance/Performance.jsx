@@ -262,14 +262,14 @@ function AddGoalModal({ isOpen, onClose, onSaved, cycleName, goal = null }) {
     }
   }, [isOpen, goal, isManagerOrAdmin, user]);
 
-  const reset = () => {
+  function reset() {
     setTitle("");
     setCategory("Technical");
     setKeyResults([{ text: "" }]);
     setErrors({});
     setTarget("self");
     setSelectedEmpId("");
-  };
+  }
 
   const updateKR = (i, value) => {
     setKeyResults((prev) =>

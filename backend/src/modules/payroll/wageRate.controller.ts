@@ -4,112 +4,18 @@ import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../services/audit.service";
 import { toNumber } from "../../serializers/helpers";
 
-export const DEFAULT_INDIAN_STATE_WAGE_RATES = [
-  // Central / All States Default
-  { skillCategory: "Skilled", dailyRate: 900, hourlyRate: 112.5, state: "All States (Default)" },
-  { skillCategory: "Semi-Skilled", dailyRate: 750, hourlyRate: 93.75, state: "All States (Default)" },
-  { skillCategory: "Unskilled", dailyRate: 650, hourlyRate: 81.25, state: "All States (Default)" },
-
-  // Maharashtra
-  { skillCategory: "Skilled", dailyRate: 920, hourlyRate: 115, state: "Maharashtra" },
-  { skillCategory: "Semi-Skilled", dailyRate: 770, hourlyRate: 96.25, state: "Maharashtra" },
-  { skillCategory: "Unskilled", dailyRate: 670, hourlyRate: 83.75, state: "Maharashtra" },
-
-  // Delhi
-  { skillCategory: "Skilled", dailyRate: 900, hourlyRate: 112.5, state: "Delhi" },
-  { skillCategory: "Semi-Skilled", dailyRate: 750, hourlyRate: 93.75, state: "Delhi" },
-  { skillCategory: "Unskilled", dailyRate: 650, hourlyRate: 81.25, state: "Delhi" },
-
-  // Karnataka
-  { skillCategory: "Skilled", dailyRate: 880, hourlyRate: 110, state: "Karnataka" },
-  { skillCategory: "Semi-Skilled", dailyRate: 740, hourlyRate: 92.5, state: "Karnataka" },
-  { skillCategory: "Unskilled", dailyRate: 640, hourlyRate: 80, state: "Karnataka" },
-
-  // Gujarat
-  { skillCategory: "Skilled", dailyRate: 870, hourlyRate: 108.75, state: "Gujarat" },
-  { skillCategory: "Semi-Skilled", dailyRate: 730, hourlyRate: 91.25, state: "Gujarat" },
-  { skillCategory: "Unskilled", dailyRate: 635, hourlyRate: 79.38, state: "Gujarat" },
-
-  // Tamil Nadu
-  { skillCategory: "Skilled", dailyRate: 860, hourlyRate: 107.5, state: "Tamil Nadu" },
-  { skillCategory: "Semi-Skilled", dailyRate: 720, hourlyRate: 90, state: "Tamil Nadu" },
-  { skillCategory: "Unskilled", dailyRate: 630, hourlyRate: 78.75, state: "Tamil Nadu" },
-
-  // Uttar Pradesh
-  { skillCategory: "Skilled", dailyRate: 850, hourlyRate: 106.25, state: "Uttar Pradesh" },
-  { skillCategory: "Semi-Skilled", dailyRate: 710, hourlyRate: 88.75, state: "Uttar Pradesh" },
-  { skillCategory: "Unskilled", dailyRate: 620, hourlyRate: 77.5, state: "Uttar Pradesh" },
-
-  // Haryana
-  { skillCategory: "Skilled", dailyRate: 910, hourlyRate: 113.75, state: "Haryana" },
-  { skillCategory: "Semi-Skilled", dailyRate: 760, hourlyRate: 95, state: "Haryana" },
-  { skillCategory: "Unskilled", dailyRate: 660, hourlyRate: 82.5, state: "Haryana" },
-
-  // West Bengal
-  { skillCategory: "Skilled", dailyRate: 860, hourlyRate: 107.5, state: "West Bengal" },
-  { skillCategory: "Semi-Skilled", dailyRate: 720, hourlyRate: 90, state: "West Bengal" },
-  { skillCategory: "Unskilled", dailyRate: 630, hourlyRate: 78.75, state: "West Bengal" },
-
-  // Telangana
-  { skillCategory: "Skilled", dailyRate: 890, hourlyRate: 111.25, state: "Telangana" },
-  { skillCategory: "Semi-Skilled", dailyRate: 750, hourlyRate: 93.75, state: "Telangana" },
-  { skillCategory: "Unskilled", dailyRate: 640, hourlyRate: 80, state: "Telangana" },
-
-  // Rajasthan
-  { skillCategory: "Skilled", dailyRate: 840, hourlyRate: 105, state: "Rajasthan" },
-  { skillCategory: "Semi-Skilled", dailyRate: 700, hourlyRate: 87.5, state: "Rajasthan" },
-  { skillCategory: "Unskilled", dailyRate: 610, hourlyRate: 76.25, state: "Rajasthan" },
-
-  // Kerala
-  { skillCategory: "Skilled", dailyRate: 930, hourlyRate: 116.25, state: "Kerala" },
-  { skillCategory: "Semi-Skilled", dailyRate: 780, hourlyRate: 97.5, state: "Kerala" },
-  { skillCategory: "Unskilled", dailyRate: 680, hourlyRate: 85, state: "Kerala" },
-
-  // Madhya Pradesh
-  { skillCategory: "Skilled", dailyRate: 830, hourlyRate: 103.75, state: "Madhya Pradesh" },
-  { skillCategory: "Semi-Skilled", dailyRate: 690, hourlyRate: 86.25, state: "Madhya Pradesh" },
-  { skillCategory: "Unskilled", dailyRate: 600, hourlyRate: 75, state: "Madhya Pradesh" },
-
-  // Andhra Pradesh
-  { skillCategory: "Skilled", dailyRate: 870, hourlyRate: 108.75, state: "Andhra Pradesh" },
-  { skillCategory: "Semi-Skilled", dailyRate: 730, hourlyRate: 91.25, state: "Andhra Pradesh" },
-  { skillCategory: "Unskilled", dailyRate: 630, hourlyRate: 78.75, state: "Andhra Pradesh" },
-
-  // Punjab
-  { skillCategory: "Skilled", dailyRate: 900, hourlyRate: 112.5, state: "Punjab" },
-  { skillCategory: "Semi-Skilled", dailyRate: 750, hourlyRate: 93.75, state: "Punjab" },
-  { skillCategory: "Unskilled", dailyRate: 650, hourlyRate: 81.25, state: "Punjab" },
-];
-
+/**
+ * Wage rates are DYNAMIC ONLY — every row comes from the Wage Rates & Overrides
+ * UI/API (state/skill/location/contractor scope or an employee override).
+ * Nothing is ever auto-seeded or synthesised here; this helper merely backfills
+ * the legacy `state: null` rows to the explicit "All States (Default)" label so
+ * they stay addressable as the fallback scope.
+ */
 async function ensureDefaultWageRates() {
-  // 1. Backfill any existing rates with state == null to 'All States (Default)'
   await prisma.wageRate.updateMany({
     where: { state: null },
     data: { state: "All States (Default)" },
   });
-
-  // 2. Ensure every state in DEFAULT_INDIAN_STATE_WAGE_RATES has its category rates present
-  for (const r of DEFAULT_INDIAN_STATE_WAGE_RATES) {
-    const existing = await prisma.wageRate.findFirst({
-      where: {
-        skillCategory: { equals: r.skillCategory, mode: "insensitive" },
-        state: { equals: r.state, mode: "insensitive" },
-        locationId: null,
-        contractorId: null,
-      },
-    });
-    if (!existing) {
-      await prisma.wageRate.create({
-        data: {
-          skillCategory: r.skillCategory,
-          dailyRate: r.dailyRate,
-          hourlyRate: r.hourlyRate,
-          state: r.state,
-          isActive: true,
-        },
-      });
-    }
-  }
 }
 
 export async function listWageRates(req: Request, res: Response, next: NextFunction) {
@@ -272,6 +178,185 @@ export async function deleteWageRate(req: Request, res: Response, next: NextFunc
     const { id } = req.params;
     await prisma.wageRate.update({ where: { id }, data: { isActive: false } });
     res.json({ message: "Wage rate deactivated successfully" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/payroll/employee-wages — single source of truth joining
+ * employees ↔ wage rates (+ per-employee override) ↔ earning components.
+ *
+ * Doctrine (applied everywhere, backend + frontend):
+ *   monthly salary (base pay) = Basic (locked state/skill minimum wage) + allowances
+ *   gross earnings === monthly salary, always.
+ * E.g. monthly ₹40,000 with a ₹22,000 state minimum → basic ₹22,000 and the
+ * ₹18,000 remainder is divided into the allowance components.
+ */
+export async function getEmployeeWages(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { basicMonthlyWage, splitMonthlyPackage } = await import("./payroll.service");
+    const [employees, wageRates, components] = await Promise.all([
+      prisma.employee.findMany({
+        where: { status: { in: ["Active", "On Leave"] } },
+        select: {
+          id: true, employeeCode: true, firstName: true, lastName: true,
+          skillType: true, state: true, locationId: true, contractorId: true,
+          dailyWageRate: true, annualSalary: true, salaryType: true,
+          location: { select: { name: true } },
+        },
+        orderBy: { employeeCode: "asc" },
+      }),
+      prisma.wageRate.findMany({ where: { isActive: true } }),
+      prisma.payrollComponentConfig.findMany({ where: { isActive: true, kind: "earning" } }),
+    ]);
+
+    const norm = (s: unknown) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+    const isBasicKey = (c: { code?: string | null; name?: string | null }) =>
+      norm(c.code).includes("basic") || norm(c.name).includes("basic");
+    const fromGross = (c: { sourceField?: string | null; percentageFrom?: string | null }) =>
+      String(c.sourceField || "").toLowerCase() === "ctc" ||
+      String(c.percentageFrom || "").toLowerCase().includes("gross");
+
+    const data = employees.map((e) => {
+      const wage = basicMonthlyWage(
+        {
+          skillType: e.skillType, locationId: e.locationId, contractorId: e.contractorId,
+          dailyWageRate: e.dailyWageRate, state: e.state,
+          location: e.location ? { name: e.location.name } : null,
+        },
+        wageRates as unknown as Parameters<typeof basicMonthlyWage>[1],
+      );
+      const base = {
+        employeeId: e.id,
+        employeeCode: e.employeeCode,
+        name: `${e.firstName} ${e.lastName}`.trim(),
+        skillType: e.skillType || "Skilled",
+        state: e.state || e.location?.name || "",
+        salaryType: e.salaryType || (toNumber(e.dailyWageRate) > 0 && !toNumber(e.annualSalary) ? "Daily" : "Monthly"),
+        dailyRate: wage.dailyRate,
+        hourlyRate: wage.hourlyRate,
+        basicMonthly: wage.basicMonthly,
+        wageSource: wage.source,
+        isOverride: wage.isOverride,
+        storedAnnual: toNumber(e.annualSalary),
+      };
+      // Base pay (monthly income) is strictly employee-defined and NEVER
+      // sourced from wage rates: monthly staff carry it as annualSalary/12,
+      // daily staff as dailyRate × 26 (the wage rate IS a daily worker's pay
+      // basis). A monthly employee with no package has NO monthly — the wage
+      // table contributes ONLY their Basic line, never a monthly.
+      const isDaily =
+        String(e.salaryType || "").trim().toLowerCase() === "daily" ||
+        (toNumber(e.dailyWageRate) > 0 && !toNumber(e.annualSalary));
+      const storedMonthly = Math.round(toNumber(e.annualSalary) / 12);
+      if (!isDaily && storedMonthly <= 0) {
+        return {
+          ...base,
+          monthlySalary: null,
+          monthlyGross: null,
+          allowanceRemainder: 0,
+          allowanceEnvelope: null,
+          configuredAllowanceTotal: null,
+          allowanceExcess: null,
+          nonCompliant: true,
+          needsPackage: true,
+          monthlyDefined: false,
+          annualDerived: 0,
+        };
+      }
+      const empSkill = norm(e.skillType || "Skilled");
+      const applicable = components.filter((c) => {
+        if (isBasicKey(c)) return false; // basic is locked, never double-counted
+        if (c.calcType !== "fixed" && c.calcType !== "percentage") return false;
+        const cat = norm(c.applicableCategory || "ALL");
+        if (cat !== "all" && cat !== empSkill) return false;
+        if (c.locationId && c.locationId !== e.locationId) return false;
+        if (c.contractorId && c.contractorId !== e.contractorId) return false;
+        return true;
+      });
+      // Monthly salary envelope — employee-defined only: stored CTC for
+      // monthly staff; the basic-anchored minimum for daily staff (whose pay
+      // basis IS the daily rate). This branch is unreachable for monthly
+      // staff without a package (returned above).
+      const fixedWeights = applicable
+        .filter((c) => c.calcType === "fixed")
+        .map((c) => {
+          let w = toNumber(c.value ?? 0);
+          if (c.maxCap != null && toNumber(c.maxCap) > 0 && w > toNumber(c.maxCap)) w = Math.round(toNumber(c.maxCap));
+          return { key: String(c.code || c.name), weight: Math.max(0, w) };
+        });
+      const basicPctParts = applicable
+        .filter((c) => c.calcType === "percentage" && !fromGross(c))
+        .map((c) => {
+          let amt = Math.round((wage.basicMonthly * toNumber(c.pct ?? 0)) / 100);
+          if (c.maxCap != null && toNumber(c.maxCap) > 0 && amt > toNumber(c.maxCap)) amt = Math.round(toNumber(c.maxCap));
+          return { key: String(c.code || c.name), amount: Math.max(0, amt) };
+        });
+      // %‑of‑gross parts need the envelope: the stored monthly for monthly
+      // staff, the basic-anchored minimum for daily staff (no CTC).
+      const envelopeForPct =
+        storedMonthly > 0
+          ? storedMonthly
+          : (() => {
+              const pctGrossRatio = applicable
+                .filter((c) => c.calcType === "percentage" && fromGross(c))
+                .reduce((s, c) => s + toNumber(c.pct ?? 0) / 100, 0);
+              const fixedSum = fixedWeights.reduce((s, w) => s + w.weight, 0);
+              const denom = 1 - pctGrossRatio;
+              return denom > 0
+                ? Math.round((wage.basicMonthly + basicPctParts.reduce((s, p) => s + p.amount, 0) + fixedSum) / denom)
+                : Math.round(wage.basicMonthly + basicPctParts.reduce((s, p) => s + p.amount, 0) + fixedSum);
+            })();
+      const grossPctParts = applicable
+        .filter((c) => c.calcType === "percentage" && fromGross(c))
+        .map((c) => {
+          let amt = Math.round((envelopeForPct * toNumber(c.pct ?? 0)) / 100);
+          if (c.maxCap != null && toNumber(c.maxCap) > 0 && amt > toNumber(c.maxCap)) amt = Math.round(toNumber(c.maxCap));
+          return { key: String(c.code || c.name), amount: Math.max(0, amt) };
+        });
+      const otherRule = applicable.find(
+        (c) => !isBasicKey(c) && /other/i.test(String(c.code || c.name)),
+      );
+      // Full-month view (q = 1): basic locked, remainder split into allowances.
+      const split = splitMonthlyPackage({
+        target: storedMonthly > 0 ? storedMonthly : envelopeForPct,
+        basic: wage.basicMonthly,
+        fixedWeights,
+        basicPctParts,
+        grossPctParts,
+        otherKey: otherRule ? String(otherRule.code || otherRule.name) : "otherAllowances",
+      });
+      const monthlyGross = split.gross;
+      const annualDerived = monthlyGross * 12;
+      // Envelope telemetry: how much the CONFIGURED non-basic components draw
+      // vs the allowance pool (target − basic). allowanceExcess > 0 means the
+      // config over-drew and the parts were scaled pro-rata so that
+      // gross earnings === monthly gross (the payroll doctrine). Callers use
+      // this to surface a "gross would exceed monthly gross" disclaimer.
+      const targetEnvelope = storedMonthly > 0 ? storedMonthly : envelopeForPct;
+      const configuredAllowanceTotal =
+        basicPctParts.reduce((s, p) => s + p.amount, 0) +
+        grossPctParts.reduce((s, p) => s + p.amount, 0) +
+        fixedWeights.reduce((s, w) => s + w.weight, 0);
+      const allowanceEnvelope = Math.max(targetEnvelope - wage.basicMonthly, 0);
+      return {
+        ...base,
+        basicMonthly: split.basic,
+        monthlyGross,
+        monthlySalary: monthlyGross,
+        monthlyDefined: true,
+        needsPackage: false,
+        allowanceRemainder: Math.max(monthlyGross - split.basic, 0),
+        allowanceEnvelope,
+        configuredAllowanceTotal,
+        allowanceExcess: Math.max(configuredAllowanceTotal - allowanceEnvelope, 0),
+        nonCompliant: split.nonCompliant,
+        annualDerived,
+      };
+    });
+
+    res.json({ data });
   } catch (err) {
     next(err);
   }

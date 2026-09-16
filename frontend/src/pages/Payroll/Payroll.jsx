@@ -338,23 +338,30 @@ export default function Payroll() {
           const byEmp = {};
           slips.forEach((slip) => {
             const att = slip.attendance || {};
+            // Stored slips key employeeId by EMPLOYEE CODE (see
+            // serializePayslip) — index by code so every roster member
+            // matches; previously looked up by DB id and every row fell
+            // through to "Not Processed".
             byEmp[slip.employeeId] = {
               employeeId: slip.employeeId,
               employeeName: slip.employeeName,
               workingDays: att.workingDays ?? 0,
               leaveDays: att.unpaidLeaveDays ?? 0,
               presentDays: att.presentDays ?? 0,
-              // Full monthly package gross + leave included in deductions — the
-              // same figures the summary panel shows (gross − total = net pay).
+              // gross === stored earnings.total (already net of leave/LOP).
+              // deductions.total excludes leaveDeduction (shown separately) —
+              // adding them together would double-count leave.
               gross: slip.gross ?? (slip.earnings?.total ?? 0),
-              deductions: { total: (slip.deductions?.total ?? 0) + (slip.leaveDeduction ?? 0) },
+              deductions: { total: (slip.deductions?.total ?? 0) },
+              leaveDeduction: slip.leaveDeduction ?? 0,
               netPay: slip.netPay ?? 0,
               status: runStatus,
             };
           });
           // Include every active employee (complete total); anyone without a
           // stored slip shows a zero/Not Processed row so none are hidden.
-          const rows = employees.map((emp) => byEmp[emp.id] || {
+          // Match by code first (stored-slip key), then DB id.
+          const rows = employees.map((emp) => byEmp[emp.employeeCode] || byEmp[emp.id] || {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
             workingDays: 0,
@@ -484,7 +491,9 @@ export default function Payroll() {
   const selectedDayRows = selectedDay
     ? targetDayEmps.map((emp) => {
         const summary = monthPayMap[emp.id];
-        const rec = selectedDayRecords.find((r) => r.employeeId === emp.id) || null;
+        // Attendance records key employeeId by EMPLOYEE CODE while the roster
+        // is keyed by DB id — match either so day rows actually join.
+        const rec = selectedDayRecords.find((r) => r.employeeId === emp.id || r.employeeId === emp.employeeCode) || null;
         const workingDays = summary?.workingDays ?? 1;
         // Keep full precision here — rounding happens once at render (fmt).
         // Pre-rounding each day made the days sum to monthly±₹workingDays/2.
@@ -999,7 +1008,7 @@ export default function Payroll() {
                         {slip.leaveDeduction > 0 && (
                           <p style={{ fontSize: "12.5px", color: "var(--amber)", marginTop: "2px" }}>
                             Leave without pay: {slip.attendance?.unpaidLeaveDays ?? 0} day{(slip.attendance?.unpaidLeaveDays ?? 0) === 1 ? "" : "s"} —
-                            ₹{new Intl.NumberFormat("en-IN").format(slip.leaveDeduction)} deducted from your full monthly gross of ₹{new Intl.NumberFormat("en-IN").format(slip.gross)}.
+                            ₹{new Intl.NumberFormat("en-IN").format(slip.leaveDeduction)} unpaid leave adjustment (gross of ₹{new Intl.NumberFormat("en-IN").format(slip.gross)} is already net of leave).
                           </p>
                         )}
                       </div>

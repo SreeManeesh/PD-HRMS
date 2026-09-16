@@ -51,6 +51,87 @@ const STORED_SYNONYMS: Record<string, string[]> = {
 /** Case/separator-insensitive component id comparison (income_tax === incomeTax). */
 const normalizeCompId = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * Unified-config doctrine for Annual/Monthly payroll columns:
+ * earning/deduction columns come from PayrollComponentConfig (Earnings /
+ * Deductions tabs) + wage rates. Static salary-structure / company-config
+ * legs are used ONLY when no configured component covers them ("config-only
+ * fallback"), so a configured allowance/deduction never double-counts
+ * against a hardcoded leg and unconfigured columns are never fabricated
+ * (e.g. no ₹250 Medical leg unless Medical is actually configured).
+ */
+const normCompToken = (s: unknown) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+
+/** Static withholding-key → configured spellings (code or name) that own it. */
+const DEDUCTION_COVERS: Record<string, string[]> = {
+  providentFund: ["providentfund", "epf", "pf"],
+  professionalTax: ["professionaltax", "pt"],
+  incomeTax: ["incometax", "tds"],
+  healthInsurance: ["healthinsurance", "esic", "esi"],
+  lwf: ["labourwelfarefund", "lwf"],
+  salaryAdvanceRecovery: ["salaryadvancerecovery", "advancerecovery", "advance", "loan"],
+};
+
+/**
+ * Did the eligible, applied deduction configs already claim a static
+ * withholding key? Short aliases (pt/epf/esi/tds/lwf/pf) match on code
+ * equality only — substring matching would false-positive ("exempt"
+ * contains "pt"). Longer aliases match code/name inclusion either way, so
+ * "Voluntary Provident Fund" still covers the providentFund leg.
+ */
+export function appliedDeductionCovers(applied: Set<string>, key: string): boolean {
+  const aliases = [normCompToken(key), ...(DEDUCTION_COVERS[key] ?? [])].filter(Boolean);
+  for (const a of aliases) {
+    if (applied.has(a)) return true;
+    if (a.length > 3) {
+      for (const t of applied) {
+        if (t.length > 3 && (t.includes(a) || a.includes(t))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** LOP is owned by the attendance mechanism (payable-days envelope +
+ *  leaveDeduction), never by a deduction component — a persisted LOP rule
+ *  would otherwise withhold up to the full monthly as "LOP". */
+export function isLopLikeRule(rule: { code?: string | null; name?: string | null }): boolean {
+  const code = normCompToken(rule.code);
+  const name = normCompToken(rule.name);
+  return code === "lop" || name === "lop" || name.includes("lossofpay");
+}
+
+/** Flat EMI-assumption rules must yield to real advance recoveries. */
+export function isAdvanceLikeRule(rule: { code?: string | null; name?: string | null }): boolean {
+  const code = normCompToken(rule.code);
+  const name = normCompToken(rule.name);
+  const hasAdvance = code.includes("advance") || name.includes("advance");
+  const hasRecovery = code.includes("recover") || name.includes("recover") || code.includes("loan") || name.includes("loan") || name.includes("emi");
+  return hasAdvance && hasRecovery;
+}
+
+/**
+ * Canonical skill-category key shared by every payroll/employee comparison.
+ * "Skilled" -> "skilled", "Semi Skilled"/"Semi-Skilled"/"SEMISKILLED" -> "semiskilled",
+ * "Unskilled" -> "unskilled". Strips every non-letter so hyphen/space/case
+ * variants from the profile form, wage table and payroll filters always match.
+ */
+export function normalizeSkill(s?: string | null): string {
+  return String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+/** All accepted spellings of a canonical skill key (for Prisma OR queries). */
+export function skillVariants(canonical: string): string[] {
+  const n = normalizeSkill(canonical);
+  if (n === "semiskilled") return ["Semi Skilled", "Semi-Skilled", "SEMISKILLED", "SemiSkilled", "semi skilled", "semi-skilled", "semiskilled"];
+  if (n === "unskilled") return ["Unskilled", "UNSKILLED", "unskilled"];
+  if (n === "skilled") return ["Skilled", "SKILLED", "skilled"];
+  return [canonical];
+}
+
+/** Payroll-eligible employment statuses (Active + On Leave family). */
+const PAYROLL_ELIGIBLE_STATUSES = ["Active", "ACTIVE", "active", "On Leave", "ON_NOTICE", "ON_LONG_LEAVE"];
+
 export interface PayrollGroup {
   id: string | null;
   name: string;
@@ -701,9 +782,9 @@ export function resolveEmployeeWageRate(
   }
 
   const skill = (emp.skillType || "Skilled").trim();
-  const normalizedSkill = skill.toLowerCase();
+  const normalizedSkill = normalizeSkill(skill);
 
-  const matching = wageRates.filter((r) => r.skillCategory.toLowerCase() === normalizedSkill);
+  const matching = wageRates.filter((r) => normalizeSkill(r.skillCategory) === normalizedSkill);
 
   const rawLoc = `${emp.location?.name || ""} ${(emp.location as { address?: string | null })?.address || ""}`.toLowerCase();
   let empState = (emp.state || "").trim().toLowerCase();
@@ -757,9 +838,179 @@ export function resolveEmployeeWageRate(
     return { dailyRate: dr, hourlyRate: hr };
   }
 
-  if (normalizedSkill.includes("semi")) return { dailyRate: 750, hourlyRate: round2(750 / 8) };
-  if (normalizedSkill.includes("unskilled")) return { dailyRate: 650, hourlyRate: round2(650 / 8) };
-  return { dailyRate: 900, hourlyRate: round2(900 / 8) };
+  // No static fallback: rates are strictly the DB-configured wage-rate rows
+  // (matched by skill + state + location + contractor above) plus the
+  // per-employee `dailyWageRate` override handled first. When nothing matches,
+  // 0 is returned so wage-driven lines surface as unset instead of inventing a
+  // hardcoded amount — add the rate in Wage Rates & Overrides to pay off it.
+  return { dailyRate: 0, hourlyRate: 0 };
+}
+
+/**
+ * Single source of truth for Basic Wages.
+ * Basic (monthly) = dailyRate × 26 statutory days, where dailyRate comes
+ * from the employee override (dailyWageRate) else the state/skill/location/
+ * contractor wage-rate table via resolveEmployeeWageRate.
+ * Returns the rate, monthly basic, whether an override applied, and a
+ * human-readable source label for UI badges ("Override" / state / default).
+ */
+export function basicMonthlyWage(
+  emp: {
+    skillType?: string | null;
+    locationId?: string | null;
+    contractorId?: string | null;
+    dailyWageRate?: unknown;
+    state?: string | null;
+    location?: { state?: string | null; name?: string | null } | null;
+  },
+  wageRates: Array<{
+    skillCategory: string;
+    dailyRate: unknown;
+    hourlyRate?: unknown;
+    locationId?: string | null;
+    contractorId?: string | null;
+    state?: string | null;
+  }> = [],
+): { dailyRate: number; hourlyRate: number; basicMonthly: number; isOverride: boolean; source: string | null } {
+  const overrideRate = toNumber(emp.dailyWageRate);
+  const isOverride = overrideRate > 0;
+  const { dailyRate, hourlyRate } = resolveEmployeeWageRate(emp, wageRates);
+  const basicMonthly = Math.round(dailyRate * 26);
+  // Nothing configured (no override, no matching DB wage-rate row) — report a
+  // null source instead of pretending an "All States (Default)" rate applies.
+  if (dailyRate <= 0 && !isOverride) {
+    return { dailyRate: 0, hourlyRate: 0, basicMonthly: 0, isOverride: false, source: null };
+  }
+  let source: string | null = "All States (Default)";
+  if (isOverride) {
+    source = "Override";
+  } else {
+    const skill = normalizeSkill((emp as { skillType?: string | null }).skillType || "Skilled");
+    const matching = wageRates.filter((r) => normalizeSkill(r.skillCategory) === skill);
+    const empState = String(emp.state || "").trim();
+    const stateMatch =
+      (empState && matching.find((r) => r.state && r.state.toLowerCase() === empState.toLowerCase() && !r.contractorId)) ||
+      matching.find((r) => r.state && !r.state.toLowerCase().includes("all") && !r.locationId && !r.contractorId);
+    if (stateMatch?.state) source = stateMatch.state;
+    else {
+      const def = matching.find((r) => !r.state || r.state.toLowerCase().includes("all"));
+      if (def?.state) source = def.state;
+    }
+  }
+  return { dailyRate, hourlyRate, basicMonthly, isOverride, source };
+}
+
+/** True when a payroll component code/name refers to Basic wages (locked). */
+export function isBasicComponentKey(codeOrName: unknown): boolean {
+  return String(codeOrName || "").toLowerCase().replace(/[^a-z]/g, "").includes("basic");
+}
+
+/**
+ * Rupee-exact monthly split implementing the payroll doctrine:
+ *   monthly salary (target) = Basic (locked statutory minimum) + allowances
+ *   gross earnings === monthly salary, always.
+ *
+ * Basic is FIXED (state/skill wage rate × 26, prorated by the caller) — it is
+ * never a residual. The remainder (target − basic) is divided into the
+ * allowance parts:
+ * Basic is FIXED (state/skill wage rate × 26, prorated by the caller) — it is
+ * never a residual. The remainder (target − basic) is the ALLOWANCE ENVELOPE,
+ * the only pool the non-basic parts can draw from:
+ *  - when the configured parts (percentage + fixed) fit the envelope, they
+ *    are honoured in full and any leftover goes to `otherKey` so
+ *    Σ(parts) === gross exactly,
+ *  - when the configured parts over-draw the envelope (e.g. fixed allowances
+ *    or % of gross beyond the remainder), EVERY non-basic part is scaled
+ *    pro-rata — rupee-exact with largest-remainder rounding — so
+ *    Σ(non-basic) === envelope exactly and gross earnings === monthly gross
+ *    ALWAYS. The overage is reported via `excess` so callers can surface a
+ *    disclaimer instead of silently paying more than the monthly package.
+ *
+ * Non-compliant envelope (target below the statutory Basic itself): fixed
+ * parts are zeroed, percentage minimums are kept, and the payable gross is
+ * RAISED to the committed minimum so Σ === gross still holds
+ * (`nonCompliant: true`).
+ */
+export interface SplitFixedWeight { key: string; weight: number }
+export interface SplitPctPart { key: string; amount: number }
+export interface SplitPackageResult {
+  basic: number;
+  gross: number;
+  amounts: Record<string, number>;
+  nonCompliant: boolean;
+  /** Σ(configured non-basic parts) − envelope, when the config over-drew (> 0). */
+  excess: number;
+}
+
+export function splitMonthlyPackage(args: {
+  target: number;
+  basic: number;
+  fixedWeights?: SplitFixedWeight[];
+  basicPctParts?: SplitPctPart[];
+  grossPctParts?: SplitPctPart[];
+  otherKey?: string;
+}): SplitPackageResult {
+  const target = Math.max(Math.round(args.target || 0), 0);
+  const basic = Math.max(Math.round(args.basic || 0), 0);
+  const fixedWeights = (args.fixedWeights ?? []).map((w) => ({ key: w.key, weight: Math.max(Math.round(w.weight || 0), 0) }));
+  const basicPctParts = (args.basicPctParts ?? []).map((p) => ({ key: p.key, amount: Math.max(Math.round(p.amount || 0), 0) }));
+  const grossPctParts = (args.grossPctParts ?? []).map((p) => ({ key: p.key, amount: Math.max(Math.round(p.amount || 0), 0) }));
+  const amounts: Record<string, number> = {};
+
+  const basicPctSum = basicPctParts.reduce((s, p) => s + p.amount, 0);
+  const grossPctSum = grossPctParts.reduce((s, p) => s + p.amount, 0);
+  const sumW = fixedWeights.reduce((s, w) => s + w.weight, 0);
+  const committed = basic + basicPctSum + grossPctSum;
+  const envelope = target - basic; // allowance pool shared by ALL non-basic parts
+  const configuredAllowances = basicPctSum + grossPctSum + sumW;
+  const otherKey =
+    args.otherKey ||
+    fixedWeights.find((w) => /other/i.test(w.key))?.key ||
+    "otherAllowances";
+
+  if (envelope < 0) {
+    // Statutory floor: Basic alone exceeds the monthly envelope. Fixed parts
+    // are zeroed, percentage minimums are kept, and the payable gross is
+    // RAISED to the committed minimum so Σ === gross still holds.
+    for (const p of [...basicPctParts, ...grossPctParts]) amounts[p.key] = (amounts[p.key] ?? 0) + p.amount;
+    return { basic, gross: committed, amounts, nonCompliant: true, excess: 0 };
+  }
+
+  if (configuredAllowances <= envelope) {
+    // Everything fits: honour every configured part in full; any leftover
+    // goes to `otherKey` so Σ(parts) === gross exactly.
+    for (const p of [...basicPctParts, ...grossPctParts]) amounts[p.key] = (amounts[p.key] ?? 0) + p.amount;
+    for (const w of fixedWeights) amounts[w.key] = (amounts[w.key] ?? 0) + w.weight;
+    const leftover = envelope - configuredAllowances;
+    if (leftover > 0) amounts[otherKey] = (amounts[otherKey] ?? 0) + leftover;
+    return { basic, gross: target, amounts, nonCompliant: false, excess: 0 };
+  }
+
+  // Config excess: the configured parts (pct + fixed) draw more than the
+  // envelope allows. EVERY non-basic part is scaled pro-rata — rupee-exact
+  // with largest-remainder rounding — so Σ(non-basic) === envelope exactly
+  // and gross earnings === monthly gross ALWAYS. The overage is reported
+  // via `excess` so callers can surface a disclaimer.
+  const parts = [
+    ...basicPctParts,
+    ...grossPctParts,
+    ...fixedWeights.map((w) => ({ key: w.key, amount: w.weight })),
+  ].filter((p) => p.amount > 0);
+  const scale = envelope / configuredAllowances;
+  const floored = parts.map((p) => {
+    const raw = p.amount * scale;
+    return { key: p.key, base: Math.floor(raw), frac: raw - Math.floor(raw) };
+  });
+  let assigned = floored.reduce((s, f) => s + f.base, 0);
+  floored.sort((a, b) => b.frac - a.frac);
+  let i = 0;
+  while (assigned < envelope && floored.length > 0) {
+    floored[i % floored.length].base += 1;
+    assigned += 1;
+    i += 1;
+  }
+  for (const f of floored) amounts[f.key] = (amounts[f.key] ?? 0) + f.base;
+  return { basic, gross: target, amounts, nonCompliant: false, excess: configuredAllowances - envelope };
 }
 
 export function isDailyWageWorker(emp: {
@@ -784,6 +1035,17 @@ function resolvePaySource(
     skillType?: string | null;
   },
   cfg?: CompanyConfigSnapshot,
+  // Wage rates fetched from the Wage Rates & Overrides store. Never defaulted
+  // statically — a daily worker with no configured rate (and no override) has
+  // no pay basis and is skipped rather than paid off an invented figure.
+  wageRates: Array<{
+    skillCategory: string;
+    dailyRate: unknown;
+    hourlyRate?: unknown;
+    locationId?: string | null;
+    contractorId?: string | null;
+    state?: string | null;
+  }> = [],
 ): { salaryStructureId: string | null; structure: PaySourceStructure } | null {
   const structure = emp.salaryStructures?.[0];
   // Prefer the LIVE yearly package so salary edits take effect immediately,
@@ -812,26 +1074,39 @@ function resolvePaySource(
     };
   }
   if (structure) return { salaryStructureId: structure.id, structure };
-  const isDaily = isDailyWageWorker(emp);
-  const effectiveAnnual = isDaily ? 288000 : 360000;
-  const b = salaryStructureBreakdown(effectiveAnnual, cfg);
-  return {
-    salaryStructureId: null,
-    structure: {
-      id: "",
-      basicSalary: b.basicSalary,
-      hra: b.hra,
-      conveyanceAllowance: b.conveyanceAllowance,
-      medicalAllowance: b.medicalAllowance,
-      performanceBonus: b.performanceBonus,
-      otherAllowances: b.otherAllowances,
-      providentFund: b.providentFund,
-      professionalTax: b.professionalTax,
-      incomeTax: b.incomeTax,
-      healthInsurance: b.healthInsurance,
-      employee: { annualSalary: effectiveAnnual },
-    },
-  };
+  // Daily-wage workers are paid off the wage-rate table (daily rate × payable
+  // days), so the rate table — not a yearly package — is their pay basis.
+  // Build a monthly-equivalent allowance base from their resolved rate (the DB
+  // wage-rate row, or their own profile override) so allowances/ESI stay
+  // proportional to real wages. No static skill default exists: an
+  // unconfigured rate means no pay basis.
+  if (isDailyWageWorker(emp)) {
+    const { dailyRate } = resolveEmployeeWageRate(emp, wageRates);
+    if (dailyRate <= 0) return null;
+    const monthlyEquiv = Math.max(Math.round(dailyRate * 26), 1);
+    const b = salaryStructureBreakdown(monthlyEquiv * 12, cfg);
+    return {
+      salaryStructureId: null,
+      structure: {
+        id: "",
+        basicSalary: b.basicSalary,
+        hra: b.hra,
+        conveyanceAllowance: b.conveyanceAllowance,
+        medicalAllowance: b.medicalAllowance,
+        performanceBonus: b.performanceBonus,
+        otherAllowances: b.otherAllowances,
+        providentFund: b.providentFund,
+        professionalTax: b.professionalTax,
+        incomeTax: b.incomeTax,
+        healthInsurance: b.healthInsurance,
+        employee: { annualSalary: monthlyEquiv * 12 },
+      },
+    };
+  }
+  // No pay basis configured (no yearly package and no active salary
+  // structure) — return null so callers emit an explicit zero /
+  // "Not Processed" row instead of synthesising a fabricated salary.
+  return null;
 }
 
 /**
@@ -1028,7 +1303,7 @@ export function resolveStateStatutoryDeductions(
  * Dynamically supports Daily-wage, Monthly-salary with LOP, Overtime multipliers,
  * Configurable components & slabs, Salary advance recovery, and Mid-month join/exit.
  */
-async function computeEmployeePayslip(
+export async function computeEmployeePayslip(
   employee: {
     id: string;
     employeeCode?: string;
@@ -1040,6 +1315,7 @@ async function computeEmployeePayslip(
     dailyWageRate?: unknown;
     locationId?: string | null;
     contractorId?: string | null;
+    dateOfJoining?: Date | null;
     dateOfExit?: Date | null;
     state?: string | null;
     gender?: string | null;
@@ -1070,6 +1346,14 @@ async function computeEmployeePayslip(
       ? workingDays
       : Math.max(summary.payableDays !== undefined ? summary.payableDays : (summary.presentDays + summary.paidLeaveDays), 0);
   const ratio = Math.min(Math.max(payableDays / workingDays, 0), 1);
+  // Pay proration factor actually applied to rupee amounts. Monthly staff use
+  // the calendar-based LOP ratio (grossPayable / fixed); daily-wage staff use
+  // the attendance ratio. A single factor drives earnings AND deductions so
+  // both sides of the slip always agree with each other.
+  let payRatio = ratio;
+  // Share of the calendar month the employee was actually employed
+  // (1 for full-month staff; < 1 for mid-month joiners / exiters).
+  let employmentRatio = 1;
 
   const { earnings: fullEarnings, deductions: fullDeductions, computed, componentMeta } =
     blueprintComponentAmounts(blueprint, structure, amounts);
@@ -1126,6 +1410,16 @@ async function computeEmployeePayslip(
     return true;
   };
 
+  // Unified-config gate: fixed/percentage earning components (non-overtime)
+  // are configured anywhere in the system → allowance columns come from
+  // configs + wage rates, and static structure/company-config legs are
+  // skipped. With nothing configured, legacy config-driven legs apply.
+  // (Declared here, after isOvertimeLikeRule, to avoid TDZ initialization
+  // crashes — this gate runs on every payslip computation including Run.)
+  const hasConfiguredAllowances = (extraContext?.customComponents ?? []).some(
+    (r: any) => r.kind === "earning" && (r.calcType === "fixed" || r.calcType === "percentage") && !isOvertimeLikeRule(r),
+  );
+
   if (isDaily) {
     // Scenario 1 & 2: Daily rate * payable days
     // Scenario 1 Example: Ravi: 26 Present + 2 Paid Leave = 28 payable days. 900 * 28 = 25200.
@@ -1136,21 +1430,38 @@ async function computeEmployeePayslip(
     lopDeduction = round2(dailyRate * lopDays);
     grossPayableSalary = basicWage;
 
-    // Standard baseline allowances if not configured in blueprint
-    if (!fullEarnings.hra && !earnings.hra) {
-      earnings.hra = round2(basicWage * 0.05); // 5% HRA
+    // Baseline allowance legs — fully config-driven from the active company
+    // configuration (Payroll Settings / CompanyConfig) and pro-rated by the
+    // attendance ratio, applied only when neither the salary structure nor
+    // the skill blueprint defines the leg. No hardcoded percentages or flat
+    // amounts: changing the company config changes these columns everywhere.
+    // Unified doctrine: when the admin has configured earning components
+    // (Earnings tab), THEY own the allowance columns — these static legs are
+    // skipped so no fabricated HRA/Conveyance/Medical appears. With no
+    // earning components configured anywhere, the company-config fallback
+    // below still pays allowances (config-only fallback).
+    if (!hasConfiguredAllowances) {
+      if (!fullEarnings.hra && !earnings.hra) {
+        earnings.hra = round2(basicWage * c.hraFactor);
+      }
+      if (!fullEarnings.conveyanceAllowance && !earnings.conveyanceAllowance) {
+        earnings.conveyanceAllowance = round2(c.conveyanceAllowance * ratio);
+      }
+      if (!fullEarnings.medicalAllowance && !earnings.medicalAllowance) {
+        earnings.medicalAllowance = round2(c.medicalAllowance * ratio);
+      }
     }
-    if (!fullEarnings.conveyanceAllowance && !earnings.conveyanceAllowance) {
-      earnings.conveyanceAllowance = 200; // Conveyance
-    }
-    earnings.medicalAllowance = earnings.medicalAllowance || 0;
     earnings.cca = earnings.cca || 0;
-    if (!earnings.otherAllowances && !earnings.special) {
-      earnings.otherAllowances = round2(Math.max(dailyRate * payableDays * 0.09, 500)); // Special
-    }
 
     for (const [key, val] of Object.entries(fullEarnings)) {
       if (key === "total" || key === "overtime" || key === "basicSalary") continue;
+      // Configured allowance scheme owns these static legs (see above).
+      if (
+        hasConfiguredAllowances &&
+        (key === "hra" || key === "conveyanceAllowance" || key === "medicalAllowance" || key === "performanceBonus" || key === "otherAllowances")
+      ) {
+        continue;
+      }
       earnings[key] = round2(val * ratio);
     }
 
@@ -1178,27 +1489,68 @@ async function computeEmployeePayslip(
     // Then applicable allowances and deductions are processed.
     const annual = toNumber(employee.annualSalary);
     const structureBasic = toNumber(structure.basicSalary);
+    // Statutory Basic floor: dailyRate (override else wage table) × 26.
+    // Monthly basics can never fall below this — it is the non-editable
+    // system-driven floor that keeps payslips compliant state-wise/skill-wise.
+    const statutoryMonthlyBasic = basicMonthlyWage(employee, extraContext?.wageRates ?? []).basicMonthly;
     // Rupee-exact monthly package: rounded ONCE so annual/12 never drifts
     // (e.g. ₹5,00,000 → ₹41,667, not 41666.67). All downstream splits absorb
     // remainders instead of re-rounding, so parts always sum to the whole.
+    // Base pay is strictly employee-defined (yearly package, else the stored
+    // structure). The statutory fallthrough below is reachable only for daily
+    // workers (whose pay basis IS the wage-rate table) — monthly staff without
+    // a package are excluded upstream by resolvePaySource, never paid off
+    // wages. No static default: a daily worker with no configured rate gets 0
+    // rather than an invented salary.
     fixedMonthlySalary =
       annual > 0
         ? Math.round(annual / 12)
         : structureBasic > 0
         ? Math.round(structureBasic * 2)
-        : 24000;
+        : statutoryMonthlyBasic;
 
     dailySalaryRate = round2(fixedMonthlySalary / calendarDaysInMonth);
     lopDays = summary.unpaidLeaveDays;
     lopDeduction = round2(dailySalaryRate * lopDays);
-    grossPayableSalary = Math.max(Math.round(fixedMonthlySalary - lopDeduction), 0);
+    // Mid-month joining / exit: shrink the monthly envelope to the employed
+    // calendar days before subtracting LOP. Reconciliation marks pre-joining
+    // days "Not Hired" and post-exit days "Exited" (never LOP), so without
+    // this a joiner on the 15th would draw a near-full month. Full-month
+    // staff are unaffected (employmentRatio === 1).
+    const monthStartUtc = new Date(Date.UTC(year, month - 1, 1));
+    const monthEndUtc = new Date(Date.UTC(year, month, 0));
+    const dojRaw = employee.dateOfJoining ? new Date(employee.dateOfJoining) : null;
+    const exitRaw = employee.dateOfExit ? new Date(employee.dateOfExit) : null;
+    const dojUtc = dojRaw && !Number.isNaN(dojRaw.getTime()) ? new Date(Date.UTC(
+      dojRaw.getUTCFullYear(),
+      dojRaw.getUTCMonth(),
+      dojRaw.getUTCDate(),
+    )) : null;
+    const exitUtc = exitRaw && !Number.isNaN(exitRaw.getTime()) ? new Date(Date.UTC(
+      exitRaw.getUTCFullYear(),
+      exitRaw.getUTCMonth(),
+      exitRaw.getUTCDate(),
+    )) : null;
+    const employedStart = dojUtc && dojUtc > monthStartUtc ? dojUtc : monthStartUtc;
+    const employedEnd = exitUtc && exitUtc < monthEndUtc ? exitUtc : monthEndUtc;
+    const employedCalendarDays = employedEnd >= employedStart
+      ? Math.round((employedEnd.getTime() - employedStart.getTime()) / 86400000) + 1
+      : 0;
+    const employmentRatioLocal = employedCalendarDays > 0
+      ? Math.min(Math.max(employedCalendarDays / calendarDaysInMonth, 0), 1)
+      : 0;
+    employmentRatio = employmentRatioLocal;
+    const adjustedFixed = Math.round(fixedMonthlySalary * employmentRatioLocal);
+    grossPayableSalary = Math.max(Math.round(adjustedFixed - lopDeduction), 0);
 
     const prorateRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : ratio;
+    payRatio = prorateRatio;
 
-    // Fully dynamic package: derive earnings from the active earning-component
-    // configs applicable to this employee (fixed + percentage), with basic as
-    // the residual so Σ === grossPayableSalary. Falls back to the static
-    // structure split when no package components apply.
+    // Fully dynamic package: the monthly salary envelope (target) is split
+    // into the LOCKED statutory basic + allowances so
+    // basic + allowances === monthly salary === gross earnings, always.
+    // Falls back to the structure-leg split (same doctrine) when no package
+    // components apply.
     const packageRules = (extraContext?.customComponents ?? [])
       .filter(
         (r: any) =>
@@ -1210,32 +1562,35 @@ async function computeEmployeePayslip(
       .sort((a: any, b: any) => (a.priority ?? 99) - (b.priority ?? 99));
 
     if (packageRules.length > 0) {
+      // Doctrine: monthly salary (target) = Basic (locked statutory) + allowances;
+      // gross === monthly always. Basic is FIXED from the wage table (prorated
+      // to the payable target); the remainder is divided into allowances.
       const target = grossPayableSalary;
-      const rto = fixedMonthlySalary > 0 ? target / fixedMonthlySalary : 1;
+      const q = fixedMonthlySalary > 0 ? target / fixedMonthlySalary : 1;
       const keyOf = (r: any) => String(r.code || r.name);
-      const fixedParts: Array<{ key: string; amount: number }> = [];
-      let fixedSum = 0;
-      let grossPctSum = 0;
-      let basicPctRatio = 0;
+      const fromGross = (r: any) =>
+        String(r.sourceField || "").toLowerCase() === "ctc" ||
+        String(r.percentageFrom || "").toLowerCase().includes("gross");
+      const basic = Math.round(statutoryMonthlyBasic * q);
+      const fixedWeights: SplitFixedWeight[] = [];
+      const basicPctParts: SplitPctPart[] = [];
+      const grossPctParts: SplitPctPart[] = [];
       for (const r of packageRules) {
         const key = keyOf(r);
         if (r.calcType === "fixed") {
-          let amt = Math.round(toNumber(r.value) * rto);
-          if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
-          fixedParts.push({ key, amount: Math.max(0, amt) });
-          fixedSum += Math.max(0, amt);
+          let w = Math.round(toNumber(r.value) * q);
+          if (r.maxCap != null && w > toNumber(r.maxCap)) w = Math.round(toNumber(r.maxCap));
+          fixedWeights.push({ key, weight: Math.max(0, w) });
         } else {
           const pct = toNumber(r.pct);
-          const fromGross =
-            String(r.sourceField || "").toLowerCase() === "ctc" ||
-            String(r.percentageFrom || "").toLowerCase().includes("gross");
-          if (fromGross) {
+          if (fromGross(r)) {
             let amt = Math.round(target * (pct / 100));
             if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
-            fixedParts.push({ key, amount: Math.max(0, amt) });
-            grossPctSum += Math.max(0, amt);
+            grossPctParts.push({ key, amount: Math.max(0, amt) });
           } else {
-            basicPctRatio += pct / 100;
+            let amt = Math.round(basic * (pct / 100));
+            if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
+            basicPctParts.push({ key, amount: Math.max(0, amt) });
           }
         }
         handledPackageCodes.add(String(r.code || ""));
@@ -1244,57 +1599,93 @@ async function computeEmployeePayslip(
       const basicRule = packageRules.find((r: any) => isBasicLikeKey(r.code) || isBasicLikeKey(r.name));
       const basicKey = basicRule ? keyOf(basicRule) : "basicSalary";
       if (!earningLabels[basicKey]) earningLabels[basicKey] = basicRule?.name || "Basic Salary";
-      const overflow = fixedSum + grossPctSum > target;
-      let basic = overflow ? 0 : Math.round(Math.max(0, target - fixedSum - grossPctSum) / (1 + basicPctRatio));
-      // Percentage-from-basic amounts (rounded), then absorb any rounding
-      // remainder into basic so Σ === target exactly.
-      const basicPctParts: Array<{ key: string; amount: number }> = [];
-      let basicPctSum = 0;
-      if (!overflow) {
-        for (const r of packageRules) {
-          if (r.calcType !== "percentage") continue;
-          const fromGross =
-            String(r.sourceField || "").toLowerCase() === "ctc" ||
-            String(r.percentageFrom || "").toLowerCase().includes("gross");
-          if (fromGross) continue;
-          const key = keyOf(r);
-          let amt = Math.round(basic * (toNumber(r.pct) / 100));
-          if (r.maxCap != null && amt > toNumber(r.maxCap)) amt = Math.round(toNumber(r.maxCap));
-          basicPctParts.push({ key, amount: Math.max(0, amt) });
-          basicPctSum += Math.max(0, amt);
-        }
-        basic += target - (basic + fixedSum + grossPctSum + basicPctSum);
-        if (basic < 0) basic = 0;
+      const otherRule = packageRules.find(
+        (r: any) => !isBasicLikeKey(r.code) && !isBasicLikeKey(r.name) && /other/i.test(keyOf(r)),
+      );
+      const split = splitMonthlyPackage({
+        target,
+        basic,
+        fixedWeights,
+        basicPctParts,
+        grossPctParts,
+        otherKey: otherRule ? keyOf(otherRule) : "otherAllowances",
+      });
+      if (split.nonCompliant) {
+        // Monthly below the statutory minimum: payable gross is raised to the
+        // committed minimum so Σ === gross still holds (flagged in the UI).
+        grossPayableSalary = split.gross;
+        payRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : payRatio;
       }
-      earnings[basicKey] = basic;
-      for (const p of fixedParts) earnings[p.key] = (earnings[p.key] || 0) + p.amount;
-      for (const p of basicPctParts) earnings[p.key] = (earnings[p.key] || 0) + p.amount;
-      dynamicBasicAmount = basic;
+      earnings[basicKey] = split.basic;
+      for (const [key, amount] of Object.entries(split.amounts)) earnings[key] = (earnings[key] || 0) + amount;
+      dynamicBasicAmount = split.basic;
       dynamicFullGross = fixedMonthlySalary;
-    } else {
-      // Prorate full structure earnings so total earnings matches grossPayableSalary.
-      // Each leg is rounded to paise, then any ±paise drift is absorbed into
-      // otherAllowances so Σ(parts) === grossPayableSalary EXACTLY.
+    } else if (!hasConfiguredAllowances) {
+      // No configurable package rules AND no earning components configured
+      // anywhere: Basic is still the locked statutory wage; the remainder
+      // (target − basic) is divided across the structure allowance legs
+      // pro-rata so Σ === target === monthly salary exactly. This is the
+      // config-only fallback — company-config values apply only when no
+      // earning component exists.
+      const target = grossPayableSalary;
+      const q = fixedMonthlySalary > 0 ? target / fixedMonthlySalary : 1;
+      const lockedBasic = Math.round(statutoryMonthlyBasic * q);
+      const legKeys = ["hra", "conveyanceAllowance", "medicalAllowance", "performanceBonus", "otherAllowances"] as const;
+      const proratedLegs = legKeys.map((k) => ({ key: k, weight: Math.max(Math.round(toNumber((fullEarnings as Record<string, unknown>)[k]) * 1), 0) }));
+      // NOTE: fullEarnings legs are full-month values; scale them to the
+      // payable target the same way package weights are scaled.
+      const scaledLegs = proratedLegs.map((l) => ({ key: l.key, weight: Math.max(Math.round(l.weight * q), 0) }));
+      const split = splitMonthlyPackage({
+        target,
+        basic: lockedBasic,
+        fixedWeights: scaledLegs,
+        otherKey: "otherAllowances",
+      });
       for (const [key, val] of Object.entries(fullEarnings)) {
         if (key === "total" || key === "overtime") continue;
-        earnings[key] = round2(val * prorateRatio);
+        earnings[key] = 0;
       }
-      {
-        const partSum = Object.entries(earnings).reduce(
-          (s, [k, v]) => (k === "total" || k === "overtime" ? s : s + toNumber(v)),
-          0,
-        );
-        const drift = round2(grossPayableSalary - partSum);
-        if (Math.abs(drift) > 0.004) {
-          earnings.otherAllowances = round2(toNumber(earnings.otherAllowances || 0) + drift);
-        }
+      earnings.basicSalary = split.basic;
+      for (const [key, amount] of Object.entries(split.amounts)) {
+        earnings[key] = round2(toNumber(earnings[key] || 0) + amount);
       }
-
-      if (!earnings.basicSalary || earnings.basicSalary === 0) {
-        earnings.basicSalary = round2(grossPayableSalary * 0.5);
-        earnings.hra = round2(grossPayableSalary * 0.25);
-        earnings.otherAllowances = round2(grossPayableSalary - earnings.basicSalary - (earnings.hra || 0));
+      if (split.nonCompliant) {
+        grossPayableSalary = split.gross;
+        payRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : payRatio;
       }
+      dynamicBasicAmount = split.basic;
+      dynamicFullGross = fixedMonthlySalary;
+    } else {
+      // Unified doctrine: earning components ARE configured (just none
+      // eligible for this employee), so columns come from configs + wage
+      // rates only — locked Basic plus the whole remainder as the residual
+      // otherAllowances bucket (mirrors the Earnings-tab split with no
+      // allowance weights). Never fabricate hra/conveyance/medical legs.
+      const target = grossPayableSalary;
+      const q = fixedMonthlySalary > 0 ? target / fixedMonthlySalary : 1;
+      const lockedBasic = Math.round(statutoryMonthlyBasic * q);
+      for (const [key, val] of Object.entries(fullEarnings)) {
+        if (key === "total" || key === "overtime") continue;
+        earnings[key] = 0;
+      }
+      const split = splitMonthlyPackage({
+        target,
+        basic: lockedBasic,
+        fixedWeights: [],
+        basicPctParts: [],
+        grossPctParts: [],
+        otherKey: "otherAllowances",
+      });
+      earnings.basicSalary = split.basic;
+      for (const [key, amount] of Object.entries(split.amounts)) {
+        earnings[key] = round2(toNumber(earnings[key] || 0) + amount);
+      }
+      if (split.nonCompliant) {
+        grossPayableSalary = split.gross;
+        payRatio = fixedMonthlySalary > 0 ? grossPayableSalary / fixedMonthlySalary : payRatio;
+      }
+      dynamicBasicAmount = split.basic;
+      dynamicFullGross = fixedMonthlySalary;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1340,6 +1731,10 @@ async function computeEmployeePayslip(
   // Scenario 6, 7, 8, 10, 11: Dynamic Configurable Components & Slabs
   const customRules = extraContext?.customComponents ?? [];
   const withholding: Record<string, number> = {};
+  // Deduction semantics already claimed by eligible configured components
+  // (code + name tokens). Static structure/statutory legs consult this so a
+  // configured deduction never double-counts against a hardcoded leg.
+  const appliedDeductionTokens = new Set<string>();
 
   for (const rule of customRules) {
     const periodStart = new Date(Date.UTC(year, month - 1, 1));
@@ -1358,6 +1753,19 @@ async function computeEmployeePayslip(
     // the monthly envelope) — skipping here prevents double-counting.
     if (rule.code && handledPackageCodes.has(rule.code)) continue;
 
+    // Unified doctrine: LOP is owned by the attendance mechanism
+    // (payable-days envelope + leaveDeduction), never by a component.
+    if (rule.kind === "deduction" && isLopLikeRule(rule)) continue;
+
+    // Real advance recoveries (advances table) win over flat EMI assumptions.
+    if (rule.kind === "deduction" && isAdvanceLikeRule(rule)) {
+      const hasRealAdvance = (extraContext?.advances ?? []).some(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (a: any) => a.employeeId === employee.id && a.status === "Active" && Math.max(toNumber(a.amount) - toNumber(a.recoveredAmount), 0) > 0,
+      );
+      if (hasRealAdvance) continue;
+    }
+
     const isOtRule =
       rule.code === "ot_2026" ||
       (rule.code || "").toLowerCase().includes("ot") ||
@@ -1375,14 +1783,35 @@ async function computeEmployeePayslip(
       continue;
     }
 
+    // Eligible deduction rule: claim its semantics so static legs yield.
+    // Recorded even at a zero amount — an admin-owned 0% TDS still owns
+    // the incomeTax column (no static leg stacked on top).
+    if (rule.kind === "deduction") {
+      const codeTok = normCompToken(rule.code);
+      const nameTok = normCompToken(rule.name);
+      if (codeTok) appliedDeductionTokens.add(codeTok);
+      if (nameTok) appliedDeductionTokens.add(nameTok);
+    }
+
     let compAmount = 0;
     const calcType = rule.calcType;
 
     if (calcType === "fixed") {
       compAmount = toNumber(rule.value);
     } else if (calcType === "percentage") {
-      const src = rule.sourceField === "ctc" ? (toNumber(employee.annualSalary) / 12) : earnings.basicSalary;
+      // Single dynamic base: the employee's Monthly gross (₹) — monthlyGross
+      // field, else annualSalary / 12. Legacy basic/ctc sources resolve here
+      // too so every % rule tracks live profile edits.
+      const monthlyBase =
+        toNumber((employee as any).monthlyGross) > 0
+          ? toNumber((employee as any).monthlyGross)
+          : toNumber(employee.annualSalary) / 12;
+      const src = monthlyBase > 0 ? monthlyBase : earnings.basicSalary;
       compAmount = round2(src * (toNumber(rule.pct) / 100));
+      // Percentage deductions follow the same pay factor as earnings so a
+      // LOP / mid-month-joining month doesn't over-withhold. Fixed-amount
+      // deductions (PT/LWF flats) and attendance-driven rules stay unscaled.
+      if (rule.kind === "deduction") compAmount = round2(compAmount * payRatio);
     } else if (calcType === "per_day" || calcType === "per_shift") {
       const isNight = (rule.metric || "").toLowerCase().includes("night") || rule.code === "NIGHT_ALLOW";
       if (isOtRule) {
@@ -1475,17 +1904,30 @@ async function computeEmployeePayslip(
 
   // Scenario 14: Mid-Month Exit & Leave Encashment
   if (employee.dateOfExit) {
-    const encashDailyRate = isDaily ? dailyRate : round2((effectiveBasic || 24000) / calendarDaysInMonth);
+    // No static default: encashment follows the employee's own basic (daily
+    // staff use their wage rate). Zero basic → zero encashment, never an
+    // invented sum.
+    const encashDailyRate = isDaily
+      ? dailyRate
+      : effectiveBasic > 0
+      ? round2(effectiveBasic / calendarDaysInMonth)
+      : 0;
     earnings.leaveEncashment = round2(2 * encashDailyRate);
     earningLabels.leaveEncashment = "Leave Encashment";
   }
 
-  // Blueprint / Statutory Deductions
+  // Blueprint / Statutory Deductions — prorated by the same pay factor as
+  // earnings so a LOP (or mid-month joining) month stays internally
+  // consistent instead of mixing calendar-based earnings with
+  // working-day-based deductions.
+  // Unified doctrine: a configured deduction owns its column — skip any
+  // static structure leg it already claimed (no double PF/PT/ESI).
   for (const [key, val] of Object.entries(fullDeductions)) {
     if (key === "total" || key === "leaveDeduction" || withholding[key] !== undefined) continue;
+    if (appliedDeductionCovers(appliedDeductionTokens, key)) continue;
     const meta = componentMeta.get(key);
     const shouldProrate = meta?.isPercentage || key === "providentFund";
-    withholding[key] = shouldProrate ? round2(val * ratio) : round2(val);
+    withholding[key] = shouldProrate ? round2(val * payRatio) : round2(val);
   }
 
   // Scenario 12: Salary Advance / Loan Recovery
@@ -1503,15 +1945,22 @@ async function computeEmployeePayslip(
 
   earnings.total = Math.round(Object.values(earnings).reduce((s, v) => s + v, 0));
 
-  // Statutory Indian defaults for workforce / daily-wage calculations:
+  // Statutory Indian defaults for workforce / daily-wage calculations.
+  // Each applies ONLY when no configured deduction owns the column
+  // (config-only fallback — a configured EPF/ESI/PT/LWF fully replaces the
+  // static default instead of stacking on top of it).
   // PF: 12% of basic wage (capped at 1800 if basic >= 15000)
-  if (!withholding.providentFund) {
+  if (!withholding.providentFund && !appliedDeductionCovers(appliedDeductionTokens, "providentFund")) {
     const pfBase = Number(effectiveBasic || 0);
     withholding.providentFund = round2(Math.min(pfBase * 0.12, 1800));
   }
 
   // ESIC: 0.75% of gross earnings if gross <= 21,000; otherwise 0
-  if (withholding.healthInsurance === undefined && withholding.esic === undefined) {
+  if (
+    withholding.healthInsurance === undefined &&
+    withholding.esic === undefined &&
+    !appliedDeductionCovers(appliedDeductionTokens, "healthInsurance")
+  ) {
     withholding.healthInsurance = earnings.total <= 21000 ? round2(earnings.total * 0.0075) : 0;
   }
 
@@ -1523,12 +1972,12 @@ async function computeEmployeePayslip(
   );
 
   // Professional Tax (PT): State-specific statutory computation
-  if (withholding.professionalTax === undefined) {
+  if (withholding.professionalTax === undefined && !appliedDeductionCovers(appliedDeductionTokens, "professionalTax")) {
     withholding.professionalTax = stateDeductions.pt;
   }
 
   // Labour Welfare Fund (LWF): State-specific statutory computation
-  if (withholding.lwf === undefined) {
+  if (withholding.lwf === undefined && !appliedDeductionCovers(appliedDeductionTokens, "lwf")) {
     withholding.lwf = stateDeductions.lwf;
   }
 
@@ -1554,9 +2003,9 @@ async function computeEmployeePayslip(
   };
   const blueprintEmployer = employerBlueprintAmounts(blueprint, computed, fallbackEmployer);
   const employerContributions: Record<string, number> = {
-    providentFund: round2(blueprintEmployer.providentFund * ratio),
-    esi: blueprintEmployer.esi > 0 ? round2(blueprintEmployer.esi * ratio) : 0,
-    gratuity: round2(blueprintEmployer.gratuity * ratio),
+    providentFund: round2(blueprintEmployer.providentFund * payRatio),
+    esi: blueprintEmployer.esi > 0 ? round2(blueprintEmployer.esi * payRatio) : 0,
+    gratuity: round2(blueprintEmployer.gratuity * payRatio),
   };
 
   const unproratedGross = Object.values(fullEarnings).reduce((s, v) => s + v, 0);
@@ -1586,6 +2035,7 @@ async function computeEmployeePayslip(
       dailySalaryRate,
       fixedMonthlySalary: !isDaily ? fixedMonthlySalary : undefined,
       calendarDaysInMonth,
+      employmentRatio: Math.round(employmentRatio * 10000) / 10000,
       lopDays,
       lopDeduction,
       grossPayableSalary: !isDaily ? grossPayableSalary : earnings.total,
@@ -1613,7 +2063,7 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
 
   const [employees, structures, wageRates, customComponents, salaryAdvances, productionRecords] = await Promise.all([
     prisma.employee.findMany({
-      where: { status: { in: ["Active", "ACTIVE", "active"] } },
+      where: { status: { in: PAYROLL_ELIGIBLE_STATUSES } },
       select: {
         id: true,
         employeeCode: true,
@@ -1627,6 +2077,9 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
         contractorId: true,
         dateOfJoining: true,
         dateOfExit: true,
+        state: true,
+        gender: true,
+        location: { select: { name: true, address: true } },
       },
     }),
     prisma.salaryStructure.findMany({
@@ -1650,14 +2103,15 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     if (activeEmployeeIds.has(s.employeeId)) structureByEmployee.set(s.employeeId, s);
   }
 
-  // Every active employee with a pay basis (structure, salary, daily wage rate, or skill category)
+  // Every active employee with a genuine pay basis: a yearly package, an
+  // active salary structure, or a daily-wage profile (rate table). Skill type
+  // alone is NOT a pay basis — such employees surface as zero/"Not Processed"
+  // rows in the live summaries instead of fabricated slips here.
   const eligible = employees.filter(
     (emp) =>
       structureByEmployee.has(emp.id) ||
       toNumber(emp.annualSalary) > 0 ||
-      emp.salaryType === "Daily" ||
-      toNumber(emp.dailyWageRate) > 0 ||
-      Boolean(emp.skillType),
+      isDailyWageWorker(emp),
   );
   const cfg = await getCompanyConfig();
   const templates = await loadBlueprintsBySkillType();
@@ -1682,14 +2136,16 @@ export async function processPayrollRun(id: string, actorEmployeeId?: string) {
     // drives the breakdown. resolvePaySource keeps the stored structure id
     // for the FK but rebuilds amounts from the current package — a salary
     // edit is therefore reflected in the very next run/summary instead of
-    // reusing a stale stored structure.
+    // reusing a stale stored structure. Employees whose pay basis vanished
+    // since eligibility was computed are skipped, never fabricated.
     const withStructures = {
       ...emp,
       salaryStructures: structureByEmployee.has(emp.id)
         ? [structureByEmployee.get(emp.id)! as unknown as PaySourceStructure]
         : [],
     };
-    const source = resolvePaySource(withStructures, cfg)!;
+    const source = resolvePaySource(withStructures, cfg, wageRates);
+    if (!source) continue;
     const comp = await computeEmployeePayslip(
       emp,
       source.structure,
@@ -1901,7 +2357,7 @@ export async function getEmployeePayrollSummary(employeeCode: string, month: num
   const blueprint = blueprintForSkill(templates, (emp as { skillType?: string | null }).skillType);
 
   const cfg = await getCompanyConfig();
-  const source = resolvePaySource(emp, cfg);
+  const source = resolvePaySource(emp, cfg, wageRates);
   // No pay basis configured yet (no active salary structure, no yearly
   // package) — show a clean zero summary rather than synthesizing amounts.
   if (!source) return { data: zeroSummaryPayload(emp, run, month, year) };
@@ -1948,7 +2404,7 @@ function zeroSummaryPayload(
     employeeId: emp.employeeCode,
     employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
     gender: emp.gender ? (emp.gender.toUpperCase().startsWith("M") ? "M" : "F") : "M",
-    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "2024-01-01",
+    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "",
     category: (emp.skillType || "Skilled").toUpperCase().replace(/\s+/g, ""),
     skillType: emp.skillType || "Skilled",
     state: emp.state || "All States (Default)",
@@ -2134,7 +2590,9 @@ function buildSummaryPayload(
   const pf = Math.round(comp.deductions.providentFund || 0);
   const esic = Math.round(comp.deductions.healthInsurance || comp.deductions.esic || 0);
   const pt = Math.round(comp.deductions.professionalTax || 0);
-  const lwf = comp.deductions.lwf !== undefined ? round2(comp.deductions.lwf) : 20;
+  // No fabricated fallback: when neither the state resolver nor a configured
+  // LWF rule produced a value, LWF is 0 (previously a hardcoded ₹20).
+  const lwf = comp.deductions.lwf !== undefined ? round2(comp.deductions.lwf) : 0;
   const incomeTax = Math.round(
     comp.deductions.incomeTax ?? comp.deductions.tds ?? 0,
   );
@@ -2154,7 +2612,7 @@ function buildSummaryPayload(
     employeeId: emp.employeeCode,
     employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
     gender: emp.gender ? (emp.gender.toUpperCase().startsWith("M") ? "M" : "F") : "M",
-    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "2024-01-01",
+    doj: emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : "",
     category: (emp.skillType || "Skilled").toUpperCase().replace(/\s+/g, ""),
     skillType: emp.skillType || "Skilled",
     salaryType: comp.summary.salaryType || emp.salaryType || "Monthly",
@@ -2226,7 +2684,7 @@ function buildSummaryPayload(
 export async function getEmployeePayrollSummaries(month: number, year: number) {
   const [employees, run, wageRates, customComponents, salaryAdvances, productionRecords] = await Promise.all([
     prisma.employee.findMany({
-      where: { status: { in: ["Active", "ACTIVE", "active"] } },
+      where: { status: { in: PAYROLL_ELIGIBLE_STATUSES } },
       include: {
         salaryStructures: {
           where: { isActive: true },
@@ -2249,7 +2707,7 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
   }
 
   const cfg = await getCompanyConfig();
-  const withPaySource = employees.filter((e) => !!resolvePaySource(e, cfg));
+  const withPaySource = employees.filter((e) => !!resolvePaySource(e, cfg, wageRates));
   const reconciliations = withPaySource.length > 0
     ? await reconcileEmployees(withPaySource.map((e) => e.id), year, month)
     : [];
@@ -2260,7 +2718,7 @@ export async function getEmployeePayrollSummaries(month: number, year: number) {
     withPaySource.map((emp) =>
       computeEmployeePayslip(
         emp,
-        resolvePaySource(emp, cfg)!.structure,
+        resolvePaySource(emp, cfg, wageRates)!.structure,
         year,
         month,
         recById.get(emp.id),
@@ -2318,10 +2776,13 @@ export async function runPayrollForSkillGroup(
   }
 
   const whereClause: Prisma.EmployeeWhereInput = {
-    status: { in: ["Active", "ACTIVE", "active"] },
+    status: { in: PAYROLL_ELIGIBLE_STATUSES },
   };
   if (skillType && skillType !== "ALL") {
-    whereClause.skillType = { equals: skillType, mode: "insensitive" };
+    // Match every spelling variant (Semi Skilled / Semi-Skilled / SEMISKILLED…)
+    // so a profile edit in any format is found by any payroll filter.
+    const variants = skillVariants(skillType);
+    whereClause.OR = variants.map((v) => ({ skillType: { equals: v, mode: "insensitive" as const } }));
   }
 
   const employees = await prisma.employee.findMany({
@@ -2356,9 +2817,16 @@ export async function runPayrollForSkillGroup(
   const recById = new Map(reconciliations.map((r) => [r.employeeId, r]));
 
   const generatedSlips = [];
+  const skippedNoPayBasis: string[] = [];
   for (const emp of employees) {
-    const paySource = resolvePaySource(emp, cfg);
-    const structure = paySource?.structure || (fallbackComponents() as unknown as PaySourceStructure);
+    const paySource = resolvePaySource(emp, cfg, wageRates);
+    // No pay basis (no package, no structure, not daily-wage) — skip instead
+    // of inventing a zero slip, so run totals only reflect real workers.
+    if (!paySource) {
+      skippedNoPayBasis.push(emp.employeeCode);
+      continue;
+    }
+    const structure = paySource.structure;
     const comp = await computeEmployeePayslip(
       emp,
       structure,
@@ -2453,6 +2921,7 @@ export async function runPayrollForSkillGroup(
       runId: runPublicId(run),
       skillType,
       processedCount: generatedSlips.length,
+      skippedNoPayBasis: skippedNoPayBasis.length,
       totalEmployees: allSlips.length,
       grossPayroll: Math.round(totalGross),
       totalDeductions: Math.round(totalDeductions),
@@ -2511,8 +2980,13 @@ export async function runPayrollForIndividualEmployee(
   ]);
 
   const rec = await reconcileEmployee(emp.id, year, month);
-  const paySource = resolvePaySource(emp, cfg);
-  const structure = paySource?.structure || (fallbackComponents() as unknown as PaySourceStructure);
+  const paySource = resolvePaySource(emp, cfg, wageRates);
+  if (!paySource) {
+    throw AppError.badRequest(
+      `No pay basis for ${emp.employeeCode}: set a yearly salary package, an active salary structure, or a daily-wage profile first`,
+    );
+  }
+  const structure = paySource.structure;
   const comp = await computeEmployeePayslip(
     emp,
     structure,

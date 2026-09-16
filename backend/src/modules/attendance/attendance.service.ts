@@ -95,12 +95,24 @@ export async function getTeamSummary(filters: { month?: number; year?: number } 
     const results = await reconcileEmployees(employees.map((e) => e.id), year, month);
     for (const { daily } of results) {
       for (const d of daily) {
-        if (d.status === "Holiday" || d.status === "Weekend") continue;
+        // Non-employment and non-working days never count for anyone, and
+        // "Scheduled" means the employee has no uploaded punches at all this
+        // month — excluding it keeps the summary honest for partially
+        // uploaded months instead of inflating absents.
+        if (
+          d.status === "Holiday" ||
+          d.status === "Weekend" ||
+          d.status === "Not Hired" ||
+          d.status === "Exited" ||
+          d.status === "Scheduled"
+        ) continue;
         total += 1;
-        if (d.status === "Present") counts.present += 1;
+        if (d.status === "Present" || d.status === "Night Shift") counts.present += 1;
         else if (d.status === "Late") counts.late += 1;
         else if (d.status === "WFH") counts.wfh += 1;
-        else if (d.status === "Leave" || d.status === "Approved Leave" || d.status === "Paid Leave") counts.onLeave += 1;
+        else if (d.status === "Half Day") counts.present += 1;
+        else if (d.status === "Paid Leave") counts.onLeave += 1;
+        else if (d.status === "Weekly Off Worked" || d.status === "Holiday Worked") counts.present += 1;
         else counts.absent += 1; // Absent + LOP (unpaid)
       }
     }

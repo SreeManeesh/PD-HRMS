@@ -1,19 +1,13 @@
 import { useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import { getFileUrl } from "../../utils/uploadFileUrl.js";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
 ).toString();
-
-
-/* =========================================================
-   OPEN CONTENT
-========================================================= */
 
 function openContent(content) {
     if (!content) return;
@@ -36,9 +30,7 @@ function openContent(content) {
     }
 }
 
-/* =========================================================
-   OPEN BUTTON
-========================================================= */
+
 
 function OpenInNewTabButton({ content }) {
     return (
@@ -74,9 +66,7 @@ function OpenInNewTabButton({ content }) {
     );
 }
 
-/* =========================================================
-   TEXT
-========================================================= */
+
 
 function TextViewer({ content }) {
     return (
@@ -95,9 +85,7 @@ function TextViewer({ content }) {
     );
 }
 
-/* =========================================================
-   LINK
-========================================================= */
+
 
 function LinkViewer({ content }) {
     return (
@@ -130,9 +118,7 @@ function LinkViewer({ content }) {
     );
 }
 
-/* =========================================================
-   PDF
-========================================================= */
+
 
 function PdfViewer({ content }) {
     const [numPages, setNumPages] = useState(0);
@@ -201,9 +187,7 @@ function PdfViewer({ content }) {
     );
 }
 
-/* =========================================================
-   VIDEO
-========================================================= */
+
 
 function VideoViewer({ content }) {
     const videoUrl = getFileUrl(content.fileUrl);
@@ -227,16 +211,8 @@ function VideoViewer({ content }) {
                     display: "block",
                     maxHeight: "500px",
                 }}
-                onError={(e) => {
-                    console.error(
-                        "VIDEO PLAYBACK ERROR:",
-                        e.currentTarget.error
-                    );
-
-                    console.log(
-                        "VIDEO URL:",
-                        videoUrl
-                    );
+                onError={() => {
+                  // video load failure handled silently in production
                 }}
             >
                 <source src={videoUrl} />
@@ -247,9 +223,7 @@ function VideoViewer({ content }) {
     );
 }
 
-/* =========================================================
-   MAIN VIEWER
-========================================================= */
+
 
 export default function CourseContentViewer({
     content,
@@ -268,12 +242,7 @@ export default function CourseContentViewer({
                 width: "100%",
             }}
         >
-            {/* ALWAYS SHOW BUTTON */}
-            <OpenInNewTabButton
-                content={content}
-            />
-
-            {/* CONTENT */}
+            <OpenInNewTabButton content={content} />
 
             {content.type === "TEXT" && (
                 <TextViewer content={content} />

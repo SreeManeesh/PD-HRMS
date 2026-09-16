@@ -5,15 +5,23 @@ import { writeAuditLog } from "../../services/audit.service";
 import { toNumber } from "../../serializers/helpers";
 import { Prisma } from "@prisma/client";
 
+/** Basic wages are system-driven (wage rates + overrides) and locked. */
+function isBasicLocked(code?: unknown, name?: unknown): boolean {
+  const norm = (v: unknown) => String(v || "").toLowerCase().replace(/[^a-z]/g, "");
+  return norm(code).includes("basic") || norm(name).includes("basic");
+}
+
 export async function listComponents(req: Request, res: Response, next: NextFunction) {
   try {
     const { kind, category, locationId } = req.query;
+    const andClauses: object[] = [];
+    if (category) andClauses.push({ OR: [{ applicableCategory: "ALL" }, { applicableCategory: String(category) }] });
+    if (locationId) andClauses.push({ OR: [{ locationId: null }, { locationId: String(locationId) }] });
     const components = await prisma.payrollComponentConfig.findMany({
       where: {
         isActive: true,
         ...(kind ? { kind: String(kind) } : {}),
-        ...(category ? { OR: [{ applicableCategory: "ALL" }, { applicableCategory: String(category) }] } : {}),
-        ...(locationId ? { OR: [{ locationId: null }, { locationId: String(locationId) }] } : {}),
+        ...(andClauses.length ? { AND: andClauses } : {}),
       },
       include: {
         location: { select: { id: true, name: true } },
@@ -82,6 +90,11 @@ export async function createComponent(req: Request, res: Response, next: NextFun
 
     if (!name || !code || !kind || !calcType) {
       throw AppError.badRequest("Name, code, kind, and calculation type are required");
+    }
+    if (isBasicLocked(code, name)) {
+      throw AppError.forbidden(
+        "Basic wages are system-driven from Wage Rates & overrides (skill/state-wise) and cannot be created manually."
+      );
     }
 
     const component = await prisma.payrollComponentConfig.create({
@@ -152,6 +165,16 @@ export async function updateComponent(req: Request, res: Response, next: NextFun
 
     const existing = await prisma.payrollComponentConfig.findUnique({ where: { id } });
     if (!existing) throw AppError.notFound("Component not found");
+    if (isBasicLocked(existing.code, existing.name)) {
+      throw AppError.forbidden(
+        "Basic wages are system-driven from Wage Rates & overrides (skill/state-wise) and are non-editable."
+      );
+    }
+    if (isBasicLocked(req.body?.code, name)) {
+      throw AppError.forbidden(
+        "Basic wages are system-driven from Wage Rates & overrides (skill/state-wise) and are non-editable."
+      );
+    }
 
     const updated = await prisma.payrollComponentConfig.update({
       where: { id },
@@ -188,6 +211,13 @@ export async function updateComponent(req: Request, res: Response, next: NextFun
 export async function deleteComponent(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    const existing = await prisma.payrollComponentConfig.findUnique({ where: { id } });
+    if (!existing) throw AppError.notFound("Component not found");
+    if (isBasicLocked(existing.code, existing.name)) {
+      throw AppError.forbidden(
+        "Basic wages are system-driven from Wage Rates & overrides (skill/state-wise) and are non-deletable."
+      );
+    }
     await prisma.payrollComponentConfig.update({ where: { id }, data: { isActive: false } });
     res.json({ message: "Component deactivated successfully" });
   } catch (err) {

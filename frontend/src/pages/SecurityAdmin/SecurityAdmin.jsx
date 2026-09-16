@@ -191,6 +191,7 @@ function BreakGlassModal({ isOpen, onClose, onUsed }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- useBreakGlass is a service helper, not a React hook
     const res = await useBreakGlass(justification.trim(), ME_NAME);
     setSaving(false);
     if (res.data.error) {

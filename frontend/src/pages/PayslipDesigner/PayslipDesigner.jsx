@@ -126,13 +126,13 @@ export function PayslipDesignerPanel() {
     if (!tid || !bp) return;
     try {
       localStorage.setItem(`pd_blueprint_draft_${tid}`, JSON.stringify(bp));
-    } catch (_) {}
+    } catch { /* ignore storage error */ }
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
         await savePayslipDraft(tid, bp, "Auto-saved working draft");
-      } catch (_) {}
+      } catch { /* ignore autosave error */ }
     }, 1500);
   }, []);
 
@@ -153,7 +153,7 @@ export function PayslipDesignerPanel() {
             bp0 = localParsed;
           }
         }
-      } catch (_) {}
+      } catch { /* ignore parse error */ }
 
       if (!bp0) {
         bp0 = {
@@ -329,7 +329,7 @@ export function PayslipDesignerPanel() {
       const p = await publishPayslipTemplate(templateId);
       try {
         localStorage.removeItem(`pd_blueprint_draft_${templateId}`);
-      } catch (_) {}
+      } catch { /* ignore */ }
       setNotice(`Validated, saved as v${s.data?.version ?? "?"} and published — active v${p.data?.version ?? "?"}`);
       toast("Nesting template saved & published");
       load(templateId);

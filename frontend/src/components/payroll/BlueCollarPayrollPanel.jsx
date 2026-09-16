@@ -13,7 +13,6 @@ import {
   ArrowDown,
   Eye,
   CheckCircle2,
-  Edit3,
   X,
   Copy,
   Upload,
@@ -22,6 +21,8 @@ import {
   getEmployeePayrollSummaries,
   runPayrollForSkillGroup,
   runPayrollForIndividualEmployee,
+  getPayrollComponentConfigs,
+  getWageRates,
 } from "../../services/payrollService";
 import { useToast } from "../../context/ToastContext";
 import Spinner from "../shared/Spinner";
@@ -82,6 +83,8 @@ export default function BlueCollarPayrollPanel({
   const [editingGrossEmpId, setEditingGrossEmpId] = useState(null);
   const [selectedEmpForBreakdown, setSelectedEmpForBreakdown] = useState(null);
   const paymentFileInputRef = useRef(null);
+  const [componentConfigs, setComponentConfigs] = useState([]);
+  const [wageRates, setWageRates] = useState([]);
 
   // Pagination state (Strictly 10 items per page)
   const PAGE_SIZE = 10;
@@ -124,6 +127,40 @@ export default function BlueCollarPayrollPanel({
       .replace(/[^a-z]/g, "")
       .includes("basic");
 
+  const normKey = (k) => String(k || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Uniform basic wage per skill+state — always from Wage Rates & Overrides.
+  // Ignores per-employee overrides / location-specific overrides so picking
+  // e.g. Maharashtra makes every SKILLED show the same Basic wage (daily×26).
+  const getUniformBasicForRow = (row) => {
+    if (!wageRates.length) return null;
+    const skillNorm = normKey(row.category || row.skillType || "skilled");
+    const stateTarget = stateFilter !== "All States (Default)" ? stateFilter : row.state || "All States (Default)";
+    const stateNorm = normKey(stateTarget);
+    const byState = (w) => normKey(w.state || "All States (Default)");
+    const candidates = wageRates.filter((w) => normKey(w.skillCategory) === skillNorm);
+    if (!candidates.length) return null;
+    let found =
+      candidates.find((w) => !w.locationId && !w.contractorId && byState(w) === stateNorm) ||
+      candidates.find((w) => !w.locationId && !w.contractorId && (byState(w).includes(stateNorm) || stateNorm.includes(byState(w))));
+    if (!found) found = candidates.find((w) => !w.locationId && !w.contractorId && byState(w) === normKey("All States (Default)"));
+    if (!found) found = candidates.find((w) => !w.locationId && !w.contractorId);
+    if (!found) found = candidates[0];
+    if (!found || found.dailyRate == null) return null;
+    return Math.round(Number(found.dailyRate) * 26);
+  };
+  const lookupByNorm = (map, targetKey) => {
+    if (!map || targetKey == null) return undefined;
+    if (map[targetKey] !== undefined) return map[targetKey];
+    const nk = normKey(targetKey);
+    for (const [k, v] of Object.entries(map)) {
+      if (normKey(k) === nk) return v;
+      // allow label vs code match: e.g. "Carlease policy" vs "CARLEASE_POLICY"
+      if (normKey(prettifyKey(k)) === nk) return v;
+    }
+    return undefined;
+  };
+
   const normalizeRows = (rows) => {
     return rows.map((r, index) => {
       const gross = num(r.gross);
@@ -152,19 +189,25 @@ export default function BlueCollarPayrollPanel({
         r.salaryType ||
         r.rawRecord?.summary?.salaryType ||
         (Number(r.annualSalary) > 0 ? "Monthly" : "Daily");
+      // Use the backend's real calendar length for this month — hardcoding 30
+      // skewed the daily rate (and hence LOP) for 28/29/31-day months.
+      const calendarDays = num(
+        r.calendarDaysInMonth ?? r.rawRecord?.calendarDaysInMonth ?? r.rawRecord?.summary?.calendarDaysInMonth,
+        30,
+      );
       const fixedMonthlySalary = num(
         r.fixedMonthlySalary ??
           (salaryType === "Monthly"
             ? r.annualSalary
               ? Math.round(r.annualSalary / 12)
-              : 24000
+              : 0
             : 0),
       );
       const dailySalaryRate = num(
         r.dailySalaryRate ||
           r.dailyRate ||
           r.dailyWageRate ||
-          (fixedMonthlySalary > 0 ? fixedMonthlySalary / 30 : 900),
+          (fixedMonthlySalary > 0 ? fixedMonthlySalary / calendarDays : 0),
       );
       const lopDays = num(r.lopDays ?? r.leaveDays);
       const lopDeduction = num(
@@ -243,7 +286,7 @@ export default function BlueCollarPayrollPanel({
         employeeName: r.employeeName || "Worker",
         category: (r.category || r.skillType || "SKILLED")
           .toUpperCase()
-          .replace(/\s+/g, ""),
+          .replace(/[^A-Z]/g, ""),
         skillType: r.skillType || "Skilled",
         salaryType,
         fixedMonthlySalary,
@@ -259,9 +302,9 @@ export default function BlueCollarPayrollPanel({
         productionUnits,
         productionIncentive,
         gender: r.gender || "M",
-        doj: r.doj || "2024-01-01",
+        doj: r.doj || "—",
         state: r.state || "All States (Default)",
-        days: num(r.days ?? r.workingDays, 26),
+        days: num(r.days ?? r.workingDays, 0),
         earningDetails,
         deductionDetails,
         earningByKey,
@@ -285,10 +328,16 @@ export default function BlueCollarPayrollPanel({
   const loadData = async (shouldForceRun = false) => {
     setLoading(true);
     try {
-      const res = await getEmployeePayrollSummaries(month, year);
+      const [res, compRes, wageRes] = await Promise.all([
+        getEmployeePayrollSummaries(month, year),
+        getPayrollComponentConfigs().catch(() => ({ data: [] })),
+        getWageRates().catch(() => ({ data: [] })),
+      ]);
       const rows = res.data || [];
       const normalized = normalizeRows(rows);
       setAllFetchedRecords(normalized);
+      setComponentConfigs(compRes?.data || []);
+      setWageRates(wageRes?.data || []);
 
       // If any row is already Paid/Approved or shouldForceRun, populate
       const alreadyPaid = rows.some(
@@ -322,6 +371,28 @@ export default function BlueCollarPayrollPanel({
     setPage(1);
   }, [month, year]);
 
+  // Refresh when employee skill/salary edits land (profile dispatches
+  // hrms:employees-changed) or when the tab regains focus — keeps payroll,
+  // attendance and leave-derived figures dynamically in sync.
+  // Also refresh when Earnings/Deductions components are added/removed/edited
+  // so Annual & Monthly tables reflect the exact 9+2 (or any) columns instantly.
+  useEffect(() => {
+    const refresh = () => loadData();
+    window.addEventListener("hrms:employees-changed", refresh);
+    window.addEventListener("hrms:payroll-components-changed", refresh);
+    window.addEventListener("hrms:wage-rates-changed", refresh);
+    window.addEventListener("focus", refresh);
+    const onVisibility = () => { if (document.visibilityState === "visible") loadData(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("hrms:employees-changed", refresh);
+      window.removeEventListener("hrms:payroll-components-changed", refresh);
+      window.removeEventListener("hrms:wage-rates-changed", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [month, year]);
+
   useEffect(() => {
     setPage(1);
   }, [searchQuery, categoryFilter, stateFilter]);
@@ -334,8 +405,14 @@ export default function BlueCollarPayrollPanel({
         month,
         year,
       });
-      // Fetch freshly computed summaries
-      const res = await getEmployeePayrollSummaries(month, year);
+      // Fetch freshly computed summaries + latest component configs & wage rates (so new columns / basic uniformity appear immediately)
+      const [res, compRes, wageRes] = await Promise.all([
+        getEmployeePayrollSummaries(month, year),
+        getPayrollComponentConfigs().catch(() => ({ data: [] })),
+        getWageRates().catch(() => ({ data: [] })),
+      ]);
+      if (compRes?.data) setComponentConfigs(compRes.data);
+      if (wageRes?.data) setWageRates(wageRes.data);
       const rows = res.data || [];
       const normalized = normalizeRows(
         rows.length ? rows : allFetchedRecords,
@@ -474,14 +551,16 @@ export default function BlueCollarPayrollPanel({
         const pfKey = findDedKey("provident", "pf");
         const esicKey = findDedKey("health", "esic", "esi");
         const ptKey = findDedKey("professional", "pt");
-        const basicAmt = basicKey ? (newByKey[basicKey] ?? 0) : Math.round(grossNum * 0.5);
-        const pf = Math.round(Math.min(basicAmt, 15000) * 0.12);
-        const esic = grossNum <= 21000 ? Math.round(grossNum * 0.0075) : 0;
-        const pt = grossNum > 10000 ? 200 : 0;
+        // No hardcoded statutory rates here: rescale the row's own
+        // backend-computed deductions proportionally to the new gross so
+        // configured/capped values keep their ratios. Flat monthly
+        // deductions (PT) stay untouched.
+        const oldGross = num(r.gross);
+        const rescale = oldGross > 0 ? grossNum / oldGross : 0;
         const newDeductionDetails = (r.deductionDetails || []).map((d) => {
-          if (pfKey && d.key === pfKey) return { ...d, amount: pf };
-          if (esicKey && d.key === esicKey) return { ...d, amount: esic };
-          if (ptKey && d.key === ptKey) return { ...d, amount: pt };
+          if (pfKey && d.key === pfKey) return { ...d, amount: Math.round(num(d.amount) * rescale) };
+          if (esicKey && d.key === esicKey) return { ...d, amount: Math.round(num(d.amount) * rescale) };
+          if (ptKey && d.key === ptKey) return d;
           return d;
         });
         const newDeductionByKey = Object.fromEntries(
@@ -500,9 +579,9 @@ export default function BlueCollarPayrollPanel({
           earnings: { ...(r.earnings || {}), ...newByKey, total: grossNum },
           deductionDetails: newDeductionDetails,
           deductionByKey: newDeductionByKey,
-          pf: pfKey ? pf : num(r.pf),
-          esic: esicKey ? esic : num(r.esic),
-          pt: ptKey ? pt : num(r.pt),
+          pf: pfKey ? num(newDeductionByKey[pfKey]) : num(r.pf),
+          esic: esicKey ? num(newDeductionByKey[esicKey]) : num(r.esic),
+          pt: ptKey ? num(newDeductionByKey[ptKey]) : num(r.pt),
           incomeTax: num(r.incomeTax),
           advanceRecovery: num(r.advanceRecovery),
           deductions,
@@ -602,9 +681,10 @@ This is a computer-generated statutory payroll document.
           return false;
         }
       }
-      // Category filter
+      // Category filter (normalized so SKILLED/SEMI-SKILLED variants match)
       if (categoryFilter && categoryFilter !== "All Categories") {
-        if (r.category !== categoryFilter) return false;
+        const norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z]/g, "");
+        if (norm(r.category) !== norm(categoryFilter)) return false;
       }
       // Search query
       if (searchQuery.trim()) {
@@ -623,10 +703,15 @@ This is a computer-generated statutory payroll document.
     const list = [...filteredRecords];
     const sortVal = (r, key) => {
       if (typeof key === "string" && key.startsWith("earn:")) {
-        return r.earningByKey?.[key.slice(5)];
+        const ek = key.slice(5);
+        if (isBasicLikeKey(ek)) {
+          const ub = getUniformBasicForRow(r);
+          if (ub != null) return ub;
+        }
+        return lookupByNorm(r.earningByKey, ek);
       }
       if (typeof key === "string" && key.startsWith("ded:")) {
-        return r.deductionByKey?.[key.slice(4)];
+        return lookupByNorm(r.deductionByKey, key.slice(4));
       }
       if (key in r) return r[key];
       if (r.earningByKey && key in r.earningByKey) return r.earningByKey[key];
@@ -655,9 +740,31 @@ This is a computer-generated statutory payroll document.
     return list;
   }, [filteredRecords, sortKey, sortDir]);
 
-  // Fully dynamic columns: union of earning/deduction keys actually present
-  // with a non-zero amount in any record. No hardcoded component names.
+  // Fully dynamic columns — strictly from PayrollComponentConfigs (Earnings /
+  // Deductions tabs). No statutory fallback — if Earnings shows 9 and
+  // Deductions shows 2, payroll shows exactly 9 + 2 (+ GROSS/DEDUCTIONS/NET).
+  // Rows still come from backend earningDetails/deductionDetails but are
+  // looked up via normalized code/name so add/remove in the tabs reflects
+  // immediately in Annual & Monthly payroll.
+  const activeEarningConfigs = useMemo(() => {
+    const list = (componentConfigs || []).filter((c) => String(c.kind || "").toLowerCase() !== "deduction" && c.isActive !== false);
+    list.sort((a, b) => Number(a.priority ?? 999) - Number(b.priority ?? 999));
+    return list;
+  }, [componentConfigs]);
+  const activeDeductionConfigs = useMemo(() => {
+    const list = (componentConfigs || []).filter((c) => String(c.kind || "").toLowerCase() === "deduction" && c.isActive !== false);
+    list.sort((a, b) => Number(a.priority ?? 999) - Number(b.priority ?? 999));
+    return list;
+  }, [componentConfigs]);
+
   const earningCols = useMemo(() => {
+    if (activeEarningConfigs.length > 0) {
+      return activeEarningConfigs.map((c) => ({
+        key: String(c.code || c.name),
+        label: String(c.name || c.code),
+      }));
+    }
+    // Fallback when configs not yet loaded: derive from rows (no hardcoding)
     const seen = new Map();
     for (const r of records) {
       for (const d of r.earningDetails || []) {
@@ -665,13 +772,17 @@ This is a computer-generated statutory payroll document.
       }
     }
     return [...seen.entries()]
-      .filter(([key]) =>
-        records.some((r) => Math.abs(num(r.earningByKey?.[key])) > 0),
-      )
+      .filter(([key]) => records.some((r) => Math.abs(num(lookupByNorm(r.earningByKey, key))) > 0))
       .map(([key, label]) => ({ key, label }));
-  }, [records]);
+  }, [records, activeEarningConfigs]);
 
   const deductionCols = useMemo(() => {
+    if (activeDeductionConfigs.length > 0) {
+      return activeDeductionConfigs.map((c) => ({
+        key: String(c.code || c.name),
+        label: String(c.name || c.code),
+      }));
+    }
     const seen = new Map();
     for (const r of records) {
       for (const d of r.deductionDetails || []) {
@@ -679,11 +790,9 @@ This is a computer-generated statutory payroll document.
       }
     }
     return [...seen.entries()]
-      .filter(([key]) =>
-        records.some((r) => Math.abs(num(r.deductionByKey?.[key])) > 0),
-      )
+      .filter(([key]) => records.some((r) => Math.abs(num(lookupByNorm(r.deductionByKey, key))) > 0))
       .map(([key, label]) => ({ key, label }));
-  }, [records]);
+  }, [records, activeDeductionConfigs]);
 
   // Aggregate totals (dynamic detail columns + headline figures)
   const totals = useMemo(() => {
@@ -729,9 +838,8 @@ This is a computer-generated statutory payroll document.
       "GENDER",
       "DOJ",
       "DAYS",
-      ...earningCols.map((c) => c.label.toUpperCase()),
-      "GROSS",
-      ...deductionCols.map((c) => c.label.toUpperCase()),
+      ...earningCols.map((c) => String(c.label).toUpperCase()),
+      ...deductionCols.map((c) => String(c.label).toUpperCase()),
       "DEDUCTIONS",
       "NET",
     ];
@@ -744,14 +852,17 @@ This is a computer-generated statutory payroll document.
       r.gender,
       r.doj,
       r.days,
-      ...earningCols.map((c) => Math.round(num(r.earningByKey?.[c.key]))),
-      Math.round(num(r.gross)),
-      ...deductionCols.map((c) => Math.round(num(r.deductionByKey?.[c.key]))),
+      ...earningCols.map((c) => {
+        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+        const ub = isBasic ? getUniformBasicForRow(r) : null;
+        return Math.round(num(ub != null ? ub : lookupByNorm(r.earningByKey, c.key)));
+      }),
+      ...deductionCols.map((c) => Math.round(num(lookupByNorm(r.deductionByKey, c.key)))),
       Math.round(num(r.deductions)),
       Math.round(num(r.net)),
     ]);
 
-    // Summary Row
+    // Summary Row — mirrors header: DAYS | earnings | deductions | DEDUCTIONS | NET (GROSS removed per request)
     rows.push([
       "TOTAL",
       "",
@@ -760,9 +871,15 @@ This is a computer-generated statutory payroll document.
       "",
       "",
       totals.days,
-      ...earningCols.map((c) => Math.round(num(totals.earning[c.key]))),
-      Math.round(num(totals.gross)),
-      ...deductionCols.map((c) => Math.round(num(totals.deduction[c.key]))),
+      ...earningCols.map((c) => {
+        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+        if (isBasic) {
+          const sum = sortedRecords.reduce((s, r) => s + (getUniformBasicForRow(r) ?? num(lookupByNorm(r.earningByKey, c.key))), 0);
+          return Math.round(num(sum));
+        }
+        return Math.round(num(lookupByNorm(totals.earning, c.key)));
+      }),
+      ...deductionCols.map((c) => Math.round(num(lookupByNorm(totals.deduction, c.key)))),
       Math.round(num(totals.deductions)),
       Math.round(num(totals.net)),
     ]);
@@ -1508,20 +1625,19 @@ This is a computer-generated statutory payroll document.
                     { key: "gender", label: "GENDER", align: "center" },
                     { key: "doj", label: "DOJ", align: "left" },
                     { key: "days", label: "DAYS", align: "right" },
-                    // Dynamic earning components (real data, not hardcoded)
                     ...earningCols.map((c) => ({
                       key: `earn:${c.key}`,
-                      label: c.label.toUpperCase(),
+                      label: String(c.label).toUpperCase(),
                       align: "right",
+                      kind: "earning",
                     })),
-                    { key: "gross", label: "GROSS", align: "right" },
-                    // Dynamic deduction components (real data, not hardcoded)
                     ...deductionCols.map((c) => ({
                       key: `ded:${c.key}`,
-                      label: c.label.toUpperCase(),
+                      label: String(c.label).toUpperCase(),
                       align: "right",
+                      kind: "deduction",
                     })),
-                    { key: "deductions", label: "DEDUCTIONS", align: "right" },
+                    { key: "deductions", label: "DEDUCTIONS", align: "right", kind: "deductions" },
                     { key: "net", label: "NET", align: "right" },
                     {
                       key: "transactionId",
@@ -1545,7 +1661,11 @@ This is a computer-generated statutory payroll document.
                         color:
                           sortKey === col.key
                             ? "var(--primary)"
-                            : "var(--subtext)",
+                            : col.kind === "earning"
+                              ? "#059669"
+                              : col.kind === "deduction" || col.kind === "deductions"
+                                ? "#dc2626"
+                                : "var(--subtext)",
                         textTransform: "uppercase",
                         letterSpacing: "0.5px",
                         whiteSpace: "nowrap",
@@ -1554,8 +1674,30 @@ This is a computer-generated statutory payroll document.
                             ? "pointer"
                             : "default",
                         userSelect: "none",
-                        background: "var(--background)",
+                        background:
+                          col.kind === "earning"
+                            ? "rgba(16,185,129,0.06)"
+                            : col.kind === "deduction"
+                              ? "rgba(220,38,38,0.06)"
+                              : col.kind === "deductions"
+                                ? "rgba(220,38,38,0.04)"
+                                : "var(--background)",
+                        borderLeft:
+                          col.kind === "earning" && earningCols[0]?.key && col.key === `earn:${earningCols[0].key}`
+                            ? "1px solid var(--border)"
+                            : col.kind === "deduction" && deductionCols[0]?.key && col.key === `ded:${deductionCols[0].key}`
+                              ? "1px solid var(--border)"
+                              : col.kind === "deductions" && deductionCols.length > 0
+                                ? "1px solid var(--border)"
+                                : undefined,
                       }}
+                      title={
+                        col.kind === "earning"
+                          ? `Earning: ${col.label} — from Earnings config`
+                          : col.kind === "deduction"
+                            ? `Deduction: ${col.label} — from Deductions config`
+                            : undefined
+                      }
                     >
                       <div
                         style={{
@@ -1806,128 +1948,76 @@ This is a computer-generated statutory payroll document.
                         </div>
                       </td>
 
-                      {/* Dynamic earning-component columns (real data) */}
-                      {earningCols.map((col) => (
-                        <td
-                          key={`earn-${col.key}`}
-                          style={{
-                            padding: "10px 12px",
-                            textAlign: "right",
-                            fontFamily: "monospace",
-                            color: isBasicLikeKey(col.key)
-                              ? "var(--text)"
-                              : "var(--subtext)",
-                            fontWeight: isBasicLikeKey(col.key) ? 600 : 400,
-                            whiteSpace: "nowrap",
-                          }}
-                          title={col.label}
-                        >
-                          {num(r.earningByKey?.[col.key]).toLocaleString("en-IN")}
-                        </td>
-                      ))}
-                      {/* GROSS (Editable when payroll is inactive / not running) */}
-                      <td
-                        style={{
-                          padding: "10px 12px",
-                          textAlign: "right",
-                          fontWeight: 700,
-                          fontFamily: "monospace",
-                          color: "var(--text)",
-                          cursor: canEditPayroll ? "pointer" : "default",
-                        }}
-                        title={
-                          canEditPayroll
-                            ? "Click to edit Gross Salary"
-                            : undefined
-                        }
-                      >
-                        {editingGrossEmpId === r.employeeId ? (
-                          <input
-                            type="number"
-                            autoFocus
-                            defaultValue={r.gross}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                handleUpdateGross(r.employeeId, e.target.value);
-                                setEditingGrossEmpId(null);
-                              } else if (e.key === "Escape") {
-                                setEditingGrossEmpId(null);
-                              }
-                            }}
-                            onBlur={(e) => {
-                              handleUpdateGross(r.employeeId, e.target.value);
-                              setEditingGrossEmpId(null);
-                            }}
+                      {/* Dynamic Earnings columns — directly from Earnings config */}
+                      {earningCols.map((c) => {
+                        const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+                        const uniformBasic = isBasic ? getUniformBasicForRow(r) : null;
+                        const v = isBasic && uniformBasic != null ? uniformBasic : num(lookupByNorm(r.earningByKey, c.key));
+                        return (
+                          <td
+                            key={`earn-${c.key}`}
                             style={{
-                              width: "80px",
-                              height: "26px",
-                              padding: "2px 6px",
-                              border: "1px solid var(--primary)",
-                              borderRadius: "4px",
-                              fontSize: "12px",
-                              fontFamily: "monospace",
-                              fontWeight: 700,
+                              padding: "10px 12px",
                               textAlign: "right",
-                              outline: "none",
-                              background: "var(--card)",
-                              color: "var(--text)",
+                              fontFamily: "monospace",
+                              fontWeight: v > 0 ? 600 : 400,
+                              color: v > 0 ? "var(--text)" : "var(--subtext)",
+                              whiteSpace: "nowrap",
+                              background: isBasic ? "rgba(99,102,241,0.04)" : "rgba(16,185,129,0.03)",
+                              borderLeft: c.key === earningCols[0]?.key ? "1px solid var(--border)" : undefined,
                             }}
-                          />
-                        ) : (
-                          <div
-                            onClick={() => {
-                              if (canEditPayroll)
-                                setEditingGrossEmpId(r.employeeId);
-                            }}
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              gap: "4px",
-                              borderBottom: canEditPayroll
-                                ? "1px dashed var(--subtext)"
-                                : "none",
-                            }}
+                            title={
+                              isBasic && uniformBasic != null
+                                ? `${c.label}: ₹${Math.round(v).toLocaleString("en-IN")} — uniform for ${r.category} in ${stateFilter !== "All States (Default)" ? stateFilter : r.state} (Wage Rates daily×26)`
+                                : `${c.label}: ₹${Math.round(v).toLocaleString("en-IN")}`
+                            }
                           >
-                            <span>{r.gross.toLocaleString("en-IN")}</span>
-                            {canEditPayroll && (
-                              <Edit3 size={10} style={{ opacity: 0.5 }} />
-                            )}
-                          </div>
-                        )}
-                      </td>
+                            {v !== 0 ? `₹${Math.round(v).toLocaleString("en-IN")}` : <span style={{ opacity: 0.4 }}>—</span>}
+                          </td>
+                        );
+                      })}
 
-                      {/* Dynamic deduction-component columns (real data) */}
-                      {deductionCols.map((col) => (
-                        <td
-                          key={`ded-${col.key}`}
-                          style={{
-                            padding: "10px 12px",
-                            textAlign: "right",
-                            fontFamily: "monospace",
-                            color: "var(--red)",
-                            whiteSpace: "nowrap",
-                          }}
-                          title={col.label}
-                        >
-                          {num(r.deductionByKey?.[col.key]).toLocaleString("en-IN")}
-                        </td>
-                      ))}
+                      {/* Dynamic Deduction columns — directly from Deductions config */}
+                      {deductionCols.map((c) => {
+                        const v = num(lookupByNorm(r.deductionByKey, c.key));
+                        return (
+                          <td
+                            key={`ded-${c.key}`}
+                            style={{
+                              padding: "10px 12px",
+                              textAlign: "right",
+                              fontFamily: "monospace",
+                              fontWeight: v > 0 ? 600 : 400,
+                              color: v > 0 ? "#dc2626" : "var(--subtext)",
+                              whiteSpace: "nowrap",
+                              background: "rgba(220,38,38,0.03)",
+                              borderLeft: c.key === deductionCols[0]?.key ? "1px solid var(--border)" : undefined,
+                            }}
+                            title={`${c.label}: ₹${Math.round(v).toLocaleString("en-IN")}`}
+                          >
+                            {v !== 0 ? `₹${Math.round(v).toLocaleString("en-IN")}` : <span style={{ opacity: 0.4 }}>—</span>}
+                          </td>
+                        );
+                      })}
 
-                      {/* DEDUCTIONS (total) */}
+                      {/* Deductions total */}
                       <td
                         style={{
                           padding: "10px 12px",
                           textAlign: "right",
                           fontWeight: 700,
                           fontFamily: "monospace",
-                          color: "var(--red)",
+                          color: "#dc2626",
+                          whiteSpace: "nowrap",
+                          background: "rgba(220,38,38,0.06)",
+                          borderLeft: deductionCols.length > 0 ? "1px solid var(--border)" : undefined,
                         }}
+                        title={`Total deductions (₹${Math.round(num(r.deductions)).toLocaleString("en-IN")})`}
                       >
-                        {r.deductions.toLocaleString("en-IN")}
+                        −₹{Math.round(num(r.deductions)).toLocaleString("en-IN")}
                       </td>
 
-                      {/* 20. NET */}
+                      {/* NET = Gross - Deductions */}
                       <td
                         style={{
                           padding: "10px 12px",
@@ -1935,9 +2025,10 @@ This is a computer-generated statutory payroll document.
                           fontWeight: 800,
                           fontFamily: "monospace",
                           color: "var(--green)",
+                          borderLeft: "1px solid var(--border)",
                         }}
                       >
-                        {r.net.toLocaleString("en-IN")}
+                        ₹{Math.round(num(r.net)).toLocaleString("en-IN")}
                       </td>
 
                       {/* Transaction ID Column */}
@@ -2101,7 +2192,7 @@ This is a computer-generated statutory payroll document.
                 })}
               </tbody>
 
-              {/* ── Table Summary Footer Row ── */}
+              {/* ── Table Summary Footer Row — mirrors dynamic columns: DAYS | earnings | GROSS | deductions | DEDUCTIONS | NET ── */}
               <tfoot>
                 <tr
                   style={{
@@ -2135,49 +2226,25 @@ This is a computer-generated statutory payroll document.
                   >
                     {totals.days}
                   </td>
-                  {earningCols.map((col) => (
-                    <td
-                      key={`ft-earn-${col.key}`}
-                      style={{
-                        padding: "12px",
-                        textAlign: "right",
-                        color: "var(--subtext)",
-                      }}
-                      title={col.label}
-                    >
-                      {num(totals.earning[col.key]).toLocaleString("en-IN")}
+                  {earningCols.map((c) => {
+                    const isBasic = isBasicLikeKey(c.key) || isBasicLikeKey(c.label);
+                    const uniformTotal = isBasic
+                      ? sortedRecords.reduce((s, r) => s + (getUniformBasicForRow(r) ?? num(lookupByNorm(r.earningByKey, c.key))), 0)
+                      : null;
+                    const v = isBasic && uniformTotal != null ? uniformTotal : num(lookupByNorm(totals.earning, c.key));
+                    return (
+                      <td key={`tot-earn-${c.key}`} style={{ padding: "12px", textAlign: "right", color: "var(--text)", background: isBasic ? "rgba(99,102,241,0.04)" : "rgba(16,185,129,0.04)", borderLeft: c.key === earningCols[0]?.key ? "1px solid var(--border)" : undefined }}>
+                        ₹{Math.round(v).toLocaleString("en-IN")}
+                      </td>
+                    );
+                  })}
+                  {deductionCols.map((c) => (
+                    <td key={`tot-ded-${c.key}`} style={{ padding: "12px", textAlign: "right", color: "#dc2626", background: "rgba(220,38,38,0.04)", borderLeft: c.key === deductionCols[0]?.key ? "1px solid var(--border)" : undefined }}>
+                      ₹{Math.round(num(lookupByNorm(totals.deduction, c.key))).toLocaleString("en-IN")}
                     </td>
                   ))}
-                  <td
-                    style={{
-                      padding: "12px",
-                      textAlign: "right",
-                      color: "var(--text)",
-                    }}
-                  >
-                    {totals.gross.toLocaleString("en-IN")}
-                  </td>
-                  {deductionCols.map((col) => (
-                    <td
-                      key={`ft-ded-${col.key}`}
-                      style={{
-                        padding: "12px",
-                        textAlign: "right",
-                        color: "var(--red)",
-                      }}
-                      title={col.label}
-                    >
-                      {num(totals.deduction[col.key]).toLocaleString("en-IN")}
-                    </td>
-                  ))}
-                  <td
-                    style={{
-                      padding: "12px",
-                      textAlign: "right",
-                      color: "var(--red)",
-                    }}
-                  >
-                    {totals.deductions.toLocaleString("en-IN")}
+                  <td style={{ padding: "12px", textAlign: "right", color: "#dc2626", background: "rgba(220,38,38,0.06)", borderLeft: deductionCols.length > 0 ? "1px solid var(--border)" : undefined }}>
+                    −₹{Math.round(num(totals.deductions)).toLocaleString("en-IN")}
                   </td>
                   <td
                     style={{
@@ -2185,9 +2252,10 @@ This is a computer-generated statutory payroll document.
                       textAlign: "right",
                       color: "var(--green)",
                       fontSize: "13.5px",
+                      borderLeft: "1px solid var(--border)",
                     }}
                   >
-                    {totals.net.toLocaleString("en-IN")}
+                    ₹{Math.round(num(totals.net)).toLocaleString("en-IN")}
                   </td>
                   <td></td>
                   <td></td>
@@ -2561,15 +2629,17 @@ This is a computer-generated statutory payroll document.
                     >
                       Amount
                     </th>
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "left",
-                        color: "var(--subtext)",
-                      }}
-                    >
-                      Transaction ID
-                    </th>
+                    {isPaid && (
+                      <th
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "left",
+                          color: "var(--subtext)",
+                        }}
+                      >
+                        Transaction ID
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -2601,16 +2671,18 @@ This is a computer-generated statutory payroll document.
                       >
                         ₹{Math.round(r.net).toLocaleString("en-IN")}
                       </td>
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          fontFamily: "monospace",
-                          color: "var(--primary)",
-                        }}
-                      >
-                        {r.transactionId ||
-                          `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
-                      </td>
+                      {isPaid && (
+                        <td
+                          style={{
+                            padding: "8px 12px",
+                            fontFamily: "monospace",
+                            color: "var(--primary)",
+                          }}
+                        >
+                          {r.transactionId ||
+                            `TXN-${r.employeeId}-${year}${String(month).padStart(2, "0")}`}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
